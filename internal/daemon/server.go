@@ -1,0 +1,219 @@
+package daemon
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/yasyf/cc-review/internal/httpapi"
+	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/version"
+)
+
+// handleTimeout bounds a single control RPC. It is generous because `start`
+// shells out to git to snapshot the tree; every other op is sub-second.
+const handleTimeout = 35 * time.Second
+
+// Server is the running daemon: the control-plane unix-socket server plus the
+// data/UI HTTP plane it boots.
+type Server struct {
+	store  *store.Store
+	bus    *Bus
+	socket string
+	log    *log.Logger
+
+	httpPort int
+	token    string
+
+	triggerShutdown context.CancelFunc
+	wg              sync.WaitGroup
+}
+
+// Run is the entry point for `cc-review daemon`. It blocks until signalled or
+// asked to shut down.
+func Run(ctx context.Context) error {
+	if err := paths.EnsureStateDir(); err != nil {
+		return err
+	}
+	st, err := store.Open(paths.DBPath())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	s := &Server{
+		store:  st,
+		bus:    NewBus(),
+		socket: paths.SocketPath(),
+		log:    log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+	}
+	return s.serve(ctx)
+}
+
+func (s *Server) serve(parent context.Context) error {
+	ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	s.triggerShutdown = stop
+
+	if err := s.startHTTP(ctx); err != nil {
+		return err
+	}
+
+	ln, err := s.listen()
+	if err != nil {
+		return err
+	}
+	var once sync.Once
+	closeListener := func() { once.Do(func() { _ = ln.Close() }) }
+	defer closeListener()
+
+	s.log.Printf("daemon %s started; socket=%s http=127.0.0.1:%d", version.String(), s.socket, s.httpPort)
+
+	go func() {
+		<-ctx.Done()
+		closeListener()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				break
+			}
+			s.log.Printf("accept: %v", err)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.handle(ctx, conn)
+		}()
+	}
+
+	s.wg.Wait()
+	_ = os.Remove(paths.HTTPInfoPath())
+	s.log.Printf("daemon stopped")
+	return nil
+}
+
+// listen binds the control socket. There is no version-skew eviction: a stale
+// socket left by a crashed daemon is simply removed before binding, and the
+// lazy-start flock already prevents two live daemons from racing here.
+func (s *Server) listen() (net.Listener, error) {
+	_ = os.Remove(s.socket)
+	if err := os.MkdirAll(filepath.Dir(s.socket), 0o700); err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", s.socket)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(s.socket, 0o600); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
+}
+
+// startHTTP binds the data/UI plane on an ephemeral 127.0.0.1 port, publishes the
+// port+token handshake, and serves until ctx is cancelled. Request contexts
+// derive from ctx (BaseContext), so cancelling it ends every parked SSE handler
+// before the graceful Shutdown drains them — and before Run closes the store.
+func (s *Server) startHTTP(ctx context.Context) error {
+	s.token = randomToken()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	s.httpPort = ln.Addr().(*net.TCPAddr).Port
+	if err := writeHTTPInfo(HTTPInfo{Port: s.httpPort, Token: s.token}); err != nil {
+		ln.Close()
+		return err
+	}
+	api := httpapi.New(s.store, s, s.token)
+	srv := &http.Server{
+		Handler:     api.Handler(),
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.log.Printf("http serve: %v", err)
+		}
+	}()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+	return nil
+}
+
+func (s *Server) handle(ctx context.Context, conn net.Conn) {
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(handleTimeout))
+	var req Request
+	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+		writeResp(conn, Response{OK: false, Error: "bad request: " + err.Error()})
+		return
+	}
+	resp := s.dispatch(ctx, req)
+	resp.Proto = ProtocolVersion
+	writeResp(conn, resp)
+}
+
+func (s *Server) dispatch(ctx context.Context, req Request) Response {
+	switch req.Op {
+	case OpHealth:
+		return Response{OK: true, DaemonVersion: version.String()}
+	case OpShutdown:
+		s.triggerShutdown()
+		return Response{OK: true}
+	case OpStart:
+		return s.handleStart(ctx, req)
+	case OpResolve:
+		return s.handleResolve(ctx, req)
+	case OpReply:
+		return s.handleReply(ctx, req)
+	case OpFeedback:
+		return s.handleFeedback(ctx, req)
+	case OpStatus:
+		return s.handleStatus(ctx, req)
+	case OpSessionRecord:
+		return s.handleSessionRecord(ctx, req)
+	case OpGuardEdit:
+		return s.handleGuardEdit(ctx, req)
+	default:
+		return Response{OK: false, Error: "unknown op: " + string(req.Op)}
+	}
+}
+
+func writeResp(conn net.Conn, r Response) {
+	r.Proto = ProtocolVersion
+	_ = json.NewEncoder(conn).Encode(r)
+}
+
+func randomToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b[:])
+}
