@@ -70,7 +70,11 @@ func Capture(ctx context.Context, cwd string) (Snapshot, error) {
 	tmpPath := tmpIndex.Name()
 	tmpIndex.Close()
 	os.Remove(tmpPath) // git wants to create it itself; we just reserved the name
-	defer os.Remove(tmpPath)
+	// git writes <index>.lock during `add`; clean both so a cancelled git leaves nothing.
+	defer func() {
+		os.Remove(tmpPath)
+		os.Remove(tmpPath + ".lock")
+	}()
 
 	absIndex, err := filepath.Abs(tmpPath)
 	if err != nil {

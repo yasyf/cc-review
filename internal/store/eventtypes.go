@@ -9,9 +9,7 @@ const (
 	EventClaudeQuestion      = "claude.question"
 	EventClaudeOption        = "claude.option"
 	EventClaudeClarification = "claude.clarification"
-	EventStatusChanged       = "status.changed"
 	EventSubmit              = "submit"
-	EventNotification        = "notification"
 )
 
 // Origins recorded in events.origin.

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -99,6 +100,53 @@ func TestReplyDedupIsIdempotent(t *testing.T) {
 	replies, _ := s.ListRepliesByComment(ctx, cid)
 	if len(replies) != 1 {
 		t.Fatalf("got %d replies, want 1 (deduped)", len(replies))
+	}
+}
+
+func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", "/repo")
+	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+
+	// Fire many redeliveries of the same reply concurrently. Before the ON
+	// CONFLICT fix the losing writers hit a UNIQUE-constraint error; now every
+	// call must succeed, exactly one inserts, and all return the same id.
+	const n = 16
+	ids := make([]int64, n)
+	inserted := make([]bool, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ids[i], inserted[i], errs[i] = s.CreateReply(ctx, Reply{
+				CommentID: cid, Origin: "claude", Kind: "question", Body: "why?", DedupKey: "k",
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	insertCount := 0
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("call %d errored: %v", i, errs[i])
+		}
+		if inserted[i] {
+			insertCount++
+		}
+		if ids[i] != ids[0] {
+			t.Fatalf("call %d returned id %d, want %d (all should share the deduped id)", i, ids[i], ids[0])
+		}
+	}
+	if insertCount != 1 {
+		t.Fatalf("inserted=%d, want exactly 1", insertCount)
+	}
+	replies, _ := s.ListRepliesByComment(ctx, cid)
+	if len(replies) != 1 {
+		t.Fatalf("got %d rows, want 1", len(replies))
 	}
 }
 

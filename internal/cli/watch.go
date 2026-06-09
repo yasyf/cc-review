@@ -32,7 +32,11 @@ func newWatchCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			return ConsumeEvents(ctx, port, token, reviewID, "watch", func(_ int64, data string) (bool, error) {
-				fmt.Fprintln(out, data)
+				// A failed write must propagate so the cursor doesn't advance past
+				// an undelivered event (at-least-once).
+				if _, err := fmt.Fprintln(out, data); err != nil {
+					return false, err
+				}
 				return eventType(data) == "submit", nil
 			})
 		},

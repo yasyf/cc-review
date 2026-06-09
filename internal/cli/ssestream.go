@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -51,15 +52,21 @@ func resolveReview(ctx context.Context, client *daemon.Client, session, cwd stri
 // delivery re-delivers rather than skips (at-least-once).
 func ConsumeEvents(ctx context.Context, port int, token, reviewID, consumer string, handle EventHandler) error {
 	cursorPath := paths.ConsumerCursorPath(reviewID, consumer)
-	cursor := readCursor(cursorPath)
+	cursor, err := readCursor(cursorPath)
+	if err != nil {
+		return err // a corrupt cursor would silently replay the whole backlog; fail loud
+	}
 	base := fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&t=%s&exclude_origin=claude",
 		port, url.QueryEscape(reviewID), url.QueryEscape(token))
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		stop, next := readStream(ctx, base, cursor, cursorPath, handle)
+		stop, next, fatal := readStream(ctx, base, cursor, cursorPath, handle)
 		cursor = next
+		if fatal != nil {
+			return fatal
+		}
 		if stop || ctx.Err() != nil {
 			return nil
 		}
@@ -71,21 +78,27 @@ func ConsumeEvents(ctx context.Context, port int, token, reviewID, consumer stri
 	}
 }
 
-func readStream(ctx context.Context, base string, cursor int64, cursorPath string, handle EventHandler) (stop bool, next int64) {
+// readStream consumes one SSE connection. A nil fatal means a transient drop
+// (reconnect); a non-nil fatal is a permanent failure (bad token, unknown review,
+// or an event frame larger than the buffer) the caller should surface and stop on.
+func readStream(ctx context.Context, base string, cursor int64, cursorPath string, handle EventHandler) (stop bool, next int64, fatal error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base, nil)
 	if err != nil {
-		return false, cursor
+		return false, cursor, err
 	}
 	if cursor > 0 {
 		req.Header.Set("Last-Event-ID", strconv.FormatInt(cursor, 10))
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, cursor
+		return false, cursor, nil // transient: connection refused / reset → reconnect
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, cursor
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return false, cursor, fmt.Errorf("events endpoint returned %d (stale token or unknown review); stopping", resp.StatusCode)
+		}
+		return false, cursor, nil // 5xx: reconnect
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -100,12 +113,12 @@ func readStream(ctx context.Context, base string, cursor int64, cursorPath strin
 			}
 			s, herr := handle(id, data)
 			if herr != nil {
-				return false, cursor
+				return false, cursor, nil // delivery failed: don't advance; reconnect re-delivers
 			}
 			cursor = id
 			writeCursor(cursorPath, cursor)
 			if s {
-				return true, cursor
+				return true, cursor, nil
 			}
 			data = ""
 		case strings.HasPrefix(line, ":"):
@@ -118,7 +131,10 @@ func readStream(ctx context.Context, base string, cursor int64, cursorPath strin
 			data = strings.TrimSpace(line[len("data:"):])
 		}
 	}
-	return false, cursor
+	if err := sc.Err(); errors.Is(err, bufio.ErrTooLong) {
+		return false, cursor, fmt.Errorf("event frame exceeded the %d-byte buffer; stopping: %w", 4*1024*1024, err)
+	}
+	return false, cursor, nil
 }
 
 func eventType(data string) string {
@@ -129,15 +145,29 @@ func eventType(data string) string {
 	return e.Type
 }
 
-func readCursor(path string) int64 {
+// readCursor returns the persisted cursor, 0 when absent, and an error on a
+// corrupt file (so a torn write replays the backlog loudly, not silently).
+func readCursor(path string) (int64, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return 0
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read cursor %s: %w", path, err)
 	}
-	n, _ := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
-	return n
+	n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("corrupt cursor %s: %w", path, err)
+	}
+	return n, nil
 }
 
+// writeCursor persists the cursor atomically (temp + rename) so a crash can't
+// leave a torn value that resets the consumer to 0.
 func writeCursor(path string, cursor int64) {
-	_ = os.WriteFile(path, []byte(strconv.FormatInt(cursor, 10)), 0o600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strconv.FormatInt(cursor, 10)), 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, path)
 }

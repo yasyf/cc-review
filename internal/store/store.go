@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS events (
   dedup_key      TEXT,
   PRIMARY KEY (review_id, seq)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(dedup_key) WHERE dedup_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(review_id, dedup_key) WHERE dedup_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS session_hooks (
   session_id      TEXT PRIMARY KEY,
   cwd             TEXT NOT NULL DEFAULT '',

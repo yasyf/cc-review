@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -39,27 +37,31 @@ func scanReply(row interface{ Scan(...any) error }) (Reply, error) {
 
 // CreateReply inserts a reply, returning its id. When DedupKey is non-empty and
 // a reply with that key already exists, no row is inserted and the existing id
-// is returned with inserted=false (the single serialized writer makes the
-// check-then-insert atomic). This is what makes a redelivered comment safe to
-// answer twice.
+// is returned with inserted=false. The insert is a single atomic upsert
+// (ON CONFLICT … DO NOTHING), so concurrent redeliveries of the same reply can't
+// race into a unique-constraint error — this is what makes a redelivered comment
+// safe to answer twice.
 func (s *Store) CreateReply(ctx context.Context, r Reply) (id int64, inserted bool, err error) {
-	if r.DedupKey != "" {
-		var existing int64
-		err := s.db.QueryRowContext(ctx, `SELECT id FROM replies WHERE dedup_key=?`, r.DedupKey).Scan(&existing)
-		if err == nil {
-			return existing, false, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, false, fmt.Errorf("dedup lookup: %w", err)
-		}
-	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO replies(comment_id, origin, kind, body, options_json, answered, answer, answered_via, created_at, dedup_key)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		 VALUES(?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
 		r.CommentID, r.Origin, r.Kind, r.Body, defaultStr(r.OptionsJSON, "[]"),
 		boolInt(r.Answered), r.Answer, r.AnsweredVia, unix(time.Now()), nullString(r.DedupKey))
 	if err != nil {
 		return 0, false, fmt.Errorf("create reply: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, false, err
+	}
+	if n == 0 {
+		// A non-NULL dedup_key already existed (a NULL key never conflicts).
+		var existing int64
+		if err := s.db.QueryRowContext(ctx, `SELECT id FROM replies WHERE dedup_key=?`, r.DedupKey).Scan(&existing); err != nil {
+			return 0, false, fmt.Errorf("dedup re-select: %w", err)
+		}
+		return existing, false, nil
 	}
 	id, err = res.LastInsertId()
 	return id, err == nil, err
@@ -85,11 +87,19 @@ func (s *Store) ListRepliesByComment(ctx context.Context, commentID int64) ([]Re
 }
 
 // AnswerReply records the answer to a Claude question and how it was answered.
+// It fails loud when the reply id doesn't exist rather than silently succeeding.
 func (s *Store) AnswerReply(ctx context.Context, replyID int64, answer, via string) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE replies SET answered=1, answer=?, answered_via=? WHERE id=?`, answer, via, replyID)
 	if err != nil {
 		return fmt.Errorf("answer reply: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("answer reply %d: %w", replyID, ErrNotFound)
 	}
 	return nil
 }

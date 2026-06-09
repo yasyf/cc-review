@@ -31,16 +31,6 @@ func scanEvent(row interface{ Scan(...any) error }) (Event, error) {
 // the single writer, so seq is gap-free and monotonic. When DedupKey is set and
 // already present, the existing event's seq is returned and nothing is inserted.
 func (s *Store) AppendEvent(ctx context.Context, e *Event) (int64, error) {
-	if e.DedupKey != "" {
-		var seq int64
-		err := s.db.QueryRowContext(ctx, `SELECT seq FROM events WHERE dedup_key=?`, e.DedupKey).Scan(&seq)
-		if err == nil {
-			return seq, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("event dedup lookup: %w", err)
-		}
-	}
 	payload := e.Payload
 	if len(payload) == 0 {
 		payload = []byte("{}")
@@ -50,6 +40,21 @@ func (s *Store) AppendEvent(ctx context.Context, e *Event) (int64, error) {
 		return 0, fmt.Errorf("begin event tx: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Dedup inside the tx: it holds the single connection across the check and
+	// the insert, so the lookup-then-insert is atomic. Scope by review so a key
+	// reused across reviews can't return another review's seq.
+	if e.DedupKey != "" {
+		var seq int64
+		err := tx.QueryRowContext(ctx,
+			`SELECT seq FROM events WHERE review_id=? AND dedup_key=?`, e.ReviewID, e.DedupKey).Scan(&seq)
+		if err == nil {
+			return seq, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("event dedup lookup: %w", err)
+		}
+	}
 
 	var seq int64
 	if err := tx.QueryRowContext(ctx,

@@ -33,8 +33,6 @@ export interface Reply {
   body: string;
   // Present for kind 'option' — the selectable choices Claude offered.
   options?: string[];
-  // For an 'answer' reply, the question/option reply it responds to.
-  questionReplyId?: string;
   createdAt: string;
 }
 
@@ -52,11 +50,13 @@ export interface Comment {
   replies: Reply[];
 }
 
+// Mirrors the daemon's gitdiff.FileChange. The diff itself is parsed from
+// patchText; this list is only used for the file count, so it carries just the
+// git name-status fields the daemon actually emits.
 export interface FileMeta {
   path: string;
-  status: 'change' | 'rename-pure' | 'rename-changed' | 'new' | 'deleted';
-  additions: number;
-  deletions: number;
+  old_path?: string;
+  status: string; // git name-status code: A | M | D | R | C | T
 }
 
 export interface SessionResponse {

@@ -41,12 +41,31 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	if err != nil {
 		return errResp(err.Error())
 	}
-	v, err := s.store.CreateVersion(ctx, review.ID, snap.Branch, snap.BaseRef, "", string(filesJSON))
+	// Write the patch to a temp file before inserting the version row, so a write
+	// failure can never leave behind a committed-but-unreadable version. The row
+	// then gets the final path after an atomic rename into place.
+	tmp, err := os.CreateTemp(paths.ReviewDir(review.ID), "snap-*.tmp")
 	if err != nil {
 		return errResp(err.Error())
 	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(snap.PatchText); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return errResp(err.Error())
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return errResp(err.Error())
+	}
+	v, err := s.store.CreateVersion(ctx, review.ID, snap.Branch, snap.BaseRef, "", string(filesJSON))
+	if err != nil {
+		os.Remove(tmpName)
+		return errResp(err.Error())
+	}
 	patchPath := paths.SnapshotPath(review.ID, v.VersionNumber)
-	if err := os.WriteFile(patchPath, []byte(snap.PatchText), 0o600); err != nil {
+	if err := os.Rename(tmpName, patchPath); err != nil {
+		os.Remove(tmpName)
 		return errResp(err.Error())
 	}
 	if err := s.store.UpdateVersionPatchPath(ctx, v.ID, patchPath); err != nil {
@@ -184,7 +203,12 @@ func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
 		return Response{OK: true, Allow: true} // not a repo: nothing to guard
 	}
 	review, ok, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot)
-	if err != nil || !ok {
+	if err != nil {
+		// Couldn't determine status: fail closed and make the failure visible
+		// rather than silently permitting an edit that an open review should block.
+		return Response{OK: true, Allow: false, Reason: "cc-review: could not read review status (" + err.Error() + "); blocking the edit to be safe. Try `cc-review status`, or `cc-review stop` to clear the daemon."}
+	}
+	if !ok {
 		return Response{OK: true, Allow: true} // no review: nothing to guard
 	}
 	if review.Status == "open" {

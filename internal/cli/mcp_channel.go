@@ -57,23 +57,30 @@ type channel struct {
 	out io.Writer
 }
 
-func (c *channel) send(v any) {
+func (c *channel) send(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
-		return
+		return err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.out.Write(b)
-	c.out.Write([]byte("\n"))
+	if _, err := c.out.Write(b); err != nil {
+		return err
+	}
+	_, err = c.out.Write([]byte("\n"))
+	return err
 }
 
 func (c *channel) reply(id json.RawMessage, result any) {
-	c.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	_ = c.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-func (c *channel) notify(method string, params any) {
-	c.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+func (c *channel) replyError(id json.RawMessage, code int, message string) {
+	_ = c.send(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message}})
+}
+
+func (c *channel) notify(method string, params any) error {
+	return c.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
 func runMCPChannel(ctx context.Context, session, cwd string, in io.Reader, out io.Writer) error {
@@ -105,8 +112,10 @@ func runMCPChannel(ctx context.Context, session, cwd string, in io.Reader, out i
 			ch.reply(msg.ID, map[string]any{"tools": []any{replyToolSchema()}})
 		case "tools/call":
 			ch.reply(msg.ID, handleToolCall(msg.Params))
-		default:
+		case "ping":
 			ch.reply(msg.ID, map[string]any{})
+		default:
+			ch.replyError(msg.ID, -32601, "method not found: "+msg.Method)
 		}
 	}
 	return sc.Err()
@@ -121,11 +130,13 @@ func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 		return
 	}
 	_ = ConsumeEvents(ctx, port, token, reviewID, "channel", func(_ int64, data string) (bool, error) {
-		ch.notify("notifications/claude/channel", map[string]any{
+		// A failed push must propagate so the cursor doesn't advance past an
+		// undelivered event; a channel otherwise runs for the whole session.
+		err := ch.notify("notifications/claude/channel", map[string]any{
 			"content": data,
 			"meta":    map[string]any{"source": "cc-review", "type": eventType(data), "review_id": reviewID},
 		})
-		return false, nil // a channel runs for the whole session
+		return false, err
 	})
 }
 

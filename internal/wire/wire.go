@@ -32,14 +32,13 @@ type LineRange struct {
 
 // Reply is one turn under a comment.
 type Reply struct {
-	ID              string   `json:"id"`
-	CommentID       string   `json:"commentId"`
-	Origin          string   `json:"origin"`
-	Kind            string   `json:"kind"`
-	Body            string   `json:"body"`
-	Options         []string `json:"options,omitempty"`
-	QuestionReplyID string   `json:"questionReplyId,omitempty"`
-	CreatedAt       string   `json:"createdAt"`
+	ID        string   `json:"id"`
+	CommentID string   `json:"commentId"`
+	Origin    string   `json:"origin"`
+	Kind      string   `json:"kind"`
+	Body      string   `json:"body"`
+	Options   []string `json:"options,omitempty"`
+	CreatedAt string   `json:"createdAt"`
 }
 
 // Comment is an inline comment with its thread.

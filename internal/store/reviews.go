@@ -72,7 +72,7 @@ func (s *Store) FindReviewBySessionRepo(ctx context.Context, sessionID, repoRoot
 // regardless of session id, for explicit adoption. ok is false when none exists.
 func (s *Store) FindLatestOpenReviewByRepo(ctx context.Context, repoRoot string) (Review, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+reviewCols+` FROM reviews WHERE repo_root=? AND status='open' ORDER BY created_at DESC LIMIT 1`, repoRoot)
+		`SELECT `+reviewCols+` FROM reviews WHERE repo_root=? AND status='open' ORDER BY created_at DESC, rowid DESC LIMIT 1`, repoRoot)
 	r, err := scanReview(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Review{}, false, nil
