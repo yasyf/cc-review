@@ -9,17 +9,28 @@ import (
 	"github.com/yasyf/cc-review/internal/daemon"
 )
 
+// devHTTPPort is the fixed port the daemon binds under --dev so the Vite dev
+// server's proxy can reach the API/SSE plane.
+const devHTTPPort = 8787
+
 // newDaemonCmd is the hidden entry point the lazy-start spawns.
 func newDaemonCmd() *cobra.Command {
-	return &cobra.Command{
+	var dev bool
+	cmd := &cobra.Command{
 		Use:    "daemon",
 		Short:  "Run the background daemon",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return daemon.Run(cmd.Context())
+			port := 0
+			if dev {
+				port = devHTTPPort
+			}
+			return daemon.Run(cmd.Context(), port)
 		},
 	}
+	cmd.Flags().BoolVar(&dev, "dev", false, "bind the HTTP plane to a fixed port for the Vite dev proxy")
+	return cmd
 }
 
 // newSessionRecordCmd is the hidden SessionStart hook handler. It records the

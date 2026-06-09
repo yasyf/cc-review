@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -34,16 +35,18 @@ type Server struct {
 	socket string
 	log    *log.Logger
 
-	httpPort int
-	token    string
+	fixedPort int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
+	httpPort  int
+	token     string
 
 	triggerShutdown context.CancelFunc
 	wg              sync.WaitGroup
 }
 
-// Run is the entry point for `cc-review daemon`. It blocks until signalled or
-// asked to shut down.
-func Run(ctx context.Context) error {
+// Run is the entry point for `cc-review daemon`. fixedPort pins the HTTP plane to
+// a known port for the Vite dev proxy; 0 binds an ephemeral port. It blocks until
+// signalled or asked to shut down.
+func Run(ctx context.Context, fixedPort int) error {
 	if err := paths.EnsureStateDir(); err != nil {
 		return err
 	}
@@ -54,10 +57,11 @@ func Run(ctx context.Context) error {
 	defer st.Close()
 
 	s := &Server{
-		store:  st,
-		bus:    NewBus(),
-		socket: paths.SocketPath(),
-		log:    log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+		store:     st,
+		bus:       NewBus(),
+		socket:    paths.SocketPath(),
+		log:       log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+		fixedPort: fixedPort,
 	}
 	return s.serve(ctx)
 }
@@ -134,7 +138,11 @@ func (s *Server) listen() (net.Listener, error) {
 // before the graceful Shutdown drains them — and before Run closes the store.
 func (s *Server) startHTTP(ctx context.Context) error {
 	s.token = randomToken()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	addr := "127.0.0.1:0"
+	if s.fixedPort != 0 {
+		addr = fmt.Sprintf("127.0.0.1:%d", s.fixedPort)
+	}
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
