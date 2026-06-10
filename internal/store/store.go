@@ -22,15 +22,12 @@ type Store struct {
 }
 
 const schema = `
-CREATE TABLE IF NOT EXISTS meta (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS reviews (
   id         TEXT PRIMARY KEY,
   slug       TEXT NOT NULL DEFAULT '',
   session_id TEXT,
   repo_root  TEXT NOT NULL,
+  claude_pid INTEGER NOT NULL DEFAULT 0,
   status     TEXT NOT NULL DEFAULT 'open',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -38,6 +35,7 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_session_repo
   ON reviews(session_id, repo_root) WHERE session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_reviews_repo ON reviews(repo_root);
+CREATE INDEX IF NOT EXISTS idx_reviews_pid_repo ON reviews(claude_pid, repo_root);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_slug ON reviews(slug) WHERE slug <> '';
 CREATE TABLE IF NOT EXISTS review_versions (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,20 +92,6 @@ CREATE TABLE IF NOT EXISTS events (
   PRIMARY KEY (review_id, seq)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(review_id, dedup_key) WHERE dedup_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS session_hooks (
-  session_id      TEXT PRIMARY KEY,
-  cwd             TEXT NOT NULL DEFAULT '',
-  transcript_path TEXT NOT NULL DEFAULT '',
-  started_at      INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS review_sessions (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  review_id  TEXT NOT NULL REFERENCES reviews(id),
-  session_id TEXT NOT NULL,
-  source     TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_review_sessions_review ON review_sessions(review_id);
 `
 
 // Open opens (creating if needed) the database at path and applies the schema.

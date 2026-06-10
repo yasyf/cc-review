@@ -19,7 +19,7 @@ import (
 type Backend interface {
 	Subscribe(reviewID string) (<-chan struct{}, func())
 	AppendEvent(ctx context.Context, e *store.Event) (int64, error)
-	Attach(reviewID, consumer string) func()
+	Attach(reviewID, consumer string, claudePID int) func()
 }
 
 // Server is the HTTP handler tree. It is constructed by the daemon, which owns

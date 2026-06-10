@@ -19,7 +19,7 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 		created int64
 		updated int64
 	)
-	if err := row.Scan(&r.ID, &r.Slug, &session, &r.RepoRoot, &r.Status, &created, &updated); err != nil {
+	if err := row.Scan(&r.ID, &r.Slug, &session, &r.RepoRoot, &r.ClaudePID, &r.Status, &created, &updated); err != nil {
 		return Review{}, err
 	}
 	r.SessionID = session.String
@@ -28,7 +28,7 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 	return r, nil
 }
 
-const reviewCols = `id, slug, session_id, repo_root, status, created_at, updated_at`
+const reviewCols = `id, slug, session_id, repo_root, claude_pid, status, created_at, updated_at`
 
 // ReviewSlug derives a review's URL name from its creation-time branch and id:
 // the sanitized branch, `--`, and the first 8 hex chars of the id. An empty
@@ -59,33 +59,17 @@ func sanitizeBranch(branch string) string {
 	return b.String()
 }
 
-// CreateReview inserts a new open review and, when sessioned, the initial
-// review_sessions binding row. A blank sessionID is stored as NULL so the
-// partial unique index does not collapse all session-less reviews together.
-// branch names the slug; it is fixed at creation even if later versions land
-// on another branch.
-func (s *Store) CreateReview(ctx context.Context, sessionID, repoRoot, branch string) (Review, error) {
+// CreateReview inserts a new open review owned by a Claude window (claudePID)
+// in a repo. A blank sessionID is stored as NULL so the partial unique index
+// does not collapse all session-less reviews together. branch names the slug;
+// it is fixed at creation even if later versions land on another branch.
+func (s *Store) CreateReview(ctx context.Context, sessionID string, claudePID int, repoRoot, branch string) (Review, error) {
 	now := time.Now()
-	r := Review{ID: newID(), SessionID: sessionID, RepoRoot: repoRoot, Status: "open", CreatedAt: now, UpdatedAt: now}
+	r := Review{ID: newID(), SessionID: sessionID, RepoRoot: repoRoot, ClaudePID: claudePID, Status: "open", CreatedAt: now, UpdatedAt: now}
 	r.Slug = ReviewSlug(branch, r.ID)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Review{}, fmt.Errorf("create review: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO reviews(id, slug, session_id, repo_root, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?)`,
-		r.ID, r.Slug, nullString(sessionID), repoRoot, r.Status, unix(now), unix(now)); err != nil {
-		return Review{}, fmt.Errorf("create review: %w", err)
-	}
-	if sessionID != "" {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO review_sessions(review_id, session_id, source, created_at) VALUES(?,?,?,?)`,
-			r.ID, sessionID, "create", unix(now)); err != nil {
-			return Review{}, fmt.Errorf("create review: record binding: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO reviews(id, slug, session_id, repo_root, claude_pid, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+		r.ID, r.Slug, nullString(sessionID), repoRoot, claudePID, r.Status, unix(now), unix(now)); err != nil {
 		return Review{}, fmt.Errorf("create review: %w", err)
 	}
 	return r, nil
@@ -141,59 +125,41 @@ func (s *Store) FindLatestOpenReviewByRepo(ctx context.Context, repoRoot string)
 	return r, err == nil, err
 }
 
-// ReparentReviewSession rebinds a review to sessionID and appends the
-// review_sessions audit row in one tx. The partial unique index
-// idx_reviews_session_repo is the final collision guard: if sessionID already
-// owns a different review in this repo the tx fails and nothing changes.
-func (s *Store) ReparentReviewSession(ctx context.Context, reviewID, sessionID, source string) error {
-	now := time.Now()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("reparent review session: %w", err)
+// FindLatestReviewByWindowRepo returns the most recent review owned by a live
+// Claude window (claudePID) in a repo, any status — callers filter. ok is
+// false when none exists; claudePID 0 means detached and never matches.
+func (s *Store) FindLatestReviewByWindowRepo(ctx context.Context, claudePID int, repoRoot string) (Review, bool, error) {
+	if claudePID == 0 {
+		return Review{}, false, nil
 	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx,
-		`UPDATE reviews SET session_id=?, updated_at=? WHERE id=?`, sessionID, unix(now), reviewID)
-	if err != nil {
-		return fmt.Errorf("reparent review session: %w", err)
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+reviewCols+` FROM reviews WHERE claude_pid=? AND repo_root=? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+		claudePID, repoRoot)
+	r, err := scanReview(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Review{}, false, nil
 	}
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("reparent review session: %w", err)
-	} else if n == 0 {
-		return ErrNotFound
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO review_sessions(review_id, session_id, source, created_at) VALUES(?,?,?,?)`,
-		reviewID, sessionID, source, unix(now)); err != nil {
-		return fmt.Errorf("reparent review session: record binding: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("reparent review session: %w", err)
-	}
-	return nil
+	return r, err == nil, err
 }
 
-// ListReviewSessions returns a review's session-binding history, oldest first.
-func (s *Store) ListReviewSessions(ctx context.Context, reviewID string) ([]ReviewSession, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, review_id, session_id, source, created_at FROM review_sessions WHERE review_id=? ORDER BY id ASC`, reviewID)
+// RebindReview compare-and-swaps a review's owning window: it rebinds
+// session_id and claude_pid only if the review's claude_pid still equals
+// fromPID, returning whether the swap landed. There is no status gate —
+// resuming a submitted review across session rotation is legitimate. A
+// unique-index violation (sessionID already owns another review in the repo)
+// propagates as the error.
+func (s *Store) RebindReview(ctx context.Context, reviewID string, fromPID int, sessionID string, claudePID int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE reviews SET session_id=?, claude_pid=?, updated_at=? WHERE id=? AND claude_pid=?`,
+		nullString(sessionID), claudePID, unix(time.Now()), reviewID, fromPID)
 	if err != nil {
-		return nil, fmt.Errorf("list review sessions: %w", err)
+		return false, fmt.Errorf("rebind review: %w", err)
 	}
-	defer rows.Close()
-	var out []ReviewSession
-	for rows.Next() {
-		var (
-			rs      ReviewSession
-			created int64
-		)
-		if err := rows.Scan(&rs.ID, &rs.ReviewID, &rs.SessionID, &rs.Source, &created); err != nil {
-			return nil, fmt.Errorf("list review sessions: %w", err)
-		}
-		rs.CreatedAt = fromUnix(created)
-		out = append(out, rs)
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rebind review: %w", err)
 	}
-	return out, rows.Err()
+	return n == 1, nil
 }
 
 // SetReviewStatus updates a review's status and bumps updated_at.
@@ -206,11 +172,12 @@ func (s *Store) SetReviewStatus(ctx context.Context, reviewID, status string) er
 	return nil
 }
 
-// DetachReviewSession clears a review's session id (back to NULL), freeing the
-// (session_id, repo_root) slot so a fresh review can take it. Used by --new.
+// DetachReviewSession clears a review's session id (back to NULL) and zeroes
+// claude_pid, freeing both the (session_id, repo_root) slot and the window
+// binding so a fresh review can take them. Used by --new.
 func (s *Store) DetachReviewSession(ctx context.Context, reviewID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE reviews SET session_id=NULL, updated_at=? WHERE id=?`, unix(time.Now()), reviewID)
+		`UPDATE reviews SET session_id=NULL, claude_pid=0, updated_at=? WHERE id=?`, unix(time.Now()), reviewID)
 	if err != nil {
 		return fmt.Errorf("detach review session: %w", err)
 	}

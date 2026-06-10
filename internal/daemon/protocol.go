@@ -13,7 +13,7 @@ import (
 )
 
 // ProtocolVersion is stamped on every envelope for forward-compatibility.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // Op is a control-plane request operation.
 type Op string
@@ -47,15 +47,14 @@ type ReplyInput struct {
 
 // Request is one control-plane RPC.
 type Request struct {
-	Proto          int          `json:"proto"`
-	Op             Op           `json:"op"`
-	Session        string       `json:"session,omitempty"`
-	Cwd            string       `json:"cwd,omitempty"`
-	Consumer       string       `json:"consumer,omitempty"` // stream consumer name on OpResolve (watch | channel)
-	New            bool         `json:"new,omitempty"`
-	Replies        []ReplyInput `json:"replies,omitempty"`
-	TranscriptPath string       `json:"transcript_path,omitempty"`
-	StartedAt      int64        `json:"started_at,omitempty"`
+	Proto     int          `json:"proto"`
+	Op        Op           `json:"op"`
+	Session   string       `json:"session,omitempty"`
+	ClaudePID int          `json:"claude_pid,omitempty"` // window identity: the claude ancestor pid, stamped by the client
+	Cwd       string       `json:"cwd,omitempty"`
+	Consumer  string       `json:"consumer,omitempty"` // stream consumer name on OpResolve (watch | channel)
+	New       bool         `json:"new,omitempty"`
+	Replies   []ReplyInput `json:"replies,omitempty"`
 }
 
 // Response is one control-plane reply.

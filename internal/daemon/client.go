@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/procs"
 )
 
 // ErrDaemonUnavailable is returned when the control socket cannot be reached.
@@ -57,6 +58,7 @@ func (c *Client) do(req Request, timeout time.Duration) (*Response, error) {
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
 	req.Proto = ProtocolVersion
+	req.ClaudePID = procs.ClaudePID()
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return nil, err
 	}
@@ -104,9 +106,9 @@ func (c *Client) Status(session, cwd string) (*Response, error) {
 	return c.do(Request{Op: OpStatus, Session: session, Cwd: cwd}, 5*time.Second)
 }
 
-// SessionRecord records SessionStart hook facts.
-func (c *Client) SessionRecord(session, cwd, transcriptPath string, startedAt int64) (*Response, error) {
-	return c.do(Request{Op: OpSessionRecord, Session: session, Cwd: cwd, TranscriptPath: transcriptPath, StartedAt: startedAt}, 5*time.Second)
+// SessionRecord follows the SessionStart hook's session rotation.
+func (c *Client) SessionRecord(session, cwd string) (*Response, error) {
+	return c.do(Request{Op: OpSessionRecord, Session: session, Cwd: cwd}, 5*time.Second)
 }
 
 // GuardEdit asks whether an edit is permitted for the session's review.

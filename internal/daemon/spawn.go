@@ -42,6 +42,17 @@ func EnsureCurrent(timeout time.Duration) error {
 	})
 }
 
+// EnsureCurrentIfRunning replaces a reachable version-skewed daemon exactly as
+// EnsureCurrent does, but never cold-spawns one when nothing answers on the
+// socket: it is for hooks, which must not boot daemons. Returns
+// ErrDaemonUnavailable when no daemon is running.
+func EnsureCurrentIfRunning() error {
+	if !NewClient().Available() {
+		return ErrDaemonUnavailable
+	}
+	return EnsureCurrent(UpgradeTimeout)
+}
+
 func currentVersion(c *Client) bool {
 	resp, err := c.Health()
 	return err == nil && resp.OK && resp.DaemonVersion == version.String()

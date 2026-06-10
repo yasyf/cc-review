@@ -23,12 +23,15 @@ func TestReviewResolution(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 
-	r, err := s.CreateReview(ctx, "sess-1", "/repo/a", "main")
+	r, err := s.CreateReview(ctx, "sess-1", 1234, "/repo/a", "main")
 	if err != nil {
 		t.Fatalf("create review: %v", err)
 	}
 	if r.Status != "open" {
 		t.Fatalf("status = %q, want open", r.Status)
+	}
+	if r.ClaudePID != 1234 {
+		t.Fatalf("claude_pid = %d, want 1234", r.ClaudePID)
 	}
 
 	got, ok, err := s.FindReviewBySessionRepo(ctx, "sess-1", "/repo/a")
@@ -38,16 +41,19 @@ func TestReviewResolution(t *testing.T) {
 	if got.ID != r.ID {
 		t.Fatalf("found id %q, want %q", got.ID, r.ID)
 	}
+	if got.ClaudePID != 1234 {
+		t.Fatalf("persisted claude_pid = %d, want 1234", got.ClaudePID)
+	}
 
 	if _, ok, _ := s.FindReviewBySessionRepo(ctx, "sess-2", "/repo/a"); ok {
 		t.Fatal("different session should not match")
 	}
 
 	// A session-less review must not collide with another on the partial index.
-	if _, err := s.CreateReview(ctx, "", "/repo/b", "main"); err != nil {
+	if _, err := s.CreateReview(ctx, "", 0, "/repo/b", "main"); err != nil {
 		t.Fatalf("session-less review 1: %v", err)
 	}
-	if _, err := s.CreateReview(ctx, "", "/repo/c", "main"); err != nil {
+	if _, err := s.CreateReview(ctx, "", 0, "/repo/c", "main"); err != nil {
 		t.Fatalf("session-less review 2: %v", err)
 	}
 
@@ -57,108 +63,139 @@ func TestReviewResolution(t *testing.T) {
 	}
 }
 
-func TestCreateReviewRecordsInitialBinding(t *testing.T) {
+func TestFindLatestReviewByWindowRepo(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 
-	sessioned, _ := s.CreateReview(ctx, "s1", "/repo/a", "main")
-	hist, err := s.ListReviewSessions(ctx, sessioned.ID)
+	older, err := s.CreateReview(ctx, "s1", 1234, "/repo", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hist) != 1 || hist[0].Source != "create" || hist[0].SessionID != "s1" {
-		t.Fatalf("sessioned create history = %+v, want one create:s1 row", hist)
+	newer, err := s.CreateReview(ctx, "s2", 1234, "/repo", "main")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	sessionless, _ := s.CreateReview(ctx, "", "/repo/b", "main")
-	hist, _ = s.ListReviewSessions(ctx, sessionless.ID)
-	if len(hist) != 0 {
-		t.Fatalf("sessionless create should record no binding, got %+v", hist)
+	got, ok, err := s.FindLatestReviewByWindowRepo(ctx, 1234, "/repo")
+	if err != nil || !ok {
+		t.Fatalf("find by window/repo: ok=%v err=%v", ok, err)
+	}
+	if got.ID != newer.ID {
+		t.Fatalf("found id %q, want newest %q (older was %q)", got.ID, newer.ID, older.ID)
+	}
+
+	if _, ok, _ := s.FindLatestReviewByWindowRepo(ctx, 1234, "/other"); ok {
+		t.Fatal("different repo should not match")
+	}
+	if _, ok, _ := s.FindLatestReviewByWindowRepo(ctx, 9999, "/repo"); ok {
+		t.Fatal("different pid should not match")
+	}
+	if _, ok, err := s.FindLatestReviewByWindowRepo(ctx, 0, "/repo"); ok || err != nil {
+		t.Fatalf("pid 0 must never match: ok=%v err=%v", ok, err)
 	}
 }
 
-func TestReparentReviewSession(t *testing.T) {
+func TestRebindReview(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s1", "/repo", "main")
 
-	if err := s.ReparentReviewSession(ctx, r.ID, "s2", "adopt"); err != nil {
-		t.Fatalf("reparent: %v", err)
+	t.Run("success rebinds session and pid and bumps updated_at", func(t *testing.T) {
+		r, _ := s.CreateReview(ctx, "s1", 1234, "/repo/a", "main")
+		if _, err := s.db.ExecContext(ctx, `UPDATE reviews SET updated_at=1 WHERE id=?`, r.ID); err != nil {
+			t.Fatal(err)
+		}
+		ok, err := s.RebindReview(ctx, r.ID, 1234, "s2", 5678)
+		if err != nil || !ok {
+			t.Fatalf("rebind: ok=%v err=%v", ok, err)
+		}
+		got, _ := s.GetReview(ctx, r.ID)
+		if got.SessionID != "s2" || got.ClaudePID != 5678 {
+			t.Fatalf("got session=%q pid=%d, want s2/5678", got.SessionID, got.ClaudePID)
+		}
+		if got.UpdatedAt.Unix() <= 1 {
+			t.Fatalf("updated_at not bumped: %v", got.UpdatedAt)
+		}
+		if _, ok, _ := s.FindLatestReviewByWindowRepo(ctx, 5678, "/repo/a"); !ok {
+			t.Fatal("new pid should now find the review")
+		}
+	})
+
+	t.Run("wrong fromPID is a clean CAS miss", func(t *testing.T) {
+		r, _ := s.CreateReview(ctx, "s3", 1234, "/repo/b", "main")
+		ok, err := s.RebindReview(ctx, r.ID, 9999, "s4", 5678)
+		if err != nil {
+			t.Fatalf("cas miss must not error: %v", err)
+		}
+		if ok {
+			t.Fatal("cas with stale fromPID should not land")
+		}
+		got, _ := s.GetReview(ctx, r.ID)
+		if got.SessionID != "s3" || got.ClaudePID != 1234 {
+			t.Fatalf("binding changed on a missed cas: session=%q pid=%d", got.SessionID, got.ClaudePID)
+		}
+	})
+
+	t.Run("session occupying the repo slot propagates the unique violation", func(t *testing.T) {
+		if _, err := s.CreateReview(ctx, "s5", 100, "/repo/c", "main"); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := s.CreateReview(ctx, "s6", 200, "/repo/c", "main")
+		if _, err := s.RebindReview(ctx, b.ID, 200, "s5", 300); err == nil {
+			t.Fatal("rebind onto an occupied (session, repo) slot should fail")
+		}
+		got, _ := s.GetReview(ctx, b.ID)
+		if got.SessionID != "s6" || got.ClaudePID != 200 {
+			t.Fatalf("binding changed despite failed rebind: session=%q pid=%d", got.SessionID, got.ClaudePID)
+		}
+	})
+
+	t.Run("no status gate: submitted reviews rebind", func(t *testing.T) {
+		r, _ := s.CreateReview(ctx, "s7", 1234, "/repo/d", "main")
+		if err := s.SetReviewStatus(ctx, r.ID, "submitted"); err != nil {
+			t.Fatal(err)
+		}
+		ok, err := s.RebindReview(ctx, r.ID, 1234, "s8", 5678)
+		if err != nil || !ok {
+			t.Fatalf("rebind submitted review: ok=%v err=%v", ok, err)
+		}
+		got, _ := s.GetReview(ctx, r.ID)
+		if got.SessionID != "s8" || got.ClaudePID != 5678 || got.Status != "submitted" {
+			t.Fatalf("got session=%q pid=%d status=%q, want s8/5678/submitted", got.SessionID, got.ClaudePID, got.Status)
+		}
+	})
+}
+
+func TestDetachReviewSessionFreesSessionAndWindow(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s1", 1234, "/repo", "main")
+
+	if err := s.DetachReviewSession(ctx, r.ID); err != nil {
+		t.Fatalf("detach: %v", err)
 	}
 	got, _ := s.GetReview(ctx, r.ID)
-	if got.SessionID != "s2" {
-		t.Fatalf("session_id = %q, want s2", got.SessionID)
+	if got.SessionID != "" || got.ClaudePID != 0 {
+		t.Fatalf("got session=%q pid=%d, want detached", got.SessionID, got.ClaudePID)
 	}
-	if _, ok, _ := s.FindReviewBySessionRepo(ctx, "s2", "/repo"); !ok {
-		t.Fatal("s2 should now match")
+	if _, ok, _ := s.FindLatestReviewByWindowRepo(ctx, 1234, "/repo"); ok {
+		t.Fatal("detached review must not be pid-findable")
 	}
-	if _, ok, _ := s.FindReviewBySessionRepo(ctx, "s1", "/repo"); ok {
-		t.Fatal("s1 should no longer match")
-	}
-}
 
-func TestReparentAppendsAuditRowPerRebind(t *testing.T) {
-	ctx := context.Background()
-	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s1", "/repo", "main")
-
-	if err := s.ReparentReviewSession(ctx, r.ID, "s2", "adopt"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ReparentReviewSession(ctx, r.ID, "s3", "session-start"); err != nil {
-		t.Fatal(err)
-	}
-	hist, err := s.ListReviewSessions(ctx, r.ID)
+	// Both slots are free: the same session and window can own a fresh review.
+	fresh, err := s.CreateReview(ctx, "s1", 1234, "/repo", "main")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("create after detach: %v", err)
 	}
-	want := []struct{ session, source string }{
-		{"s1", "create"}, {"s2", "adopt"}, {"s3", "session-start"},
-	}
-	if len(hist) != len(want) {
-		t.Fatalf("got %d history rows, want %d: %+v", len(hist), len(want), hist)
-	}
-	for i, w := range want {
-		if hist[i].SessionID != w.session || hist[i].Source != w.source {
-			t.Fatalf("row %d = %s/%s, want %s/%s", i, hist[i].SessionID, hist[i].Source, w.session, w.source)
-		}
-	}
-}
-
-func TestReparentCollisionFailsAtomically(t *testing.T) {
-	ctx := context.Background()
-	s := openTestStore(t)
-	a, _ := s.CreateReview(ctx, "s1", "/repo", "main")
-	if _, err := s.CreateReview(ctx, "s2", "/repo", "main"); err != nil {
-		t.Fatal(err)
-	}
-
-	// s2 already owns a review in /repo: the unique index must reject the rebind.
-	if err := s.ReparentReviewSession(ctx, a.ID, "s2", "adopt"); err == nil {
-		t.Fatal("reparent onto an occupied (session, repo) slot should fail")
-	}
-	got, _ := s.GetReview(ctx, a.ID)
-	if got.SessionID != "s1" {
-		t.Fatalf("binding changed despite failed tx: %q", got.SessionID)
-	}
-	hist, _ := s.ListReviewSessions(ctx, a.ID)
-	if len(hist) != 1 {
-		t.Fatalf("audit row leaked from a rolled-back tx: %+v", hist)
-	}
-}
-
-func TestReparentUnknownReviewErrNotFound(t *testing.T) {
-	ctx := context.Background()
-	s := openTestStore(t)
-	if err := s.ReparentReviewSession(ctx, "nope", "s1", "adopt"); err != ErrNotFound {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+	found, ok, _ := s.FindLatestReviewByWindowRepo(ctx, 1234, "/repo")
+	if !ok || found.ID != fresh.ID {
+		t.Fatalf("window should find fresh review %q, got %q (ok=%v)", fresh.ID, found.ID, ok)
 	}
 }
 
 func TestVersionNumbersAreMonotonic(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 
 	for want := 1; want <= 3; want++ {
 		v, err := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p.patch", "[]")
@@ -178,7 +215,7 @@ func TestVersionNumbersAreMonotonic(t *testing.T) {
 func TestReplyDedupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -206,7 +243,7 @@ func TestReplyDedupIsIdempotent(t *testing.T) {
 func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -253,7 +290,7 @@ func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 func TestAppendEventSeqAndOriginFilter(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 
 	want := []struct {
 		origin string
@@ -294,7 +331,7 @@ func TestAppendEventSeqAndOriginFilter(t *testing.T) {
 func TestEventDedupReturnsExistingSeq(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 
 	first, _ := s.AppendEvent(ctx, &Event{ReviewID: r.ID, Origin: "user", Type: "t", DedupKey: "dk"})
 	second, _ := s.AppendEvent(ctx, &Event{ReviewID: r.ID, Origin: "user", Type: "t", DedupKey: "dk"})
@@ -333,7 +370,7 @@ func TestReviewSlug(t *testing.T) {
 func TestGetReviewByRef(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, err := s.CreateReview(ctx, "s", "/repo", "feat/login")
+	r, err := s.CreateReview(ctx, "s", 0, "/repo", "feat/login")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +394,7 @@ func TestGetReviewByRef(t *testing.T) {
 func TestAskReplyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -405,7 +442,7 @@ func TestAskReplyRoundTrip(t *testing.T) {
 func TestAnswerAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -505,7 +542,7 @@ func TestAnswerAsk(t *testing.T) {
 func TestAnswerQuestion(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -531,7 +568,7 @@ func TestAnswerQuestion(t *testing.T) {
 func TestListOpenQuestionsIncludesAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm"})
 

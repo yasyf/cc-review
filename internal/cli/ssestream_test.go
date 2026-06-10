@@ -7,10 +7,32 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestStreamURLClaudePID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pid  int
+		want string
+	}{
+		{"non-zero pid rides the URL", 4242, "&claude_pid=4242"},
+		{"zero pid stays absent", 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := streamURL(StreamSource{Port: 1, ReviewID: "r", Consumer: "watch", ClaudePID: tc.pid})
+			if tc.want != "" && !strings.Contains(u, tc.want) {
+				t.Fatalf("url %q missing %q", u, tc.want)
+			}
+			if tc.want == "" && strings.Contains(u, "claude_pid") {
+				t.Fatalf("url %q must not carry claude_pid for pid 0", u)
+			}
+		})
+	}
+}
 
 func ssePort(t *testing.T, srv *httptest.Server) int {
 	t.Helper()

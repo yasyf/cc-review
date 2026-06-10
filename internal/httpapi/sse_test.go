@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,8 +27,8 @@ func (b *stubBackend) AppendEvent(_ context.Context, _ *store.Event) (int64, err
 	return 0, nil
 }
 
-func (b *stubBackend) Attach(reviewID, consumer string) func() {
-	key := reviewID + "/" + consumer
+func (b *stubBackend) Attach(reviewID, consumer string, claudePID int) func() {
+	key := reviewID + "/" + consumer + "/" + strconv.Itoa(claudePID)
 	b.attached <- key
 	return func() { b.detached <- key }
 }
@@ -47,13 +48,13 @@ func newTestServer(t *testing.T) (*store.Store, *stubBackend, *httptest.Server) 
 
 func TestEventsRegistersNamedConsumer(t *testing.T) {
 	st, backend, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", "/repo", "main")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events?session="+review.ID+"&consumer=channel", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events?session="+review.ID+"&consumer=channel&claude_pid=4242", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +68,7 @@ func TestEventsRegistersNamedConsumer(t *testing.T) {
 			break
 		}
 	}
-	want := review.ID + "/channel"
+	want := review.ID + "/channel/4242"
 	select {
 	case got := <-backend.attached:
 		if got != want {
@@ -90,7 +91,7 @@ func TestEventsRegistersNamedConsumer(t *testing.T) {
 
 func TestEventsSlugRefAttachesUnderCanonicalID(t *testing.T) {
 	st, backend, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", "/repo", "feat/x")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "feat/x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +111,9 @@ func TestEventsSlugRefAttachesUnderCanonicalID(t *testing.T) {
 		}
 	}
 	// The Bus and events table key on the full id, so the slug must be
-	// translated before any subscription.
-	want := review.ID + "/channel"
+	// translated before any subscription. No claude_pid param is a legitimate
+	// pid-less consumer, registered under pid 0.
+	want := review.ID + "/channel/0"
 	select {
 	case got := <-backend.attached:
 		if got != want {
@@ -134,9 +136,26 @@ func TestEventsUnknownReviewIs404(t *testing.T) {
 	}
 }
 
+func TestEventsBadClaudePIDIs400(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/events?session=" + review.ID + "&consumer=channel&claude_pid=garbage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestEventsBrowserConsumerNotRegistered(t *testing.T) {
 	st, backend, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", "/repo", "main")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,25 +12,27 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-review/internal/feedback"
-	"github.com/yasyf/cc-review/internal/gitdiff"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/vcs"
 	"github.com/yasyf/cc-review/internal/version"
 	"github.com/yasyf/cc-review/internal/wire"
 )
+
+func win(req Request) session.Window {
+	return session.Window{SessionID: req.Session, ClaudePID: req.ClaudePID}
+}
 
 func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	if req.Cwd == "" {
 		return errResp("start requires --cwd")
 	}
-	snap, err := gitdiff.Capture(ctx, req.Cwd)
+	snap, err := vcs.Capture(ctx, req.Cwd)
 	if err != nil {
 		return errResp(err.Error())
 	}
-	review, resumed, err := session.Resolve(ctx, s.store, session.Opts{
-		SessionID: req.Session, RepoRoot: snap.RepoRoot, Branch: snap.Branch, New: req.New,
-	})
+	review, resumed, err := s.resolver.Start(ctx, win(req), snap.RepoRoot, snap.Branch, req.New)
 	if err != nil {
 		return errResp(err.Error())
 	}
@@ -82,7 +84,7 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	return Response{
 		OK: true, URL: url, ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
 		HTTPPort:      s.httpPort,
-		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot),
+		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
 	}
 }
 
@@ -92,17 +94,18 @@ const channelConsumer = "channel"
 // as presence, and the boot grace during which handleStart keeps checking.
 const channelPollWindow = 3 * time.Second
 
-// channelActive reports whether a channel consumer is wired to this review:
-// attached to its SSE stream or recently polling resolve for this repo. The
-// channel server polls every second from session start, so on a long-running
-// daemon the answer is immediate. A daemon cold-booted by this very start has
-// no poll history yet, so keep checking until the boot grace window closes —
-// the channel's next 1s poll tick lands inside it. Never block resolve on
-// this: the channel's own poll is the signal source.
-func (s *Server) channelActive(ctx context.Context, reviewID, repoRoot string) bool {
+// channelActive reports whether this window's channel consumer is wired to
+// this review: attached to its SSE stream or recently polling resolve for this
+// repo. The pid key is what keeps window A's polls from lighting up window B's
+// start. The channel server polls every second from session start, so on a
+// long-running daemon the answer is immediate. A daemon cold-booted by this
+// very start has no poll history yet, so keep checking until the boot grace
+// window closes — the channel's next 1s poll tick lands inside it. Never block
+// resolve on this: the channel's own poll is the signal source.
+func (s *Server) channelActive(ctx context.Context, reviewID, repoRoot string, pid int) bool {
 	for {
-		if s.activity.Attached(reviewID, channelConsumer) ||
-			s.activity.PolledSince(repoRoot, channelConsumer, channelPollWindow) {
+		if s.activity.Attached(reviewID, channelConsumer, pid) ||
+			s.activity.PolledSince(repoRoot, channelConsumer, pid, channelPollWindow) {
 			return true
 		}
 		if time.Since(s.startedAt) >= channelPollWindow {
@@ -117,26 +120,17 @@ func (s *Server) channelActive(ctx context.Context, reviewID, repoRoot string) b
 }
 
 func (s *Server) handleResolve(ctx context.Context, req Request) Response {
-	repoRoot, err := gitdiff.RepoRoot(ctx, req.Cwd)
+	repoRoot, err := vcs.Root(ctx, req.Cwd)
 	if err != nil {
 		return errResp(err.Error())
 	}
 	if req.Consumer != "" {
-		s.activity.NotePoll(repoRoot, req.Consumer)
+		s.activity.NotePoll(repoRoot, req.Consumer, req.ClaudePID)
 	}
 	resp := Response{OK: true, HTTPPort: s.httpPort}
-	review, ok, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot)
+	review, ok, err := s.resolver.Find(ctx, win(req), repoRoot)
 	if err != nil {
 		return errResp(err.Error())
-	}
-	if !ok {
-		// A stream consumer may hold a sibling session's id — MCP servers are
-		// spawned once and outlive session rotation — so fall back to the
-		// repo's latest open review.
-		review, ok, err = s.store.FindLatestOpenReviewByRepo(ctx, repoRoot)
-		if err != nil {
-			return errResp(err.Error())
-		}
 	}
 	if ok {
 		resp.ReviewID = review.ID
@@ -298,47 +292,25 @@ func (s *Server) handleSessionRecord(ctx context.Context, req Request) Response 
 	if req.Session == "" {
 		return Response{OK: true}
 	}
-	var started time.Time
-	if req.StartedAt != 0 {
-		started = time.Unix(req.StartedAt, 0)
-	}
-	err := s.store.UpsertSessionHook(ctx, store.SessionHook{
-		SessionID: req.Session, Cwd: req.Cwd, TranscriptPath: req.TranscriptPath, StartedAt: started,
-	})
-	if err != nil {
-		return errResp(err.Error())
-	}
-	// Session ids rotate (each resume/continue is a new id), so rebind the repo's
-	// open review to the new session here — this is what keeps guard-edit,
-	// feedback, and status (all exact-session matches) working across rotation.
-	repoRoot, err := gitdiff.RepoRoot(ctx, req.Cwd)
+	// Session ids rotate (each resume/clear/compact is a new id), so rebind the
+	// window's open review to the new session here — this is what keeps
+	// guard-edit, feedback, and status working across rotation.
+	repoRoot, err := vcs.Root(ctx, req.Cwd)
 	if err != nil {
 		return Response{OK: true} // not a repo: nothing to rebind
 	}
-	if _, bound, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot); err != nil {
-		return errResp(err.Error())
-	} else if bound {
-		return Response{OK: true} // this session already owns a review here
-	}
-	review, ok, err := s.store.FindLatestOpenReviewByRepo(ctx, repoRoot)
-	if err != nil {
-		return errResp(err.Error())
-	}
-	if !ok {
-		return Response{OK: true}
-	}
-	if err := s.store.ReparentReviewSession(ctx, review.ID, req.Session, "session-start"); err != nil {
+	if err := s.resolver.Rebind(ctx, win(req), repoRoot); err != nil {
 		return errResp(err.Error())
 	}
 	return Response{OK: true}
 }
 
 func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
-	repoRoot, err := gitdiff.RepoRoot(ctx, req.Cwd)
+	repoRoot, err := vcs.Root(ctx, req.Cwd)
 	if err != nil {
 		return Response{OK: true, Allow: true} // not a repo: nothing to guard
 	}
-	review, ok, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot)
+	review, ok, err := s.resolver.Find(ctx, win(req), repoRoot)
 	if err != nil {
 		// Couldn't determine status: fail closed and make the failure visible
 		// rather than silently permitting an edit that an open review should block.
@@ -359,11 +331,11 @@ func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
 // --- helpers ---------------------------------------------------------------
 
 func (s *Server) lookupReview(ctx context.Context, req Request) (store.Review, bool, error) {
-	repoRoot, err := gitdiff.RepoRoot(ctx, req.Cwd)
+	repoRoot, err := vcs.Root(ctx, req.Cwd)
 	if err != nil {
 		return store.Review{}, false, err
 	}
-	return s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot)
+	return s.resolver.Find(ctx, win(req), repoRoot)
 }
 
 func (s *Server) emitReply(ctx context.Context, reviewID, typ string, version int, commentID int64, r store.Reply) {

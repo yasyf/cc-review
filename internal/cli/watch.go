@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-review/internal/daemon"
+	"github.com/yasyf/cc-review/internal/procs"
 )
 
 func newWatchCmd() *cobra.Command {
@@ -33,7 +34,7 @@ func newWatchCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			src := StreamSource{
-				Port: port, ReviewID: reviewID, Consumer: "watch",
+				Port: port, ReviewID: reviewID, Consumer: "watch", ClaudePID: procs.ClaudePID(),
 				Refresh: refreshHandshake(client, session, mustCwd(cwd), "watch"),
 			}
 			return ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {

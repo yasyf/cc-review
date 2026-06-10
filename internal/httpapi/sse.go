@@ -37,10 +37,22 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	excludeClaude := r.URL.Query().Get("exclude_origin") == "claude"
-	// Named stream consumers (watch, channel) register their presence; the
-	// browser sends no consumer param and is never registered.
-	if consumer := r.URL.Query().Get("consumer"); consumer != "" {
-		defer s.backend.Attach(reviewID, consumer)()
+	// Named stream consumers (watch, channel) register their presence with
+	// their window pid; the browser sends neither param and is never
+	// registered. An absent claude_pid is a pid-less manual watch (0), not an
+	// error; garbage is.
+	consumer := r.URL.Query().Get("consumer")
+	claudePID := 0
+	if v := r.URL.Query().Get("claude_pid"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "bad claude_pid", http.StatusBadRequest)
+			return
+		}
+		claudePID = n
+	}
+	if consumer != "" {
+		defer s.backend.Attach(reviewID, consumer, claudePID)()
 	}
 
 	h := w.Header()

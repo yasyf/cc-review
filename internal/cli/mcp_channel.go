@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-review/internal/daemon"
+	"github.com/yasyf/cc-review/internal/procs"
 	"github.com/yasyf/cc-review/internal/version"
 )
 
@@ -122,15 +123,19 @@ func runMCPChannel(ctx context.Context, session, cwd string, in io.Reader, out i
 }
 
 // streamToChannel waits for the daemon + review, then pushes every human event
-// as a claude/channel notification for the lifetime of the session.
+// as a claude/channel notification for the lifetime of the session. The window
+// pid is resolved once at boot — the channel server lives as long as the
+// window — and keys the stream even when $CLAUDE_CODE_SESSION_ID is stale or
+// unset.
 func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 	client := daemon.NewClient()
+	claudePID := procs.ClaudePID()
 	reviewID, port := waitForReview(ctx, client, session, cwd)
 	if reviewID == "" {
 		return
 	}
 	src := StreamSource{
-		Port: port, ReviewID: reviewID, Consumer: "channel",
+		Port: port, ReviewID: reviewID, Consumer: "channel", ClaudePID: claudePID,
 		Refresh: refreshHandshake(client, session, cwd, "channel"),
 	}
 	_ = ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {

@@ -6,12 +6,13 @@ import (
 	"time"
 )
 
-// Review is a code-review session keyed to a Claude session id + repo root.
+// Review is a code-review session keyed to a Claude window (pid) + repo root.
 type Review struct {
 	ID        string
 	Slug      string // URL name: sanitized creation-time branch + first 8 hex of ID
-	SessionID string // empty when NULL (repo-root-only, pre-backfill)
+	SessionID string // empty when NULL
 	RepoRoot  string
+	ClaudePID int    // 0 when detached (no live window owns it)
 	Status    string // open | submitted | closed
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -138,21 +139,4 @@ type Event struct {
 	Payload       json.RawMessage
 	CreatedAt     time.Time
 	DedupKey      string // empty => no dedup
-}
-
-// ReviewSession is one row of a review's append-only session-binding history.
-type ReviewSession struct {
-	ID        int64
-	ReviewID  string
-	SessionID string
-	Source    string // create | adopt | session-start
-	CreatedAt time.Time
-}
-
-// SessionHook records what the SessionStart hook reported for a Claude session.
-type SessionHook struct {
-	SessionID      string
-	Cwd            string
-	TranscriptPath string
-	StartedAt      time.Time
 }

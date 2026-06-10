@@ -33,9 +33,13 @@ func newDaemonCmd() *cobra.Command {
 	return cmd
 }
 
-// newSessionRecordCmd is the hidden SessionStart hook handler. It records the
-// session's facts best-effort: if the daemon is not up it does nothing (start
-// will resolve the session later regardless).
+// newSessionRecordCmd is the hidden SessionStart hook handler: it rebinds the
+// window's review to the rotated session id. Claude Code fires SessionStart
+// (startup/resume/clear/compact) before any tool use in the new session, so
+// the rebind lands before the first guard-edit. The hook's source field is
+// deliberately not parsed — pid identity makes it redundant. Best-effort: with
+// no daemon running there is nothing to rebind (start resolves the window
+// later regardless), and a hook must never boot one.
 func newSessionRecordCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "session-record",
@@ -43,11 +47,10 @@ func newSessionRecordCmd() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			in := readHookInput(cmd.InOrStdin())
-			client := daemon.NewClient()
-			if !client.Available() {
+			if err := daemon.EnsureCurrentIfRunning(); err != nil {
 				return nil
 			}
-			_, _ = client.SessionRecord(in.SessionID, in.Cwd, in.TranscriptPath, 0)
+			_, _ = daemon.NewClient().SessionRecord(in.SessionID, in.Cwd)
 			return nil
 		},
 	}

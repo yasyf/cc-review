@@ -92,7 +92,7 @@ cc-review reply --answer-to <replyId> --answer "<the human's answer>"
 
 ## 5. Later rounds
 
-After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — even from a new or rotated session — and all prior history is retained. `cc-review start --new` forces a fresh review instead.
+After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead.
 
 ## Reference
 

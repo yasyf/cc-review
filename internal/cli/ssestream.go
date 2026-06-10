@@ -48,12 +48,14 @@ func resolveReview(ctx context.Context, client *daemon.Client, session, cwd, con
 
 // StreamSource identifies one SSE consumption: where to connect, as whom, and
 // how to refresh the handshake — a version-skew eviction restarts the daemon
-// mid-session, changing the port the consumer captured.
+// mid-session, changing the port the consumer captured. ClaudePID 0 is a
+// pid-less manual consumer outside any Claude window.
 type StreamSource struct {
-	Port     int
-	ReviewID string
-	Consumer string
-	Refresh  func(ctx context.Context) (port int, err error)
+	Port      int
+	ReviewID  string
+	Consumer  string
+	ClaudePID int
+	Refresh   func(ctx context.Context) (port int, err error)
 }
 
 // ConsumeEvents streams a review's events (excluding Claude's own) to handle,
@@ -98,8 +100,12 @@ func ConsumeEvents(ctx context.Context, src StreamSource, handle EventHandler) e
 }
 
 func streamURL(src StreamSource) string {
-	return fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&exclude_origin=claude&consumer=%s",
+	u := fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&exclude_origin=claude&consumer=%s",
 		src.Port, url.QueryEscape(src.ReviewID), url.QueryEscape(src.Consumer))
+	if src.ClaudePID != 0 {
+		u += "&claude_pid=" + strconv.Itoa(src.ClaudePID)
+	}
+	return u
 }
 
 // refreshHandshake returns a StreamSource.Refresh that re-resolves the daemon's

@@ -17,6 +17,8 @@ import (
 
 	"github.com/yasyf/cc-review/internal/httpapi"
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/procs"
+	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/version"
 )
@@ -29,12 +31,18 @@ const handleTimeout = 35 * time.Second
 // the graceful-shutdown wait, the post-SIGKILL wait, and the process-exit wait.
 const defaultEvictTimeout = 5 * time.Second
 
+// attachGrace is how recently a pid-less review's last SSE attachment must
+// have dropped for held to still consider the review occupied.
+const attachGrace = 10 * time.Second
+
 // Server is the running daemon: the control-plane unix-socket server plus the
 // data/UI HTTP plane it boots.
 type Server struct {
 	store    *store.Store
 	bus      *Bus
 	activity *Activity
+	resolver session.Resolver
+	alive    func(pid int) bool
 	socket   string
 	log      *log.Logger
 
@@ -65,12 +73,14 @@ func Run(ctx context.Context, fixedPort int) error {
 		store:        st,
 		bus:          NewBus(),
 		activity:     NewActivity(),
+		alive:        procs.LiveClaude,
 		socket:       paths.SocketPath(),
 		log:          log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
 		startedAt:    time.Now(),
 		fixedPort:    fixedPort,
 		evictTimeout: defaultEvictTimeout,
 	}
+	s.resolver = session.Resolver{Store: st, Held: s.held}
 	return s.serve(ctx)
 }
 
@@ -238,18 +248,36 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		writeResp(conn, Response{OK: false, Error: "bad request: " + err.Error()})
 		return
 	}
-	resp := s.dispatch(ctx, req)
-	resp.Proto = ProtocolVersion
-	writeResp(conn, resp)
+	writeResp(conn, s.dispatch(ctx, req))
+}
+
+// held reports whether the window owning a review is still alive: a pid-bound
+// review by process liveness, a pid-less one by a recent SSE attachment. It
+// runs only on the start/session-record paths, never per resolve poll and
+// never inside a store transaction.
+func (s *Server) held(_ context.Context, r store.Review) bool {
+	if r.ClaudePID != 0 {
+		return s.alive(r.ClaudePID)
+	}
+	return s.activity.AttachedWithin(r.ID, attachGrace)
 }
 
 func (s *Server) dispatch(ctx context.Context, req Request) Response {
+	// Health and shutdown answer regardless of protocol version: cross-version
+	// eviction probes (evictHolder) depend on both.
 	switch req.Op {
 	case OpHealth:
 		return Response{OK: true, DaemonVersion: version.String()}
 	case OpShutdown:
 		s.triggerShutdown()
 		return Response{OK: true}
+	}
+	if req.Proto != ProtocolVersion {
+		return errResp(fmt.Sprintf(
+			"cc-review protocol skew: daemon speaks v%d, request is v%d — client and daemon versions differ; retry the command (first contact upgrades the daemon)",
+			ProtocolVersion, req.Proto))
+	}
+	switch req.Op {
 	case OpStart:
 		return s.handleStart(ctx, req)
 	case OpResolve:
