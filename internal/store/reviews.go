@@ -29,15 +29,30 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 
 const reviewCols = `id, session_id, repo_root, status, created_at, updated_at`
 
-// CreateReview inserts a new open review. A blank sessionID is stored as NULL so
-// the partial unique index does not collapse all session-less reviews together.
+// CreateReview inserts a new open review and, when sessioned, the initial
+// review_sessions binding row. A blank sessionID is stored as NULL so the
+// partial unique index does not collapse all session-less reviews together.
 func (s *Store) CreateReview(ctx context.Context, sessionID, repoRoot string) (Review, error) {
 	now := time.Now()
 	r := Review{ID: newID(), SessionID: sessionID, RepoRoot: repoRoot, Status: "open", CreatedAt: now, UpdatedAt: now}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO reviews(id, session_id, repo_root, status, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
-		r.ID, nullString(sessionID), repoRoot, r.Status, unix(now), unix(now))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return Review{}, fmt.Errorf("create review: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO reviews(id, session_id, repo_root, status, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
+		r.ID, nullString(sessionID), repoRoot, r.Status, unix(now), unix(now)); err != nil {
+		return Review{}, fmt.Errorf("create review: %w", err)
+	}
+	if sessionID != "" {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO review_sessions(review_id, session_id, source, created_at) VALUES(?,?,?,?)`,
+			r.ID, sessionID, "create", unix(now)); err != nil {
+			return Review{}, fmt.Errorf("create review: record binding: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return Review{}, fmt.Errorf("create review: %w", err)
 	}
 	return r, nil
@@ -80,14 +95,59 @@ func (s *Store) FindLatestOpenReviewByRepo(ctx context.Context, repoRoot string)
 	return r, err == nil, err
 }
 
-// BackfillSessionID attaches a session id to a previously session-less review.
-func (s *Store) BackfillSessionID(ctx context.Context, reviewID, sessionID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE reviews SET session_id=?, updated_at=? WHERE id=?`, sessionID, unix(time.Now()), reviewID)
+// ReparentReviewSession rebinds a review to sessionID and appends the
+// review_sessions audit row in one tx. The partial unique index
+// idx_reviews_session_repo is the final collision guard: if sessionID already
+// owns a different review in this repo the tx fails and nothing changes.
+func (s *Store) ReparentReviewSession(ctx context.Context, reviewID, sessionID, source string) error {
+	now := time.Now()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("backfill session id: %w", err)
+		return fmt.Errorf("reparent review session: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE reviews SET session_id=?, updated_at=? WHERE id=?`, sessionID, unix(now), reviewID)
+	if err != nil {
+		return fmt.Errorf("reparent review session: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("reparent review session: %w", err)
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO review_sessions(review_id, session_id, source, created_at) VALUES(?,?,?,?)`,
+		reviewID, sessionID, source, unix(now)); err != nil {
+		return fmt.Errorf("reparent review session: record binding: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("reparent review session: %w", err)
 	}
 	return nil
+}
+
+// ListReviewSessions returns a review's session-binding history, oldest first.
+func (s *Store) ListReviewSessions(ctx context.Context, reviewID string) ([]ReviewSession, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, review_id, session_id, source, created_at FROM review_sessions WHERE review_id=? ORDER BY id ASC`, reviewID)
+	if err != nil {
+		return nil, fmt.Errorf("list review sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []ReviewSession
+	for rows.Next() {
+		var (
+			rs      ReviewSession
+			created int64
+		)
+		if err := rows.Scan(&rs.ID, &rs.ReviewID, &rs.SessionID, &rs.Source, &created); err != nil {
+			return nil, fmt.Errorf("list review sessions: %w", err)
+		}
+		rs.CreatedAt = fromUnix(created)
+		out = append(out, rs)
+	}
+	return out, rows.Err()
 }
 
 // SetReviewStatus updates a review's status and bumps updated_at.

@@ -98,6 +98,14 @@ CREATE TABLE IF NOT EXISTS session_hooks (
   transcript_path TEXT NOT NULL DEFAULT '',
   started_at      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS review_sessions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id  TEXT NOT NULL REFERENCES reviews(id),
+  session_id TEXT NOT NULL,
+  source     TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_sessions_review ON review_sessions(review_id);
 `
 
 // Open opens (creating if needed) the database at path and applies the schema.

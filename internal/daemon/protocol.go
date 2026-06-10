@@ -45,7 +45,6 @@ type Request struct {
 	Op             Op           `json:"op"`
 	Session        string       `json:"session,omitempty"`
 	Cwd            string       `json:"cwd,omitempty"`
-	Resume         bool         `json:"resume,omitempty"`
 	New            bool         `json:"new,omitempty"`
 	Replies        []ReplyInput `json:"replies,omitempty"`
 	TranscriptPath string       `json:"transcript_path,omitempty"`

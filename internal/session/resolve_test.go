@@ -36,41 +36,91 @@ func TestResolveCreatesThenResumes(t *testing.T) {
 	}
 }
 
-func TestResolveNoSilentRepoAdoption(t *testing.T) {
+func TestResolveAdoptsOpenRepoReviewByDefault(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
-	// A session-less open review exists for the repo (e.g. from a prior fallback).
-	pre, _ := st.CreateReview(ctx, "", "/repo")
+	// An open review bound to another session (e.g. before a session rotation).
+	pre, _ := st.CreateReview(ctx, "s1", "/repo")
 
-	// A new session with no flags must NOT silently adopt it.
-	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s1", RepoRoot: "/repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resumed || r.ID == pre.ID {
-		t.Fatalf("default resolve silently adopted the repo-root review (resumed=%v)", resumed)
-	}
-}
-
-func TestResolveExplicitResumeAdopts(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t)
-	pre, _ := st.CreateReview(ctx, "", "/repo")
-
-	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s1", RepoRoot: "/repo", Resume: true})
+	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s2", RepoRoot: "/repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !resumed || r.ID != pre.ID {
-		t.Fatalf("--resume should adopt the open repo-root review (resumed=%v id=%q)", resumed, r.ID)
+		t.Fatalf("default resolve should adopt the open repo review (resumed=%v id=%q)", resumed, r.ID)
 	}
-	if r.SessionID != "s1" {
-		t.Fatalf("adoption should backfill the session id, got %q", r.SessionID)
+	if r.SessionID != "s2" {
+		t.Fatalf("adoption should rebind the session id, got %q", r.SessionID)
 	}
-	// The backfill must persist and now be an exact match.
-	got, ok, _ := st.FindReviewBySessionRepo(ctx, "s1", "/repo")
+	got, ok, _ := st.FindReviewBySessionRepo(ctx, "s2", "/repo")
 	if !ok || got.ID != pre.ID {
-		t.Fatalf("backfilled session id did not persist")
+		t.Fatal("rebinding did not persist")
+	}
+	hist, err := st.ListReviewSessions(ctx, pre.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 || hist[0].Source != "create" || hist[1].Source != "adopt" || hist[1].SessionID != "s2" {
+		t.Fatalf("binding history = %+v, want [create:s1, adopt:s2]", hist)
+	}
+}
+
+func TestResolveExactMatchWinsOverNewerOpenReview(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mine, _ := st.CreateReview(ctx, "s2", "/repo")
+	other, _ := st.CreateReview(ctx, "s1", "/repo")
+
+	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s2", RepoRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resumed || r.ID != mine.ID {
+		t.Fatalf("exact match should win (resumed=%v id=%q want %q)", resumed, r.ID, mine.ID)
+	}
+	// The other session's binding must be untouched.
+	got, ok, _ := st.FindReviewBySessionRepo(ctx, "s1", "/repo")
+	if !ok || got.ID != other.ID {
+		t.Fatal("the sibling session's binding was disturbed")
+	}
+}
+
+func TestResolveSessionlessStartAdoptsWithoutBinding(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	pre, _ := st.CreateReview(ctx, "s1", "/repo")
+
+	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "", RepoRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resumed || r.ID != pre.ID {
+		t.Fatalf("sessionless start should still adopt (resumed=%v)", resumed)
+	}
+	got, _ := st.GetReview(ctx, pre.ID)
+	if got.SessionID != "s1" {
+		t.Fatalf("sessionless adoption must not rebind, got %q", got.SessionID)
+	}
+	hist, _ := st.ListReviewSessions(ctx, pre.ID)
+	if len(hist) != 1 {
+		t.Fatalf("sessionless adoption must not append history, got %d rows", len(hist))
+	}
+}
+
+func TestResolveCreatesWhenNoOpenReview(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	pre, _ := st.CreateReview(ctx, "s1", "/repo")
+	if err := st.SetReviewStatus(ctx, pre.ID, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+
+	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s2", RepoRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed || r.ID == pre.ID {
+		t.Fatalf("no open review should mean a fresh create (resumed=%v)", resumed)
 	}
 }
 

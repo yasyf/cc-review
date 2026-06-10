@@ -55,6 +55,104 @@ func TestReviewResolution(t *testing.T) {
 	}
 }
 
+func TestCreateReviewRecordsInitialBinding(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	sessioned, _ := s.CreateReview(ctx, "s1", "/repo/a")
+	hist, err := s.ListReviewSessions(ctx, sessioned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 1 || hist[0].Source != "create" || hist[0].SessionID != "s1" {
+		t.Fatalf("sessioned create history = %+v, want one create:s1 row", hist)
+	}
+
+	sessionless, _ := s.CreateReview(ctx, "", "/repo/b")
+	hist, _ = s.ListReviewSessions(ctx, sessionless.ID)
+	if len(hist) != 0 {
+		t.Fatalf("sessionless create should record no binding, got %+v", hist)
+	}
+}
+
+func TestReparentReviewSession(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s1", "/repo")
+
+	if err := s.ReparentReviewSession(ctx, r.ID, "s2", "adopt"); err != nil {
+		t.Fatalf("reparent: %v", err)
+	}
+	got, _ := s.GetReview(ctx, r.ID)
+	if got.SessionID != "s2" {
+		t.Fatalf("session_id = %q, want s2", got.SessionID)
+	}
+	if _, ok, _ := s.FindReviewBySessionRepo(ctx, "s2", "/repo"); !ok {
+		t.Fatal("s2 should now match")
+	}
+	if _, ok, _ := s.FindReviewBySessionRepo(ctx, "s1", "/repo"); ok {
+		t.Fatal("s1 should no longer match")
+	}
+}
+
+func TestReparentAppendsAuditRowPerRebind(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s1", "/repo")
+
+	if err := s.ReparentReviewSession(ctx, r.ID, "s2", "adopt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReparentReviewSession(ctx, r.ID, "s3", "session-start"); err != nil {
+		t.Fatal(err)
+	}
+	hist, err := s.ListReviewSessions(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ session, source string }{
+		{"s1", "create"}, {"s2", "adopt"}, {"s3", "session-start"},
+	}
+	if len(hist) != len(want) {
+		t.Fatalf("got %d history rows, want %d: %+v", len(hist), len(want), hist)
+	}
+	for i, w := range want {
+		if hist[i].SessionID != w.session || hist[i].Source != w.source {
+			t.Fatalf("row %d = %s/%s, want %s/%s", i, hist[i].SessionID, hist[i].Source, w.session, w.source)
+		}
+	}
+}
+
+func TestReparentCollisionFailsAtomically(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	a, _ := s.CreateReview(ctx, "s1", "/repo")
+	if _, err := s.CreateReview(ctx, "s2", "/repo"); err != nil {
+		t.Fatal(err)
+	}
+
+	// s2 already owns a review in /repo: the unique index must reject the rebind.
+	if err := s.ReparentReviewSession(ctx, a.ID, "s2", "adopt"); err == nil {
+		t.Fatal("reparent onto an occupied (session, repo) slot should fail")
+	}
+	got, _ := s.GetReview(ctx, a.ID)
+	if got.SessionID != "s1" {
+		t.Fatalf("binding changed despite failed tx: %q", got.SessionID)
+	}
+	hist, _ := s.ListReviewSessions(ctx, a.ID)
+	if len(hist) != 1 {
+		t.Fatalf("audit row leaked from a rolled-back tx: %+v", hist)
+	}
+}
+
+func TestReparentUnknownReviewErrNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if err := s.ReparentReviewSession(ctx, "nope", "s1", "adopt"); err != ErrNotFound {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestVersionNumbersAreMonotonic(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

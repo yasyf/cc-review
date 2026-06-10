@@ -72,6 +72,15 @@ type Event struct {
 	DedupKey      string // empty => no dedup
 }
 
+// ReviewSession is one row of a review's append-only session-binding history.
+type ReviewSession struct {
+	ID        int64
+	ReviewID  string
+	SessionID string
+	Source    string // create | adopt | session-start
+	CreatedAt time.Time
+}
+
 // SessionHook records what the SessionStart hook reported for a Claude session.
 type SessionHook struct {
 	SessionID      string

@@ -29,7 +29,7 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 		return errResp(err.Error())
 	}
 	review, resumed, err := session.Resolve(ctx, s.store, session.Opts{
-		SessionID: req.Session, RepoRoot: snap.RepoRoot, Resume: req.Resume, New: req.New,
+		SessionID: req.Session, RepoRoot: snap.RepoRoot, New: req.New,
 	})
 	if err != nil {
 		return errResp(err.Error())
@@ -201,6 +201,28 @@ func (s *Server) handleSessionRecord(ctx context.Context, req Request) Response 
 		SessionID: req.Session, Cwd: req.Cwd, TranscriptPath: req.TranscriptPath, StartedAt: started,
 	})
 	if err != nil {
+		return errResp(err.Error())
+	}
+	// Session ids rotate (each resume/continue is a new id), so rebind the repo's
+	// open review to the new session here — this is what keeps guard-edit,
+	// feedback, and status (all exact-session matches) working across rotation.
+	repoRoot, err := gitdiff.RepoRoot(ctx, req.Cwd)
+	if err != nil {
+		return Response{OK: true} // not a repo: nothing to rebind
+	}
+	if _, bound, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot); err != nil {
+		return errResp(err.Error())
+	} else if bound {
+		return Response{OK: true} // this session already owns a review here
+	}
+	review, ok, err := s.store.FindLatestOpenReviewByRepo(ctx, repoRoot)
+	if err != nil {
+		return errResp(err.Error())
+	}
+	if !ok {
+		return Response{OK: true}
+	}
+	if err := s.store.ReparentReviewSession(ctx, review.ID, req.Session, "session-start"); err != nil {
 		return errResp(err.Error())
 	}
 	return Response{OK: true}

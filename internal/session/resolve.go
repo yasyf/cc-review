@@ -14,19 +14,19 @@ import (
 type Opts struct {
 	SessionID string
 	RepoRoot  string
-	Resume    bool // adopt the latest open repo-root review if no session match
 	New       bool // force a fresh review, detaching any existing session match
 }
 
 // Resolve returns the review a start should attach to and whether it is a resume
 // (an existing review gaining a new version) versus a fresh create.
 //
-//   1. exact (session_id, repo_root) match            → resume
-//   2. --resume and a latest open repo-root review     → adopt (backfill session) + resume
-//   3. otherwise                                       → create
+//  1. exact (session_id, repo_root) match  → resume
+//  2. latest open repo-root review         → adopt (reparent to this session) + resume
+//  3. otherwise                            → create
 //
-// --new first detaches+closes any exact match so the unique (session, repo) slot
-// is free, then creates.
+// Exact match wins over a newer open review, so the reparent in 2 can never
+// collide with a binding this session already holds. --new first detaches+closes
+// any exact match so the unique (session, repo) slot is free, then creates.
 func Resolve(ctx context.Context, st *store.Store, o Opts) (store.Review, bool, error) {
 	if o.New {
 		if existing, ok, err := st.FindReviewBySessionRepo(ctx, o.SessionID, o.RepoRoot); err != nil {
@@ -48,18 +48,16 @@ func Resolve(ctx context.Context, st *store.Store, o Opts) (store.Review, bool, 
 		return r, true, nil
 	}
 
-	if o.Resume {
-		if r, ok, err := st.FindLatestOpenReviewByRepo(ctx, o.RepoRoot); err != nil {
-			return store.Review{}, false, err
-		} else if ok {
-			if o.SessionID != "" && r.SessionID == "" {
-				if err := st.BackfillSessionID(ctx, r.ID, o.SessionID); err != nil {
-					return store.Review{}, false, err
-				}
-				r.SessionID = o.SessionID
+	if r, ok, err := st.FindLatestOpenReviewByRepo(ctx, o.RepoRoot); err != nil {
+		return store.Review{}, false, err
+	} else if ok {
+		if o.SessionID != "" {
+			if err := st.ReparentReviewSession(ctx, r.ID, o.SessionID, "adopt"); err != nil {
+				return store.Review{}, false, err
 			}
-			return r, true, nil
+			r.SessionID = o.SessionID
 		}
+		return r, true, nil
 	}
 
 	return create(ctx, st, o)
