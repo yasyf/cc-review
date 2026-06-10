@@ -12,7 +12,7 @@ cc-review/
 │   ├── daemon/         #   lazy-started daemon: unix-socket IPC, pub/sub bus, long-poll
 │   ├── httpapi/        #   127.0.0.1 HTTP server: embedded SPA, /api REST, /events SSE
 │   ├── store/          #   modernc.org/sqlite, append-only schema + queries
-│   ├── gitdiff/        #   working-tree snapshot (git -C cwd) → versioned patch
+│   ├── vcs/            #   working-tree snapshot (git or jj, auto-detected) → versioned patch
 │   ├── session/        #   session-id + repo_root resolution and resume policy
 │   ├── paths/          #   ~/.cc-review state-dir layout
 │   ├── version/        #   ldflags-injected version
