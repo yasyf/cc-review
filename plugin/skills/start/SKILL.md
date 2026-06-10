@@ -15,21 +15,24 @@ You are running a code review. The human reviews your uncommitted changes in a b
 cc-review start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
-It prints a `http://127.0.0.1:<port>/s/<id>?t=…` URL. **Show this URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+It prints two lines: a `http://127.0.0.1:<port>/s/<id>?t=…` URL, then `channel: active` or `channel: inactive`. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
 
-## 2. Arm a persistent Monitor on the event stream — then keep working
+## 2. Wire up event delivery — then keep working
 
-Launch a **Monitor** (persistent) wrapping:
+- **`channel: active`** — this session's MCP channel is streaming the review. Do **not** arm a Monitor (you would receive every event twice). Comments arrive as `<channel source="cc-review">` tags carrying the same JSON event payloads.
+- **`channel: inactive`** — launch a **Monitor** (persistent) wrapping:
 
-```bash
-cc-review watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
-```
+  ```bash
+  cc-review watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+  ```
 
-Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification. **Do not block waiting.** Once the Monitor is armed, tell the user you're watching and let their comments arrive as notifications. Events arrive on their own schedule; an event is not the user's reply.
+  Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification.
+
+Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
 
 ## 3. React to each event — READ ONLY, make NO code changes
 
-Each notification is a JSON object with a `type`. The ones you act on:
+Each event (Monitor line or channel tag) is a JSON object with a `type`. The ones you act on:
 
 - **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything.
 - **`submit`** — the human pressed Submit. Go to step 4.
@@ -50,7 +53,7 @@ cc-review reply --comment <commentId> --kind clarification --body "Note: this al
 
 ## 4. On the `submit` event — drain open questions, then proceed
 
-The Monitor exits after the `submit` event. Now:
+The submit signal is the Monitor's final line (it exits) on the Monitor path, or a channel tag whose JSON `type` is `submit` on the channel path. Now:
 
 ```bash
 cc-review feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
@@ -66,7 +69,7 @@ cc-review reply --answer-to <replyId> --answer "<the human's answer>"
 
 ## 5. Later rounds
 
-After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff; all prior history is retained.
+After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — even from a new or rotated session — and all prior history is retained. `cc-review start --new` forces a fresh review instead.
 
 ## Reference
 

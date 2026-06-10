@@ -8,6 +8,8 @@
 
 **Edits are blocked.** That's the point: the PreToolUse guard denies edits while a review is open. It lifts once the human presses Submit and the review status becomes `submitted`. If the daemon is down, the guard fails open (edits are allowed).
 
-**The review didn't resume.** Resume is keyed on `(session id, repo root)` — the branch is never part of the key, so a mid-review checkout won't fork it. If the session id differs (e.g. a new session), pass `--resume` to adopt the latest open review for the repo, or `--new` to start fresh.
+**The review didn't resume.** Resume is automatic: `start` adopts the repo's latest open review even from a new or rotated session (the branch is never part of the key, so a mid-review checkout won't fork it either). Pass `--new` if you wanted a fresh review instead. Note that a *submitted* review doesn't resume across sessions — only open ones do.
+
+**The stream went quiet after a plugin upgrade.** Upgrading replaces the daemon mid-session; streams refresh their connection automatically, but a watcher built by the old binary may stop. Re-arm the Monitor — `watch` resumes from its cursor, so nothing is lost.
 
 **Nothing to review.** `start` snapshots the uncommitted working tree (tracked, staged, and untracked, minus ignored) against `HEAD` — or the empty tree when the repo has no commits. With no uncommitted changes, the diff is empty.

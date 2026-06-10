@@ -4,7 +4,7 @@ Every command is a thin call to the local daemon, which lazy-starts on first use
 
 | Command | What it does |
 | --- | --- |
-| `cc-review start --session <id> --cwd <dir> [--resume] [--new]` | Snapshot the working tree and print the review URL. `--resume` adopts the latest open review for the repo when there's no session match; `--new` forces a fresh review. |
+| `cc-review start --session <id> --cwd <dir> [--new]` | Snapshot the working tree and print the review URL plus a `channel: active\|inactive` line. By default it resumes the repo's open review — adopting it across session rotation — and `--new` forces a fresh one. |
 | `cc-review watch --session <id> --cwd <dir>` | Print one JSON event per line (excluding your own replies) and exit on `submit`. Run it under a persistent Monitor. |
 | `cc-review reply --comment <id> --kind <question\|option\|clarification> --body <text> [--option <text> ...]` | Post a reply under a comment. Returns immediately. |
 | `cc-review reply --answer-to <replyId> --answer <text>` | Record your answer to a question (used during the post-submit drain). |

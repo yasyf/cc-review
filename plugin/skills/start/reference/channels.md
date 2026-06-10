@@ -6,7 +6,9 @@ This is a research-preview feature. It is **opt-in** because Claude Code channel
 
 The plugin auto-registers the channel server (`mcpServers` in `plugin.json` runs `scripts/mcp-channel.sh`, which downloads the binary on first use and execs `cc-review mcp-channel`). Without `--channels` it idles harmlessly; the Monitor path stays the default. To use it:
 
-1. Launch Claude Code with channels enabled (`--channels`, subject to your org's `channelsEnabled` policy; Anthropic auth only).
+1. Launch Claude Code with channels enabled (`--channels <servers...>`, subject to your org's `channelsEnabled` policy; Anthropic auth only — or `--dangerously-load-development-channels plugin:review@cc-review` while this plugin is not on the channels allowlist).
 2. Run `/review:start` as usual. The channel waits for the review to exist, then pushes each human comment as a channel event and exposes a `reply` tool equivalent to `cc-review reply`.
+
+`start` detects the channel and prints `channel: active`, which tells the skill to skip the Monitor — events arrive once, as channel tags, not twice.
 
 Caveats: channel delivery is fire-and-forget at turn boundaries and can drop silently, so the same cursor/idempotency guarantees as the Monitor path apply. Channel content is human text dropped into your context — the edit guard (no edits before Submit) remains the backstop. The daemon binds `127.0.0.1` only.
