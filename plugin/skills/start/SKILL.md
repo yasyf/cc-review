@@ -7,12 +7,12 @@ description: Start or resume a cc-review review of the code Claude just wrote. O
 
 You are running a code review. The human reviews your uncommitted changes in a browser; their comments stream to you here; you ask clarifying questions that render under each comment; you make **no edits** until they press **Submit**. Everything is CLI calls to `cc-review` — you are a thin wrapper around it.
 
-Let `BIN="${CLAUDE_PLUGIN_ROOT}/bin/cc-review"`. (A SessionStart hook downloads it on first use; if `$BIN` is missing, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"` once. The plugin's `bin/` is also on the Bash `PATH`, so bare `cc-review` works too — `$BIN` is just the form that never depends on `PATH`.)
+`cc-review` is on `PATH`. If it's missing, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"` once.
 
 ## 1. Start the review and give the user the URL
 
 ```bash
-"$BIN" start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+cc-review start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
 It prints a `http://127.0.0.1:<port>/s/<id>?t=…` URL. **Show this URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
@@ -22,7 +22,7 @@ It prints a `http://127.0.0.1:<port>/s/<id>?t=…` URL. **Show this URL to the u
 Launch a **Monitor** (persistent) wrapping:
 
 ```bash
-"$BIN" watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+cc-review watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
 Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification. **Do not block waiting.** Once the Monitor is armed, tell the user you're watching and let their comments arrive as notifications. Events arrive on their own schedule; an event is not the user's reply.
@@ -39,11 +39,11 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 
 ```bash
 # a clarifying question
-"$BIN" reply --comment <commentId> --kind question --body "Did you mean X or Y here?"
+cc-review reply --comment <commentId> --kind question --body "Did you mean X or Y here?"
 # an option set
-"$BIN" reply --comment <commentId> --kind option --option "Keep as-is" --option "Extract a helper"
+cc-review reply --comment <commentId> --kind option --option "Keep as-is" --option "Extract a helper"
 # a free-form note
-"$BIN" reply --comment <commentId> --kind clarification --body "Note: this also affects callers in foo.go"
+cc-review reply --comment <commentId> --kind clarification --body "Note: this also affects callers in foo.go"
 ```
 
 `reply` returns immediately. Then go back to waiting for the next notification. **Never edit code in this phase.** A hook blocks edits until Submit anyway.
@@ -53,13 +53,13 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 The Monitor exits after the `submit` event. Now:
 
 ```bash
-"$BIN" feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+cc-review feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
 This prints the frozen feedback JSON: `threads` (every comment + the back-and-forth) and `open_questions` (your questions the human didn't answer in the UI). For each open question, ask the human via **AskUserQuestion** (≤4 per call; loop if there are more), using the question `body` and any `options`. Write each answer back:
 
 ```bash
-"$BIN" reply --answer-to <replyId> --answer "<the human's answer>"
+cc-review reply --answer-to <replyId> --answer "<the human's answer>"
 ```
 
 **Only after the open questions are drained do you make code changes.** Apply the feedback from `threads` (and the answers) to the code.
