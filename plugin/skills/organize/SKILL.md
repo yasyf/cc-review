@@ -1,0 +1,74 @@
+---
+name: organize
+description: Organize the open cc-review into a reviewable story — chapters of files with per-file risk and rationale — and handle AI-bar requests from the reviewer (bulk-mark files reviewed, hide noise, re-organize). Invoked when an ai.request.created event arrives during /review:start.
+---
+
+# /review:organize
+
+You turn an open cc-review diff into a guided review. An `ai.request.created` event carries `{request: {id, source, prompt}}`. `source: "system"` means the daemon asked you to build chapters; `source: "user"` means the reviewer typed `prompt` into the AI bar. All writes go through the cc-review MCP tools: `set_file_states`, `submit_organization`, `update_ai_request`, `get_review_files`. A human comment event always preempts this work.
+
+Open every request with `update_ai_request {ai_request_id, status: "working"}` and close it with `update_ai_request {ai_request_id, status: "done"|"failed", summary, unmatched?}`.
+
+## Build the chapters (system request, or "reorganize" from the bar)
+
+1. `get_review_files` — the canonical file list and current states. The diff content is in your repo: `git -C "$PWD" diff HEAD` (or `jj diff --git` in a jj repo) mirrors the snapshot — except untracked new files, which `git diff HEAD` omits; `Read` those directly. Read any file you cannot chapter from memory of writing it.
+2. Submit:
+
+   submit_organization {
+     overview,        // 2-4 sentences, non-engineer language: motivation + outcome. null if you cannot state the motivation honestly.
+     version_number,  // from get_review_files — stale submissions are rejected; re-run against the latest diff.
+     chapters: [{ title, summary, files: [{ path, risk, rationale }] }]
+   }
+
+   The tool validates that every changed file appears in exactly one chapter and rejects with the missing/unknown paths on mismatch. Fix and resubmit.
+
+3. Close the request: `update_ai_request {ai_request_id, status: "done", summary}` — without it the UI's "organizing…" chip never clears.
+
+### Chaptering
+
+- Cluster by CAUSAL relationship, never by directory: the schema, the API handler, and the UI of one feature are one chapter. A file belongs with the change that made it necessary.
+- Moves, renames, and mechanical refactors: one chapter, however large.
+- Tests live in the chapter of the code they test. No "tests" chapter.
+- Split a cluster only when each part is independently understandable on its own.
+- Order: foundation (types, schemas, utilities) → core logic → integration, wiring, and their tests. A chapter may not depend on symbols a later chapter introduces.
+- One chapter is the correct answer for a small diff. Do not pad.
+
+### Narration
+
+- Title: action-oriented verb phrase, 8 words max. "Add per-file review state to the store", not "Store changes".
+- Summary: 2-3 sentences. Lead with impact, then the causal link to prior chapters — "Now that file states persist, the SSE bus broadcasts them." Talk like a coworker walking someone through the PR. Never "this change introduces".
+- End a summary with at most one question, and only when a human must decide something a linter or CI cannot: product intent, a convention, a naming choice. Most chapters end with none.
+- rationale, per file, one line: why it is in this chapter and what to verify. "New DDL — confirm the reviewed_fingerprint semantics match the unmark rule."
+
+### Per-file risk
+
+Rate the danger of skimming the file, not its size. When torn between two levels, pick the higher.
+
+- high — any of: mutates persisted data or wire formats; security surface (authn/z, input parsing, exec, secrets); hard to reverse (migrations, backfills, deletes); wide blast radius with thin test coverage.
+- medium — behavior change with real callers; reversible; partially tested.
+- low — localized logic, covered by tests, trivially revertable.
+- mechanical — safe to skim: import-only renames, generated files, lockfiles, pure formatting, tool-driven mass renames. Mark these honestly; the reviewer's time is the budget.
+
+## Handle an AI bar request (source: "user")
+
+1. Interpret conservatively. Act only on files the prompt clearly covers; for an ambiguous phrase, take the narrow reading. "Mark the easy ones" means mechanical files only.
+2. `get_review_files`, then apply in one batch:
+
+   set_file_states {
+     ai_request_id,
+     files: [{ path, reviewed?, hidden?, reason }]   // reason: one line per file — "import-only rename, no logic change"
+   }
+
+3. Close the loop: `update_ai_request { ai_request_id, status: "done", summary, unmatched }` — summary: one sentence, what you did and why; unmatched: every part of the prompt you did not act on and why — `{pattern: "old tests", why: "no test file in this diff predates v1"}`.
+
+Rules:
+- Never hide a file with open comments.
+- Never mark a file reviewed that the prompt does not clearly include.
+- A re-organization request ("split the API chapter", "group by risk") → rebuild and submit_organization again, reflecting the instruction in the changed summaries, then close the request.
+- A question ("what's risky here?") → no state changes; answer in the done summary.
+- An unsatisfiable request → `update_ai_request {ai_request_id, status: "failed", summary: <reason>}`.
+- The UI applies your batch immediately and offers one-click undo; the daemon owns undo. Never revert your own batch.
+
+## Out of scope
+
+- Version churn: the daemon carries reviewed state forward and unmarks only changed files. You never touch reviewed flags because the version changed.

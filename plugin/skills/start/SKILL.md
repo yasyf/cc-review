@@ -50,8 +50,9 @@ Asked once either way. If `offer` is false or the command errors, skip silently.
 Each event (Monitor line or channel tag) is a JSON object with a `type`. The ones you act on:
 
 - **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything.
+- **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking you to act on the review. The payload's `request` has `id`, `source`, and `prompt`. Follow `${CLAUDE_PLUGIN_ROOT}/skills/organize/SKILL.md` — it covers both kinds. The no-edits rule covers file edits (the hook blocks those); the cc-review MCP tools (`set_file_states`, `submit_organization`, `update_ai_request`, `reply`) change review state, not files, and are always allowed.
 - **`submit`** — the human pressed Submit. Go to step 4.
-- Other types (`comment.resolved`, `status.changed`, `notification`) are informational.
+- Other types (`comment.resolved`, `status.changed`, `notification`, `file.states`, `ai.request.updated`, `version.created`, `channel.changed`) are informational — `file.states` and `ai.request.updated` carry the human's checkboxes, an undo, or the daemon unmarking changed files; events from your own tool calls are filtered out and never echo back. `organization.updated` never reaches you — it originates from your own `submit_organization` and only the browser renders it.
 
 If a comment is ambiguous or you see options worth surfacing, post back — it renders under that comment in realtime:
 
@@ -92,12 +93,12 @@ cc-review reply --answer-to <replyId> --answer "<the human's answer>"
 
 ## 5. Later rounds
 
-After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead.
+After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed.
 
 ## Reference
 
 - `reference/cli-cheatsheet.md` — every `cc-review` command and flag.
 - `reference/event-schema.md` — the event types and payload shapes.
 - `reference/troubleshooting.md` — Monitor buffering, daemon, resume keying.
-- `reference/channels.md` — opt-in: receive comments as `<channel>` tags instead of via Monitor.
+- `reference/channels.md` — opt-in: receive review events as `<channel>` tags instead of via Monitor.
 - `reference/channels-setup.md` — the one-time offer that approves cc-review's channel so it loads without the dev-channels warning.

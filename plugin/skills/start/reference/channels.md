@@ -1,6 +1,6 @@
-# Opt-in: receive comments as channel notifications
+# Opt-in: receive review events as channel notifications
 
-The default path streams comments through a Monitor running `cc-review watch`. As an alternative, cc-review ships an MCP **channel** server that pushes each comment straight into the session as a `<channel source="cc-review" …>` tag, with a two-way `reply` tool — so you react without a Monitor.
+The default path streams review events through a Monitor running `cc-review watch`. As an alternative, cc-review ships an MCP **channel** server that pushes each review event straight into the session as a `<channel source="cc-review" …>` tag, with two-way MCP tools — so you react without a Monitor.
 
 This is a research-preview feature. It is **opt-in** because Claude Code channels must be loaded at session start and gated behind a flag, and the default Monitor path needs none of it.
 
@@ -8,7 +8,7 @@ The plugin auto-registers the channel server (`mcpServers` in `plugin.json` runs
 
 1. Approve cc-review's channel once — run `cc-review setup-channels --apply`, or accept the offer `/review:start` makes on first run (see `channels-setup.md`). This moves the plugin onto Claude's approved allowlist, so it loads with no dev-channels warning.
 2. Launch Claude Code with the channel selected: `--channels plugin:review@cc-review` (subject to your org's `channelsEnabled` policy; Anthropic auth only). Approval drops the warning; selecting the channel at launch is what activates it. Before approval, `--dangerously-load-development-channels plugin:review@cc-review` is the only way to load it — with the warning.
-3. Run `/review:start` as usual. The channel waits for the review to exist, then pushes each human comment as a channel event and exposes a `reply` tool equivalent to `cc-review reply`.
+3. Run `/review:start` as usual. The channel waits for the review to exist, then pushes each review event (comments, `ai.request.created`, `file.states`, `version.created`, `channel.changed`) as a channel tag and exposes five tools: `reply` (equivalent to `cc-review reply`), `set_file_states`, `update_ai_request`, `submit_organization`, `get_review_files`.
 
 `start` detects the channel and prints `channel: active`, which tells the skill to skip the Monitor — events arrive once, as channel tags, not twice.
 
