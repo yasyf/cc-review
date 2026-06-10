@@ -11,6 +11,8 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   const submitted = session.review.status === 'submitted';
   const openCount = session.comments.filter((c) => c.status === 'open').length;
   const frozenPath = feedbackPath ?? submit.data?.feedbackPath ?? null;
+  const total = session.files.length;
+  const reviewedCount = session.files.filter((f) => session.fileStates[f.path]?.reviewed).length;
 
   return (
     <header className="submit-bar">
@@ -18,8 +20,17 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
         <strong className="brand">cc-review</strong>
         <span className="branch">{session.review.branch}</span>
         <span className="dim">v{session.version}</span>
-        <span className="dim">{session.files.length} files</span>
+        <span className="dim">{total} files</span>
         <span className="dim">{openCount} open</span>
+        <span className="dim">
+          {reviewedCount}/{total} reviewed
+        </span>
+        <span className="progress-track">
+          <span
+            className="progress-fill"
+            style={{ width: `${total > 0 ? (reviewedCount / total) * 100 : 0}%` }}
+          />
+        </span>
         <span className={`status status-${session.review.status}`}>{session.review.status}</span>
       </div>
       <div className="actions">

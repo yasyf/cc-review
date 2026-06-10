@@ -1,5 +1,5 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AskAnswer, LineRange, SessionResponse, Side } from './types';
+import type { AiRequest, AskAnswer, LineRange, SessionResponse, Side } from './types';
 
 export type VersionKey = number | 'latest';
 
@@ -87,6 +87,73 @@ export function useCreateReply() {
         method: 'POST',
         body: JSON.stringify({ origin: 'user', ...rest }),
       }),
+  });
+}
+
+export interface FileStatePatch {
+  path: string;
+  reviewed?: boolean;
+  hidden?: boolean;
+}
+
+export function useSetFileStates(slug: string, version?: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (files: FileStatePatch[]) =>
+      request<{ states: { path: string; reviewed: boolean; hidden: boolean }[] }>(
+        '/api/file-states',
+        { method: 'POST', body: JSON.stringify({ reviewId: slug, files }) },
+      ),
+    // Optimistic: checkbox → collapse must be instant. SSE redelivers the same
+    // absolute per-path state, so the echo converges with this merge.
+    onMutate: async (files) => {
+      const key = sessionKey(slug, version ?? 'latest');
+      // An in-flight session refetch (kicked off by another mutation's
+      // invalidate) would resolve with a pre-mutation snapshot and clobber
+      // both this merge and the SSE echo.
+      await qc.cancelQueries({ queryKey: key });
+      const current = qc.getQueryData<SessionResponse>(key);
+      if (!current) return;
+      const fileStates = { ...current.fileStates };
+      for (const patch of files) {
+        const prev = fileStates[patch.path] ?? { reviewed: false, hidden: false };
+        fileStates[patch.path] = {
+          reviewed: patch.reviewed ?? prev.reviewed,
+          hidden: patch.hidden ?? prev.hidden,
+        };
+      }
+      qc.setQueryData<SessionResponse>(key, { ...current, fileStates });
+    },
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
+    },
+  });
+}
+
+export function useCreateAiRequest(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prompt: string) =>
+      request<{ request: AiRequest; claudeConnected: boolean }>('/api/ai-requests', {
+        method: 'POST',
+        body: JSON.stringify({ reviewId: slug, prompt }),
+      }),
+    // The created request streams back over SSE; invalidate as a safety net.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
+    },
+  });
+}
+
+export function useUndoAiRequest(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ ok: true }>(`/api/ai-requests/${id}/undo`, { method: 'POST' }),
+    // Undo emits file.states + ai.request.updated over SSE; same safety net.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
+    },
   });
 }
 

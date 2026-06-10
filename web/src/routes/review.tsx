@@ -4,6 +4,9 @@ import { useSession } from '../lib/api';
 import { EventStreamProvider } from '../lib/events';
 import { ReviewProvider, useReview } from '../lib/review-context';
 import { UnreadProvider } from '../lib/unread';
+import { ViewPrefsProvider } from '../lib/view-prefs';
+import { AiBar } from '../components/AiBar';
+import { DiffToolbar } from '../components/DiffToolbar';
 import { DiffView } from '../components/DiffView';
 import type { DiffViewHandle } from '../components/DiffView';
 import { NotificationsBar } from '../components/NotificationsBar';
@@ -25,16 +28,20 @@ function ReviewContent() {
       <SubmitBar session={data} />
       <NotificationsBar />
       <UnreadProvider reviewId={slug} comments={data.comments} prune={version === undefined}>
-        <div className="body">
-          <Sidebar
-            session={data}
-            onSelectFile={(path) => diffRef.current?.scrollToFile(path)}
-            onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
-          />
-          <main className="main">
-            <DiffView key={data.versionId} session={data} ref={diffRef} />
-          </main>
-        </div>
+        <ViewPrefsProvider reviewId={slug} versionId={data.versionId}>
+          <div className="body">
+            <Sidebar
+              session={data}
+              onSelectFile={(path) => diffRef.current?.scrollToFile(path)}
+              onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
+            />
+            <main className="main">
+              <DiffToolbar session={data} />
+              <DiffView key={data.versionId} session={data} ref={diffRef} />
+            </main>
+          </div>
+          <AiBar session={data} />
+        </ViewPrefsProvider>
       </UnreadProvider>
     </div>
   );

@@ -85,6 +85,59 @@ export interface FileMeta {
   status: string; // git name-status code: A | M | D | R | C | T
 }
 
+export interface FileState {
+  reviewed: boolean;
+  hidden: boolean;
+}
+
+export type Risk = 'high' | 'medium' | 'low' | 'mechanical';
+
+export interface ChapterFile {
+  path: string;
+  risk: Risk;
+  rationale: string;
+}
+
+export interface Chapter {
+  title: string;
+  summary: string;
+  files: ChapterFile[];
+}
+
+export interface Organization {
+  overview: string | null;
+  chapters: Chapter[];
+}
+
+export type AiRequestSource = 'user' | 'system';
+export type AiRequestStatus = 'pending' | 'working' | 'done' | 'failed' | 'undone';
+
+export interface AiRequestUnmatched {
+  pattern: string;
+  why: string;
+}
+
+// Per-path state snapshot recorded when Claude applies a batch; `prior` powers
+// one-click undo on the daemon side.
+export interface AiRequestChange {
+  path: string;
+  reason: string;
+  prior: { reviewed: boolean; hidden: boolean; fingerprint: string };
+  applied: { reviewed: boolean; hidden: boolean };
+}
+
+export interface AiRequest {
+  id: string;
+  source: AiRequestSource;
+  prompt: string;
+  status: AiRequestStatus;
+  summary: string;
+  unmatched: AiRequestUnmatched[];
+  changes: AiRequestChange[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SessionResponse {
   review: Review;
   version: number;
@@ -93,6 +146,27 @@ export interface SessionResponse {
   files: FileMeta[];
   patchText: string;
   comments: Comment[];
+  // Keyed by path, filtered to the displayed version's files.
+  fileStates: Record<string, FileState>;
+  // For the displayed version only; null until Claude submits one.
+  organization: Organization | null;
+  // Newest first.
+  aiRequests: AiRequest[];
+  claudeConnected: boolean;
+  // Max event seq when the session was fetched, int64-as-string ("0" when no
+  // events). The SSE handler toasts only frames newer than this, so the
+  // cursor-0 replay patches state without replaying notifications.
+  latestEventSeq: string;
+}
+
+// `file.states` entries are absolute per-path values, never deltas: the
+// browser replays the whole event log from cursor 0 on every load, so every
+// payload must be idempotent.
+export interface FileStateEventEntry {
+  path: string;
+  reviewed: boolean;
+  hidden: boolean;
+  reason?: string;
 }
 
 // The SSE payload is a tagged union on `type`. Every frame carries the
@@ -106,7 +180,19 @@ export type ReviewEvent =
   | { type: 'claude.clarification'; version_number: number; commentId: string; reply: Reply }
   | { type: 'status.changed'; version_number: number; status: ReviewStatus }
   | { type: 'submit'; version_number: number; feedbackPath: string }
-  | { type: 'notification'; version_number: number; level: NotificationLevel; message: string };
+  | { type: 'notification'; version_number: number; level: NotificationLevel; message: string }
+  | {
+      type: 'file.states';
+      version_number: number;
+      states: FileStateEventEntry[];
+      aiRequestId?: string;
+      undoOf?: string;
+    }
+  | { type: 'version.created'; version_number: number }
+  | { type: 'ai.request.created'; version_number: number; request: AiRequest }
+  | { type: 'ai.request.updated'; version_number: number; request: AiRequest }
+  | { type: 'organization.updated'; version_number: number; organization: Organization }
+  | { type: 'channel.changed'; version_number: number; connected: boolean };
 
 export type ReviewEventType = ReviewEvent['type'];
 

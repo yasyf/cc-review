@@ -1,5 +1,7 @@
+import { fileOrder } from '../lib/order';
 import { isUnread, useUnread } from '../lib/unread';
-import type { Comment, FileMeta } from '../lib/types';
+import type { Comment, SessionResponse } from '../lib/types';
+import { useViewPrefs } from '../lib/view-prefs';
 
 function excerpt(text: string, max = 120): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -7,25 +9,24 @@ function excerpt(text: string, max = 120): string {
 }
 
 export function CommentsPanel({
-  comments,
-  files,
+  session,
   onSelectComment,
 }: {
-  comments: Comment[];
-  files: FileMeta[];
+  session: SessionResponse;
   onSelectComment(comment: Comment): void;
 }) {
   const { seen } = useUnread();
+  const { viewMode } = useViewPrefs();
 
-  const fileOrder = new Map(files.map((f, i) => [f.path, i]));
+  const order = fileOrder(session, viewMode);
   const groups = new Map<string, Comment[]>();
-  for (const comment of comments) {
+  for (const comment of session.comments) {
     const list = groups.get(comment.filePath) ?? [];
     list.push(comment);
     groups.set(comment.filePath, list);
   }
   const ordered = [...groups.entries()].sort(
-    ([a], [b]) => (fileOrder.get(a) ?? Infinity) - (fileOrder.get(b) ?? Infinity),
+    ([a], [b]) => (order.get(a) ?? Infinity) - (order.get(b) ?? Infinity),
   );
 
   if (ordered.length === 0) {

@@ -60,6 +60,28 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
       return { ...session, review: { ...session.review, status: ev.status } };
     case 'submit':
       return { ...session, review: { ...session.review, status: 'submitted' } };
+    case 'file.states': {
+      // Entries are absolute per-path values, so merging is idempotent under
+      // the cursor-0 replay every page load performs.
+      const fileStates = { ...session.fileStates };
+      for (const state of ev.states) {
+        fileStates[state.path] = { reviewed: state.reviewed, hidden: state.hidden };
+      }
+      return { ...session, fileStates };
+    }
+    case 'ai.request.created':
+    case 'ai.request.updated': {
+      const exists = session.aiRequests.some((r) => r.id === ev.request.id);
+      const aiRequests = exists
+        ? session.aiRequests.map((r) => (r.id === ev.request.id ? ev.request : r))
+        : [ev.request, ...session.aiRequests];
+      return { ...session, aiRequests };
+    }
+    case 'organization.updated':
+      return { ...session, organization: ev.organization };
+    case 'channel.changed':
+      return { ...session, claudeConnected: ev.connected };
+    case 'version.created':
     case 'notification':
       return session;
   }
@@ -76,6 +98,19 @@ function notificationFor(ev: ReviewEvent): Omit<Notification, 'id' | 'at'> | nul
       return { level: 'info', message: `Claude clarified: ${ev.reply.body}` };
     case 'submit':
       return { level: 'info', message: 'Review submitted — feedback frozen.' };
+    case 'ai.request.updated':
+      if (ev.request.status === 'done') {
+        return { level: 'info', message: ev.request.summary || 'AI request done.' };
+      }
+      if (ev.request.status === 'failed') {
+        return { level: 'error', message: ev.request.summary || 'AI request failed.' };
+      }
+      return null;
+    case 'organization.updated':
+      return {
+        level: 'info',
+        message: `Review organized into ${ev.organization.chapters.length} chapters.`,
+      };
     default:
       return null;
   }
@@ -109,14 +144,32 @@ export function EventStreamProvider({
 
       const key = sessionKey(slug, version ?? 'latest');
       const current = qc.getQueryData<SessionResponse>(key);
-      // Only patch when the frame belongs to the version on screen.
-      if (current && ev.version_number === current.version) {
+      // channel.changed and ai.request.* are stamped with the review's CURRENT
+      // version at emit time, but replayed historical frames carry the
+      // then-current version — so they must apply regardless of the version on
+      // screen. Their reducers are last-wins / id-keyed upserts, which makes
+      // that safe. Everything else only patches the version it belongs to.
+      const versionAgnostic =
+        ev.type === 'channel.changed' ||
+        ev.type === 'ai.request.created' ||
+        ev.type === 'ai.request.updated';
+      if (current && (versionAgnostic || ev.version_number === current.version)) {
         qc.setQueryData<SessionResponse>(key, reduceSession(current, ev));
+      }
+
+      // A new version supersedes the cached session wholesale; the > guard
+      // keeps the cursor-0 replay of historical versions from refetch-spamming.
+      if (ev.type === 'version.created' && current && ev.version_number > current.version) {
+        void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
       }
 
       if (ev.type === 'submit') setFeedbackPath(ev.feedbackPath);
 
-      const note = notificationFor(ev);
+      // The stream replays the whole event log from cursor 0 on every load;
+      // replayed frames (seq at or below the session snapshot's max) must keep
+      // patching state above but never toast.
+      const live = current !== undefined && Number(raw.lastEventId) > Number(current.latestEventSeq);
+      const note = live ? notificationFor(ev) : null;
       if (note) {
         const entry: Notification = { ...note, id: `n${++notificationSeq}`, at: Date.now() };
         setNotifications((prev) => [...prev, entry].slice(-50));

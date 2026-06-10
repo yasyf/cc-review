@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { unreadCount, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
+import { useViewPrefs } from '../lib/view-prefs';
+import { ChapterPanel } from './ChapterPanel';
 import { CommentsPanel } from './CommentsPanel';
 import { FileTreePanel } from './FileTreePanel';
 
@@ -48,7 +50,9 @@ export function Sidebar({
 }) {
   const [tab, setTab] = useState<'files' | 'comments'>('files');
   const { seen } = useUnread();
+  const { viewMode } = useViewPrefs();
   const unread = unreadCount(session.comments, seen);
+  const organization = viewMode !== 'default' ? session.organization : null;
 
   return (
     <div className="sidebar">
@@ -76,13 +80,18 @@ export function Sidebar({
         </button>
       </div>
       {tab === 'files' ? (
-        <FileTreePanel key={session.versionId} files={session.files} onSelectFile={onSelectFile} />
+        organization ? (
+          <ChapterPanel session={session} organization={organization} onSelectFile={onSelectFile} />
+        ) : (
+          <FileTreePanel
+            files={session.files}
+            fileStates={session.fileStates}
+            organization={session.organization}
+            onSelectFile={onSelectFile}
+          />
+        )
       ) : (
-        <CommentsPanel
-          comments={session.comments}
-          files={session.files}
-          onSelectComment={onSelectComment}
-        />
+        <CommentsPanel session={session} onSelectComment={onSelectComment} />
       )}
     </div>
   );

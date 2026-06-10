@@ -1,6 +1,6 @@
 import type { CodeViewItem, DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from '@pierre/diffs';
 import { parsePatchFiles } from '@pierre/diffs';
-import type { Comment, Side } from './types';
+import type { Comment, FileState, Side } from './types';
 
 // A line annotation is either a persisted comment thread (body and replies are
 // read live from the Query cache by CommentThread via the comment id) or the
@@ -39,16 +39,28 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
 // appended last: annotation portals are keyed by array index, so keeping thread
 // indices stable preserves their component state.
 //
-// `version` only changes when the annotation set changes (replies and body
-// edits re-render the thread component via its own cache subscription). The
-// parity scheme keeps consecutive states distinct: draft versions are odd and
-// strictly increase with `seq`; non-draft versions are even and increase with
-// the append-only comment count — so "draft open with N comments" → "draft
-// closed with N+1 comments" never collides.
+// Hidden files (and reviewed files when hideReviewed, unless explicitly peeked
+// via expandOverrides) drop out entirely; the rest sort by the view-mode order
+// map. A reviewed-and-not-peeked file renders collapsed — unless it hosts the
+// open composer, which must never fold away mid-composition.
+//
+// `version` only changes when the annotation set or collapse state changes
+// (replies and body edits re-render the thread component via its own cache
+// subscription). The parity scheme keeps consecutive states distinct: draft
+// versions are odd and strictly increase with `seq`; non-draft versions are
+// even and increase with the append-only comment count — so "draft open with
+// N comments" → "draft closed with N+1 comments" never collides. `collapsed`
+// is controlled-only and CodeView applies item updates solely when `version`
+// changes, so collapse folds in as a second parity bit:
+// version' = base * 2 + (collapsed ? 1 : 0).
 export function buildItems(
   files: readonly FileDiffMetadata[],
   comments: readonly Comment[],
   draft: ComposerDraft | null,
+  fileStates: Readonly<Record<string, FileState>>,
+  order: ReadonlyMap<string, number>,
+  hideReviewed: boolean,
+  expandOverrides: ReadonlySet<string>,
 ): ReviewItem[] {
   const byFile = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
   for (const comment of comments) {
@@ -58,7 +70,17 @@ export function buildItems(
     byFile.set(comment.filePath, list);
   }
 
-  return files.map((file): ReviewItem => {
+  const visible = files.filter((file) => {
+    const state = fileStates[file.name];
+    if (state?.hidden) return false;
+    if (hideReviewed && state?.reviewed && !expandOverrides.has(file.name)) return false;
+    return true;
+  });
+  visible.sort(
+    (a, b) => (order.get(a.name) ?? Infinity) - (order.get(b.name) ?? Infinity),
+  );
+
+  return visible.map((file): ReviewItem => {
     const threads = byFile.get(file.name) ?? [];
     const fileDraft = draft?.filePath === file.name ? draft : null;
     const annotations = fileDraft
@@ -71,12 +93,16 @@ export function buildItems(
           },
         ]
       : threads;
+    const collapsed =
+      !fileDraft && (fileStates[file.name]?.reviewed ?? false) && !expandOverrides.has(file.name);
+    const base = fileDraft ? 2 * (threads.length + fileDraft.seq) + 1 : 2 * threads.length;
     return {
       id: file.name,
       type: 'diff',
       fileDiff: file,
       annotations,
-      version: fileDraft ? 2 * (threads.length + fileDraft.seq) + 1 : 2 * threads.length,
+      collapsed,
+      version: base * 2 + (collapsed ? 1 : 0),
     };
   });
 }
