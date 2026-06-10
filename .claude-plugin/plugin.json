@@ -7,5 +7,10 @@
     "email": "yasyfm@gmail.com"
   },
   "homepage": "https://github.com/yasyf/cc-review",
-  "license": "PolyForm-Noncommercial-1.0.0"
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "mcpServers": {
+    "cc-review": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-channel.sh"
+    }
+  }
 }
