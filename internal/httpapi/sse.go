@@ -7,9 +7,17 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/yasyf/cc-review/internal/store"
 )
 
 const keepaliveInterval = 20 * time.Second
+
+// channelDownDebounce is how long after a watch/channel detach the handler
+// waits before re-reading the connected predicate. It must outlast the
+// backend's attach grace plus the consumers' reconnect delay, so a transient
+// drop never persists a connected:false event.
+const channelDownDebounce = 15 * time.Second
 
 // handleEvents streams a review's event log as Server-Sent Events. ?session=
 // is a review ref — the browser sends the slug, the Claude-side stream
@@ -51,8 +59,31 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		claudePID = n
 	}
+	// A named consumer's attach/detach drives channel.changed on transitions of
+	// the connected predicate: a first attach emits connected, and a detach that
+	// outlives the debounce (no consumer came back) emits disconnected. The
+	// event is persisted (origin system) and last-wins on replay. Two
+	// near-zero-width races are accepted under last-wins: concurrent first
+	// attaches can double-emit connected:true (idempotent), and an attach
+	// landing between the debounce predicate check and the false emit briefly
+	// inverts to false until the next transition. A daemon death loses the
+	// detach defer and the debounce timer entirely; the stale connected:true it
+	// leaves behind is reconciled at the next daemon boot
+	// (daemon.Server.reconcileChannelEvents).
 	if consumer != "" {
-		defer s.backend.Attach(reviewID, consumer, claudePID)()
+		wasConnected := s.backend.ClaudeConnected(reviewID)
+		detach := s.backend.Attach(reviewID, consumer, claudePID)
+		if !wasConnected {
+			s.emitChannelChanged(r.Context(), reviewID, true)
+		}
+		defer func() {
+			detach()
+			time.AfterFunc(channelDownDebounce, func() {
+				if !s.backend.ClaudeConnected(reviewID) {
+					s.emitChannelChanged(context.Background(), reviewID, false)
+				}
+			})
+		}()
 	}
 
 	h := w.Header()
@@ -110,6 +141,16 @@ func (s *Server) flushSince(ctx context.Context, w io.Writer, fl http.Flusher, r
 		fl.Flush()
 	}
 	return cursor
+}
+
+// emitChannelChanged persists the connected flag stamped with the review's
+// current version, like every other event on the log.
+func (s *Server) emitChannelChanged(ctx context.Context, reviewID string, connected bool) {
+	v, ok, err := s.store.LatestVersion(ctx, reviewID)
+	if err != nil || !ok {
+		return
+	}
+	s.emit(ctx, reviewID, store.OriginSystem, store.EventChannelChanged, v.VersionNumber, map[string]any{"connected": connected})
 }
 
 func parseCursor(r *http.Request) int64 {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yasyf/cc-review/internal/feedback"
@@ -18,12 +20,17 @@ import (
 // --- wire types ------------------------------------------------------------
 
 type sessionResponse struct {
-	Review    wire.Review     `json:"review"`
-	Version   int             `json:"version"`
-	VersionID string          `json:"versionId"`
-	Files     json.RawMessage `json:"files"`
-	Patch     string          `json:"patchText"`
-	Comments  []wire.Comment  `json:"comments"`
+	Review          wire.Review               `json:"review"`
+	Version         int                       `json:"version"`
+	VersionID       string                    `json:"versionId"`
+	Files           json.RawMessage           `json:"files"`
+	Patch           string                    `json:"patchText"`
+	Comments        []wire.Comment            `json:"comments"`
+	FileStates      map[string]wire.FileState `json:"fileStates"`
+	Organization    *store.Organization       `json:"organization"`
+	AIRequests      []wire.AIRequest          `json:"aiRequests"`
+	ClaudeConnected bool                      `json:"claudeConnected"`
+	LatestEventSeq  string                    `json:"latestEventSeq"`
 }
 
 type createCommentReq struct {
@@ -53,6 +60,26 @@ type createReplyReq struct {
 
 type submitReq struct {
 	ReviewID string `json:"reviewId"`
+}
+
+type fileStatesReq struct {
+	ReviewID string `json:"reviewId"`
+	Files    []struct {
+		Path     string `json:"path"`
+		Reviewed *bool  `json:"reviewed"`
+		Hidden   *bool  `json:"hidden"`
+	} `json:"files"`
+}
+
+type fileStateOut struct {
+	Path     string `json:"path"`
+	Reviewed bool   `json:"reviewed"`
+	Hidden   bool   `json:"hidden"`
+}
+
+type createAIRequestReq struct {
+	ReviewID string `json:"reviewId"`
+	Prompt   string `json:"prompt"`
 }
 
 // --- handlers --------------------------------------------------------------
@@ -98,13 +125,59 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		}
 		wired = append(wired, wire.ToComment(c, replies))
 	}
+	files, err := version.Files()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	inVersion := make(map[string]bool, len(files))
+	for _, f := range files {
+		inVersion[f.Path] = true
+	}
+	states, err := s.store.ListFileStates(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fileStates := make(map[string]wire.FileState, len(states))
+	for _, st := range states {
+		if inVersion[st.Path] {
+			fileStates[st.Path] = wire.FileState{Reviewed: st.Reviewed, Hidden: st.Hidden}
+		}
+	}
+	var organization *store.Organization
+	if org, ok, err := s.store.GetOrganization(ctx, version.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ok {
+		organization = &org
+	}
+	requests, err := s.store.ListAIRequests(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	aiRequests := make([]wire.AIRequest, 0, len(requests))
+	for _, ar := range requests {
+		aiRequests = append(aiRequests, wire.ToAIRequest(ar))
+	}
+	latestSeq, err := s.store.MaxEventSeq(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, sessionResponse{
-		Review:    wire.ToReview(review, version.Branch),
-		Version:   version.VersionNumber,
-		VersionID: strconv.FormatInt(version.ID, 10),
-		Files:     json.RawMessage(version.FilesJSON),
-		Patch:     string(patch),
-		Comments:  wired,
+		Review:          wire.ToReview(review, version.Branch),
+		Version:         version.VersionNumber,
+		VersionID:       strconv.FormatInt(version.ID, 10),
+		Files:           json.RawMessage(version.FilesJSON),
+		Patch:           string(patch),
+		Comments:        wired,
+		FileStates:      fileStates,
+		Organization:    organization,
+		AIRequests:      aiRequests,
+		ClaudeConnected: s.backend.ClaudeConnected(review.ID),
+		LatestEventSeq:  strconv.FormatInt(latestSeq, 10),
 	})
 }
 
@@ -244,6 +317,172 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 	// Claude-side stream see it.
 	s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, commentID)
 	writeJSON(w, http.StatusOK, map[string]string{"id": strconv.FormatInt(id, 10)})
+}
+
+// handleSetFileStates applies the human's checkbox/hide clicks: the same
+// validation as the daemon's file-states handler, emitted under origin user.
+func (s *Server) handleSetFileStates(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req fileStatesReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Files) == 0 {
+		http.Error(w, "files required", http.StatusBadRequest)
+		return
+	}
+	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	version, ok, err := s.store.LatestVersion(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "review has no versions", http.StatusBadRequest)
+		return
+	}
+	files, err := version.Files()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fingerprints := make(map[string]string, len(files))
+	for _, f := range files {
+		fingerprints[f.Path] = f.Fingerprint
+	}
+	var unknown []string
+	inputs := make([]store.FileStateInput, 0, len(req.Files))
+	for _, f := range req.Files {
+		if _, ok := fingerprints[f.Path]; !ok {
+			unknown = append(unknown, f.Path)
+			continue
+		}
+		inputs = append(inputs, store.FileStateInput{Path: f.Path, Reviewed: f.Reviewed, Hidden: f.Hidden})
+	}
+	if len(unknown) > 0 {
+		http.Error(w, "unknown paths: "+strings.Join(unknown, ", "), http.StatusBadRequest)
+		return
+	}
+	results, err := s.store.ApplyFileStates(ctx, review.ID, inputs, fingerprints)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]fileStateOut, 0, len(results))
+	states := make([]map[string]any, 0, len(results))
+	for _, res := range results {
+		out = append(out, fileStateOut{Path: res.Path, Reviewed: res.Applied.Reviewed, Hidden: res.Applied.Hidden})
+		states = append(states, map[string]any{"path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden})
+	}
+	// Apply and emit are not atomic: racing with the daemon's file-states
+	// handler, same-path events can land in the opposite order of the DB
+	// applies. Accepted — the session GET is authoritative, so replay converges
+	// on the next load.
+	s.emit(ctx, review.ID, store.OriginUser, store.EventFileStates, version.VersionNumber,
+		map[string]any{"states": states})
+	writeJSON(w, http.StatusOK, map[string]any{"states": out})
+}
+
+// handleCreateAIRequest queues an AI-bar prompt for the live Claude session.
+func (s *Server) handleCreateAIRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req createAIRequestReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		http.Error(w, "prompt required", http.StatusBadRequest)
+		return
+	}
+	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	version, ok, err := s.store.LatestVersion(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "review has no versions", http.StatusBadRequest)
+		return
+	}
+	ar, err := s.store.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, req.Prompt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	wired := wire.ToAIRequest(ar)
+	s.emit(ctx, review.ID, store.OriginUser, store.EventAIRequestCreated, ar.VersionNumber,
+		map[string]any{"request": wired})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"request": wired, "claudeConnected": s.backend.ClaudeConnected(review.ID),
+	})
+}
+
+// handleUndoAIRequest reverts a done request's batch: the recorded priors are
+// restored first (winning over any later human changes), then the guarded
+// done→undone transition (409 otherwise) commits the undo. A failed restore
+// leaves the request done, so Undo stays retryable.
+func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad ai request id", http.StatusBadRequest)
+		return
+	}
+	ar, err := s.store.GetAIRequest(ctx, id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	// Both emissions below carry the review's current version, not the version
+	// the request was created on — a later version may be the one on screen.
+	version, ok, err := s.store.LatestVersion(ctx, ar.ReviewID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "review has no versions", http.StatusBadRequest)
+		return
+	}
+	// The status pre-check keeps the 409 path free of state writes (restoring a
+	// working request's partial changes would corrupt its in-flight batch); the
+	// transition guard below still wins any race.
+	if ar.Status != "done" {
+		http.Error(w, fmt.Sprintf("ai request %d is %q, only done requests can be undone", id, ar.Status), http.StatusConflict)
+		return
+	}
+	if err := s.store.RestoreFileStates(ctx, ar.ReviewID, ar.Changes); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	updated, err := s.store.TransitionAIRequest(ctx, id, "undone", "", nil)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidTransition) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(ar.Changes) > 0 {
+		states := make([]map[string]any, 0, len(ar.Changes))
+		for _, c := range ar.Changes {
+			states = append(states, map[string]any{"path": c.Path, "reviewed": c.Prior.Reviewed, "hidden": c.Prior.Hidden})
+		}
+		s.emit(ctx, ar.ReviewID, store.OriginUser, store.EventFileStates, version.VersionNumber,
+			map[string]any{"states": states, "undoOf": strconv.FormatInt(id, 10)})
+	}
+	s.emit(ctx, ar.ReviewID, store.OriginUser, store.EventAIRequestUpdated, version.VersionNumber,
+		map[string]any{"request": wire.ToAIRequest(updated)})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,13 +18,15 @@ import (
 type stubBackend struct {
 	attached chan string
 	detached chan string
+	events   chan *store.Event
 }
 
 func (b *stubBackend) Subscribe(string) (<-chan struct{}, func()) {
 	return make(chan struct{}), func() {}
 }
 
-func (b *stubBackend) AppendEvent(_ context.Context, _ *store.Event) (int64, error) {
+func (b *stubBackend) AppendEvent(_ context.Context, e *store.Event) (int64, error) {
+	b.events <- e
 	return 0, nil
 }
 
@@ -33,6 +36,8 @@ func (b *stubBackend) Attach(reviewID, consumer string, claudePID int) func() {
 	return func() { b.detached <- key }
 }
 
+func (b *stubBackend) ClaudeConnected(string) bool { return false }
+
 func newTestServer(t *testing.T) (*store.Store, *stubBackend, *httptest.Server) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
@@ -40,7 +45,7 @@ func newTestServer(t *testing.T) (*store.Store, *stubBackend, *httptest.Server) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	backend := &stubBackend{attached: make(chan string, 1), detached: make(chan string, 1)}
+	backend := &stubBackend{attached: make(chan string, 1), detached: make(chan string, 1), events: make(chan *store.Event, 4)}
 	srv := httptest.NewServer(New(st, backend).Handler())
 	t.Cleanup(srv.Close)
 	return st, backend, srv
@@ -121,6 +126,49 @@ func TestEventsSlugRefAttachesUnderCanonicalID(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("consumer was never attached")
+	}
+}
+
+func TestEventsChannelChangedStampsLatestVersion(t *testing.T) {
+	st, backend, srv := newTestServer(t)
+	setup := context.Background()
+	review, err := st.CreateReview(setup, "s1", 100, "/repo", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := st.CreateVersion(setup, review.ID, "main", "HEAD", "/p", "[]"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events?session="+review.ID+"&consumer=channel&claude_pid=4242", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	select {
+	case ev := <-backend.events:
+		if ev.Type != store.EventChannelChanged || ev.Origin != store.OriginSystem || ev.VersionNumber != 2 {
+			t.Fatalf("event type=%s origin=%s version=%d, want system channel.changed on version 2",
+				ev.Type, ev.Origin, ev.VersionNumber)
+		}
+		var payload struct {
+			Connected     bool `json:"connected"`
+			VersionNumber int  `json:"version_number"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if !payload.Connected || payload.VersionNumber != 2 {
+			t.Fatalf("payload = %+v, want connected:true on version 2", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("channel.changed was never emitted on attach")
 	}
 }
 
