@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/daemon"
 	"github.com/yasyf/cc-review/internal/procs"
+	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/version"
 )
 
@@ -110,9 +114,12 @@ func runMCPChannel(ctx context.Context, session, cwd string, in io.Reader, out i
 				"serverInfo":      map[string]any{"name": "cc-review", "version": version.String()},
 			})
 		case "tools/list":
-			ch.reply(msg.ID, map[string]any{"tools": []any{replyToolSchema()}})
+			ch.reply(msg.ID, map[string]any{"tools": []any{
+				replyToolSchema(), setFileStatesToolSchema(), updateAIRequestToolSchema(),
+				submitOrganizationToolSchema(), getReviewFilesToolSchema(),
+			}})
 		case "tools/call":
-			ch.reply(msg.ID, handleToolCall(msg.Params))
+			ch.reply(msg.ID, handleToolCall(msg.Params, session, cwd))
 		case "ping":
 			ch.reply(msg.ID, map[string]any{})
 		default:
@@ -215,25 +222,205 @@ func replyToolSchema() map[string]any {
 	}
 }
 
-func handleToolCall(params json.RawMessage) map[string]any {
+func setFileStatesToolSchema() map[string]any {
+	return map[string]any{
+		"name":        "set_file_states",
+		"description": "Batch-set per-file review state (reviewed/hidden) on the open cc-review. ai_request_id ties the batch to an AI request as one undoable unit.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"path":     map[string]any{"type": "string"},
+							"reviewed": map[string]any{"type": "boolean"},
+							"hidden":   map[string]any{"type": "boolean"},
+							"reason":   map[string]any{"type": "string", "description": "one line: why this state"},
+						},
+						"required": []string{"path"},
+					},
+				},
+				"ai_request_id": map[string]any{"type": "string", "description": "id of the AI request these changes belong to"},
+			},
+			"required": []string{"files"},
+		},
+	}
+}
+
+func updateAIRequestToolSchema() map[string]any {
+	return map[string]any{
+		"name":        "update_ai_request",
+		"description": "Move an AI request through its lifecycle: working when you start, done or failed when you finish (with a summary and any unmatched prompt parts).",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ai_request_id": map[string]any{"type": "string"},
+				"status":        map[string]any{"type": "string", "enum": []string{"working", "done", "failed"}},
+				"summary":       map[string]any{"type": "string", "description": "one sentence: what you did and why"},
+				"unmatched": map[string]any{
+					"type":        "array",
+					"description": "parts of the prompt you did not act on, and why",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"pattern": map[string]any{"type": "string"},
+							"why":     map[string]any{"type": "string"},
+						},
+						"required": []string{"pattern", "why"},
+					},
+				},
+			},
+			"required": []string{"ai_request_id", "status"},
+		},
+	}
+}
+
+func submitOrganizationToolSchema() map[string]any {
+	return map[string]any{
+		"name":        "submit_organization",
+		"description": "Submit the review's chapter organization: every changed file in exactly one chapter, each rated by the risk of skimming it. A stale version_number is rejected with the current one.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"overview":       map[string]any{"type": "string", "description": "2-4 sentences, non-engineer language; omit if you cannot state the motivation honestly"},
+				"version_number": map[string]any{"type": "integer", "description": "the version you organized, from get_review_files"},
+				"chapters": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"title":   map[string]any{"type": "string"},
+							"summary": map[string]any{"type": "string"},
+							"files": map[string]any{
+								"type": "array",
+								"items": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"path":      map[string]any{"type": "string"},
+										"risk":      map[string]any{"type": "string", "enum": []string{"high", "medium", "low", "mechanical"}},
+										"rationale": map[string]any{"type": "string", "description": "one line: why it is here and what to verify"},
+									},
+									"required": []string{"path", "risk", "rationale"},
+								},
+							},
+						},
+						"required": []string{"title", "summary", "files"},
+					},
+				},
+			},
+			"required": []string{"chapters"},
+		},
+	}
+}
+
+func getReviewFilesToolSchema() map[string]any {
+	return map[string]any{
+		"name":        "get_review_files",
+		"description": "List the open cc-review's current version number and files with status and review state — the server truth bulk operations must act on.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+}
+
+func handleToolCall(params json.RawMessage, session, cwd string) map[string]any {
 	var call struct {
-		Name      string            `json:"name"`
-		Arguments daemon.ReplyInput `json:"arguments"`
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &call); err != nil {
 		return toolError("bad tool arguments: " + err.Error())
 	}
-	if call.Name != "reply" {
+	if len(call.Arguments) == 0 {
+		call.Arguments = json.RawMessage("{}")
+	}
+	client := daemon.NewClient()
+	switch call.Name {
+	case "reply":
+		var in daemon.ReplyInput
+		if err := json.Unmarshal(call.Arguments, &in); err != nil {
+			return toolError("bad tool arguments: " + err.Error())
+		}
+		return toolResult(client.Reply([]daemon.ReplyInput{in}))
+	case "set_file_states":
+		var in struct {
+			Files       []daemon.FileStateInput `json:"files"`
+			AIRequestID string                  `json:"ai_request_id"`
+		}
+		if err := json.Unmarshal(call.Arguments, &in); err != nil {
+			return toolError("bad tool arguments: " + err.Error())
+		}
+		id, err := parseAIRequestID(in.AIRequestID, false)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		return toolResult(client.FileStates(session, cwd, in.Files, id))
+	case "update_ai_request":
+		var in struct {
+			AIRequestID string            `json:"ai_request_id"`
+			Status      string            `json:"status"`
+			Summary     string            `json:"summary"`
+			Unmatched   []store.Unmatched `json:"unmatched"`
+		}
+		if err := json.Unmarshal(call.Arguments, &in); err != nil {
+			return toolError("bad tool arguments: " + err.Error())
+		}
+		id, err := parseAIRequestID(in.AIRequestID, true)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		return toolResult(client.UpdateAIRequest(session, cwd, id, in.Status, in.Summary, in.Unmatched))
+	case "submit_organization":
+		var in struct {
+			Overview      *string         `json:"overview"`
+			VersionNumber int             `json:"version_number"`
+			Chapters      []store.Chapter `json:"chapters"`
+		}
+		if err := json.Unmarshal(call.Arguments, &in); err != nil {
+			return toolError("bad tool arguments: " + err.Error())
+		}
+		org := store.Organization{Overview: in.Overview, Chapters: in.Chapters}
+		return toolResult(client.SubmitOrganization(session, cwd, org, in.VersionNumber))
+	case "get_review_files":
+		resp, err := client.ReviewFiles(session, cwd)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		if !resp.OK {
+			return toolError(resp.Error)
+		}
+		return toolOK(string(resp.ReviewFiles))
+	default:
 		return toolError("unknown tool: " + call.Name)
 	}
-	resp, err := daemon.NewClient().Reply([]daemon.ReplyInput{call.Arguments})
+}
+
+func parseAIRequestID(raw string, required bool) (int64, error) {
+	if raw == "" {
+		if required {
+			return 0, errors.New("ai_request_id required")
+		}
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("bad ai_request_id %q: %w", raw, err)
+	}
+	return id, nil
+}
+
+func toolResult(resp *daemon.Response, err error) map[string]any {
 	if err != nil {
 		return toolError(err.Error())
 	}
 	if !resp.OK {
 		return toolError(resp.Error)
 	}
-	return map[string]any{"content": []any{map[string]any{"type": "text", "text": "ok"}}}
+	return toolOK("ok")
+}
+
+func toolOK(text string) map[string]any {
+	return map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}
 }
 
 func toolError(msg string) map[string]any {
