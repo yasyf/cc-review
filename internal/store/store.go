@@ -80,6 +80,35 @@ CREATE TABLE IF NOT EXISTS replies (
 );
 CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_dedup ON replies(dedup_key) WHERE dedup_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS file_states (
+  review_id            TEXT NOT NULL REFERENCES reviews(id),
+  path                 TEXT NOT NULL,
+  reviewed             INTEGER NOT NULL DEFAULT 0,
+  hidden               INTEGER NOT NULL DEFAULT 0,
+  reviewed_fingerprint TEXT NOT NULL DEFAULT '',
+  updated_at           INTEGER NOT NULL,
+  PRIMARY KEY (review_id, path)
+);
+CREATE TABLE IF NOT EXISTS ai_requests (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id      TEXT NOT NULL REFERENCES reviews(id),
+  version_number INTEGER NOT NULL,
+  source         TEXT NOT NULL,
+  prompt         TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'pending',
+  summary        TEXT NOT NULL DEFAULT '',
+  unmatched_json TEXT NOT NULL DEFAULT '[]',
+  changes_json   TEXT NOT NULL DEFAULT '[]',
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_review ON ai_requests(review_id);
+CREATE TABLE IF NOT EXISTS organizations (
+  version_id    INTEGER PRIMARY KEY REFERENCES review_versions(id),
+  chapters_json TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
   review_id      TEXT NOT NULL REFERENCES reviews(id),
   seq            INTEGER NOT NULL,

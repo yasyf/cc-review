@@ -307,6 +307,14 @@ func TestAppendEventSeqAndOriginFilter(t *testing.T) {
 		}
 	}
 
+	if seq, err := s.MaxEventSeq(ctx, r.ID); err != nil || seq != 3 {
+		t.Fatalf("max event seq = %d err=%v, want 3", seq, err)
+	}
+	empty, _ := s.CreateReview(ctx, "s-empty", 0, "/repo/empty", "main")
+	if seq, err := s.MaxEventSeq(ctx, empty.ID); err != nil || seq != 0 {
+		t.Fatalf("max event seq of eventless review = %d err=%v, want 0", seq, err)
+	}
+
 	all, _ := s.EventsSince(ctx, r.ID, 0, false)
 	if len(all) != 3 {
 		t.Fatalf("all events = %d, want 3", len(all))
@@ -341,6 +349,52 @@ func TestEventDedupReturnsExistingSeq(t *testing.T) {
 	all, _ := s.EventsSince(ctx, r.ID, 0, false)
 	if len(all) != 1 {
 		t.Fatalf("got %d events, want 1 (deduped)", len(all))
+	}
+}
+
+func TestStaleConnectedReviews(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	channel := func(reviewID string, connected bool) {
+		t.Helper()
+		payload := `{"type":"channel.changed","version_number":1,"connected":false}`
+		if connected {
+			payload = `{"type":"channel.changed","version_number":1,"connected":true}`
+		}
+		if _, err := s.AppendEvent(ctx, &Event{
+			ReviewID: reviewID, Origin: OriginSystem, Type: EventChannelChanged, VersionNumber: 1, Payload: []byte(payload),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	staleTrue, _ := s.CreateReview(ctx, "s1", 0, "/repo/a", "main")
+	channel(staleTrue.ID, true)
+
+	closedFalse, _ := s.CreateReview(ctx, "s2", 0, "/repo/b", "main")
+	channel(closedFalse.ID, true)
+	channel(closedFalse.ID, false)
+
+	reopened, _ := s.CreateReview(ctx, "s3", 0, "/repo/c", "main")
+	channel(reopened.ID, false)
+	channel(reopened.ID, true)
+
+	// connected:true on another event type never counts.
+	otherType, _ := s.CreateReview(ctx, "s4", 0, "/repo/d", "main")
+	if _, err := s.AppendEvent(ctx, &Event{
+		ReviewID: otherType.ID, Origin: OriginSystem, Type: "t", VersionNumber: 1, Payload: []byte(`{"connected":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.StaleConnectedReviews(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{staleTrue.ID: true, reopened.ID: true}
+	if len(got) != 2 || !want[got[0]] || !want[got[1]] || got[0] == got[1] {
+		t.Fatalf("stale reviews = %v, want exactly {%s, %s}", got, staleTrue.ID, reopened.ID)
 	}
 }
 

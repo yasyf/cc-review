@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/yasyf/cc-review/internal/vcs"
 )
 
 // Review is a code-review session keyed to a Claude window (pid) + repo root.
@@ -28,6 +30,107 @@ type Version struct {
 	PatchPath     string
 	FilesJSON     string
 	CreatedAt     time.Time
+}
+
+// Files decodes the version's files_json summary.
+func (v Version) Files() ([]vcs.FileChange, error) {
+	var files []vcs.FileChange
+	if err := json.Unmarshal([]byte(v.FilesJSON), &files); err != nil {
+		return nil, fmt.Errorf("version %d: decode files: %w", v.ID, err)
+	}
+	return files, nil
+}
+
+// FileState is one file's review-scoped state: hidden persists across
+// versions; reviewed survives exactly while ReviewedFingerprint matches the
+// file's current diff fingerprint.
+type FileState struct {
+	ReviewID            string
+	Path                string
+	Reviewed            bool
+	Hidden              bool
+	ReviewedFingerprint string
+	UpdatedAt           time.Time
+}
+
+// FileStateInput is one file's partial state change: a nil flag keeps the
+// current value.
+type FileStateInput struct {
+	Path     string
+	Reviewed *bool
+	Hidden   *bool
+}
+
+// PriorState snapshots a file's state before an AI batch, for undo.
+type PriorState struct {
+	Reviewed    bool   `json:"reviewed"`
+	Hidden      bool   `json:"hidden"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// AppliedState is a file's absolute state after an AI batch.
+type AppliedState struct {
+	Reviewed bool `json:"reviewed"`
+	Hidden   bool `json:"hidden"`
+}
+
+// FileStateResult is one file's prior and applied state from ApplyFileStates.
+type FileStateResult struct {
+	Path    string
+	Prior   PriorState
+	Applied AppliedState
+}
+
+// AIChange records one file's transition under an AI request; the first prior
+// per path is kept across batches so undo restores the pre-request state.
+type AIChange struct {
+	Path    string       `json:"path"`
+	Reason  string       `json:"reason"`
+	Prior   PriorState   `json:"prior"`
+	Applied AppliedState `json:"applied"`
+}
+
+// Unmatched is one part of an AI-bar prompt Claude did not act on, and why.
+type Unmatched struct {
+	Pattern string `json:"pattern"`
+	Why     string `json:"why"`
+}
+
+// AIRequest is one AI-bar (source=user) or auto-organize (source=system)
+// request and its lifecycle.
+type AIRequest struct {
+	ID            int64
+	ReviewID      string
+	VersionNumber int
+	Source        string // user | system
+	Prompt        string
+	Status        string // pending | working | done | failed | undone
+	Summary       string
+	Unmatched     []Unmatched
+	Changes       []AIChange
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// ChapterFile is one file within a chapter, rated by the danger of skimming it.
+type ChapterFile struct {
+	Path      string `json:"path"`
+	Risk      string `json:"risk"` // high | medium | low | mechanical
+	Rationale string `json:"rationale"`
+}
+
+// Chapter is one ordered story beat of a review.
+type Chapter struct {
+	Title   string        `json:"title"`
+	Summary string        `json:"summary"`
+	Files   []ChapterFile `json:"files"`
+}
+
+// Organization is Claude's chaptering of one version's diff. The camelCase
+// tags pass straight through to the wire like Ask.
+type Organization struct {
+	Overview *string   `json:"overview"`
+	Chapters []Chapter `json:"chapters"`
 }
 
 // Comment is an inline comment anchored to a line range of a version's diff.

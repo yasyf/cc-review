@@ -10,6 +10,12 @@ const (
 	EventClaudeAsk           = "claude.ask"
 	EventClaudeClarification = "claude.clarification"
 	EventSubmit              = "submit"
+	EventFileStates          = "file.states"
+	EventVersionCreated      = "version.created"
+	EventAIRequestCreated    = "ai.request.created"
+	EventAIRequestUpdated    = "ai.request.updated"
+	EventOrganizationUpdated = "organization.updated"
+	EventChannelChanged      = "channel.changed"
 )
 
 // Origins recorded in events.origin.
