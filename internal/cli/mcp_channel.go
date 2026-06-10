@@ -105,7 +105,7 @@ func runMCPChannel(ctx context.Context, session, cwd string, in io.Reader, out i
 		case "initialize":
 			ch.reply(msg.ID, map[string]any{
 				"protocolVersion": mcpProtocolVersion,
-				"capabilities":    map[string]any{"tools": map[string]any{}, "claude/channel": map[string]any{}},
+				"capabilities":    map[string]any{"tools": map[string]any{}, "experimental": map[string]any{"claude/channel": map[string]any{}}},
 				"serverInfo":      map[string]any{"name": "cc-review", "version": version.String()},
 			})
 		case "tools/list":
