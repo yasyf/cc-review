@@ -95,6 +95,15 @@ func (s *Server) handleResolve(ctx context.Context, req Request) Response {
 	if err != nil {
 		return errResp(err.Error())
 	}
+	if !ok {
+		// A stream consumer may hold a sibling session's id — MCP servers are
+		// spawned once and outlive session rotation — so fall back to the
+		// repo's latest open review.
+		review, ok, err = s.store.FindLatestOpenReviewByRepo(ctx, repoRoot)
+		if err != nil {
+			return errResp(err.Error())
+		}
+	}
 	if ok {
 		resp.ReviewID = review.ID
 		resp.Status = review.Status

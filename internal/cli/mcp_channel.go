@@ -134,7 +134,7 @@ func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 		// undelivered event; a channel otherwise runs for the whole session.
 		err := ch.notify("notifications/claude/channel", map[string]any{
 			"content": data,
-			"meta":    map[string]any{"source": "cc-review", "type": eventType(data), "review_id": reviewID},
+			"meta":    map[string]any{"type": eventType(data), "review_id": reviewID},
 		})
 		return false, err
 	})
