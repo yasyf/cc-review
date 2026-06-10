@@ -9,6 +9,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/procs"
+	"github.com/yasyf/cc-review/internal/store"
 )
 
 // ErrDaemonUnavailable is returned when the control socket cannot be reached.
@@ -114,4 +115,34 @@ func (c *Client) SessionRecord(session, cwd string) (*Response, error) {
 // GuardEdit asks whether an edit is permitted for the session's review.
 func (c *Client) GuardEdit(session, cwd string) (*Response, error) {
 	return c.do(Request{Op: OpGuardEdit, Session: session, Cwd: cwd}, 5*time.Second)
+}
+
+// FileStates batch-sets per-file review state. A non-zero aiRequestID ties the
+// changes to that request as one undoable unit.
+func (c *Client) FileStates(session, cwd string, files []FileStateInput, aiRequestID int64) (*Response, error) {
+	return c.do(Request{Op: OpFileStates, Session: session, Cwd: cwd, Files: files, AIRequestID: aiRequestID}, 10*time.Second)
+}
+
+// UpdateAIRequest moves an AI request to working, done, or failed. An empty
+// summary and nil unmatched keep the stored values.
+func (c *Client) UpdateAIRequest(session, cwd string, aiRequestID int64, status, summary string, unmatched []store.Unmatched) (*Response, error) {
+	return c.do(Request{
+		Op: OpUpdateAIRequest, Session: session, Cwd: cwd,
+		AIRequestID: aiRequestID, AIStatus: status, Summary: summary, Unmatched: unmatched,
+	}, 10*time.Second)
+}
+
+// SubmitOrganization stores the chapter organization for the review's current
+// version. versionNumber 0 targets the current version unchecked; a stale
+// non-zero number is rejected with the current one in the error.
+func (c *Client) SubmitOrganization(session, cwd string, org store.Organization, versionNumber int) (*Response, error) {
+	return c.do(Request{
+		Op: OpSubmitOrganization, Session: session, Cwd: cwd,
+		Organization: &org, VersionNumber: versionNumber,
+	}, 10*time.Second)
+}
+
+// ReviewFiles lists the current version's files with their review states.
+func (c *Client) ReviewFiles(session, cwd string) (*Response, error) {
+	return c.do(Request{Op: OpReviewFiles, Session: session, Cwd: cwd}, 10*time.Second)
 }

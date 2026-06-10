@@ -68,6 +68,25 @@ type VersionSummary struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+// FileState is the SPA's view of one file's review state.
+type FileState struct {
+	Reviewed bool `json:"reviewed"`
+	Hidden   bool `json:"hidden"`
+}
+
+// AIRequest is the SPA's view of an AI-bar or auto-organize request.
+type AIRequest struct {
+	ID        string            `json:"id"`
+	Source    string            `json:"source"`
+	Prompt    string            `json:"prompt"`
+	Status    string            `json:"status"`
+	Summary   string            `json:"summary"`
+	Unmatched []store.Unmatched `json:"unmatched"`
+	Changes   []store.AIChange  `json:"changes"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt"`
+}
+
 // ToReview converts a store review, taking the branch from the active version
 // (branch lives on the version, not the review).
 func ToReview(r store.Review, branch string) Review {
@@ -95,6 +114,22 @@ func ToComment(c store.Comment, replies []store.Reply) Comment {
 	}
 	for _, r := range replies {
 		out.Replies = append(out.Replies, ToReply(r))
+	}
+	return out
+}
+
+// ToAIRequest converts a store AI request. Unmatched and Changes are always
+// non-nil arrays so the SPA can map over them unconditionally.
+func ToAIRequest(r store.AIRequest) AIRequest {
+	out := AIRequest{
+		ID: id(r.ID), Source: r.Source, Prompt: r.Prompt, Status: r.Status, Summary: r.Summary,
+		Unmatched: r.Unmatched, Changes: r.Changes, CreatedAt: iso(r.CreatedAt), UpdatedAt: iso(r.UpdatedAt),
+	}
+	if out.Unmatched == nil {
+		out.Unmatched = []store.Unmatched{}
+	}
+	if out.Changes == nil {
+		out.Changes = []store.AIChange{}
 	}
 	return out
 }

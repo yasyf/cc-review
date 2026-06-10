@@ -101,6 +101,9 @@ func (s *Server) serve(parent context.Context) error {
 	closeListener := func() { once.Do(func() { _ = ln.Close() }) }
 	defer closeListener()
 
+	if err := s.reconcileChannelEvents(ctx); err != nil {
+		return err
+	}
 	if err := s.startHTTP(ctx); err != nil {
 		return err
 	}
@@ -292,6 +295,14 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		return s.handleSessionRecord(ctx, req)
 	case OpGuardEdit:
 		return s.handleGuardEdit(ctx, req)
+	case OpFileStates:
+		return s.handleFileStates(ctx, req)
+	case OpUpdateAIRequest:
+		return s.handleUpdateAIRequest(ctx, req)
+	case OpSubmitOrganization:
+		return s.handleSubmitOrganization(ctx, req)
+	case OpReviewFiles:
+		return s.handleReviewFiles(ctx, req)
 	default:
 		return Response{OK: false, Error: "unknown op: " + string(req.Op)}
 	}

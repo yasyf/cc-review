@@ -28,6 +28,11 @@ const (
 	OpStatus        Op = "status"         // daemon + review status
 	OpSessionRecord Op = "session-record" // record SessionStart hook facts
 	OpGuardEdit     Op = "guard-edit"     // PreToolUse: allow edits only once submitted
+
+	OpFileStates         Op = "file-states"         // Claude batch-sets per-file review state
+	OpUpdateAIRequest    Op = "update-ai-request"   // Claude moves an AI request through its lifecycle
+	OpSubmitOrganization Op = "submit-organization" // Claude submits the version's chapter organization
+	OpReviewFiles        Op = "review-files"        // Claude reads the current files + states
 )
 
 // ReplyInput is one reply Claude posts. A non-zero AnswerTo answers an existing
@@ -45,6 +50,16 @@ type ReplyInput struct {
 	DedupKey  string           `json:"dedup_key,omitempty"`
 }
 
+// FileStateInput is one file's partial state change: a nil flag keeps the
+// current value. Reason is carried into the file.states event and the AI
+// request's change record, never stored on the file itself.
+type FileStateInput struct {
+	Path     string `json:"path"`
+	Reviewed *bool  `json:"reviewed,omitempty"`
+	Hidden   *bool  `json:"hidden,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // Request is one control-plane RPC.
 type Request struct {
 	Proto     int          `json:"proto"`
@@ -55,6 +70,14 @@ type Request struct {
 	Consumer  string       `json:"consumer,omitempty"` // stream consumer name on OpResolve (watch | channel)
 	New       bool         `json:"new,omitempty"`
 	Replies   []ReplyInput `json:"replies,omitempty"`
+
+	Files         []FileStateInput    `json:"files,omitempty"`          // file-states
+	AIRequestID   int64               `json:"ai_request_id,omitempty"`  // file-states (optional) | update-ai-request
+	AIStatus      string              `json:"ai_status,omitempty"`      // update-ai-request: working | done | failed
+	Summary       string              `json:"summary,omitempty"`        // update-ai-request
+	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
+	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
+	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization: 0 = current
 }
 
 // Response is one control-plane reply.
@@ -74,4 +97,5 @@ type Response struct {
 	ChannelActive bool            `json:"channel_active,omitempty"`
 	Allow         bool            `json:"allow,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
+	ReviewFiles   json.RawMessage `json:"review_files,omitempty"` // review-files: {version_number, files: [...]}
 }

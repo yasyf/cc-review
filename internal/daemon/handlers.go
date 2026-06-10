@@ -80,6 +80,40 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 			return errResp(err.Error())
 		}
 	}
+	// Carry review state across versions: unmark files whose diff content
+	// changed (version.created first, then the unmark batch), then queue the
+	// system organize request for the live Claude session.
+	fingerprints := make(map[string]string, len(snap.Files))
+	for _, f := range snap.Files {
+		fingerprints[f.Path] = f.Fingerprint
+	}
+	unmarked, err := s.store.UnreviewChangedFiles(ctx, review.ID, fingerprints)
+	if err != nil {
+		return errResp(err.Error())
+	}
+	if _, err := s.AppendEvent(ctx, &store.Event{
+		ReviewID: review.ID, Origin: store.OriginSystem, Type: store.EventVersionCreated, VersionNumber: v.VersionNumber,
+		Payload: wire.Event(store.EventVersionCreated, v.VersionNumber, nil),
+	}); err != nil {
+		return errResp(err.Error())
+	}
+	if len(unmarked) > 0 {
+		states := make([]map[string]any, 0, len(unmarked))
+		for _, st := range unmarked {
+			states = append(states, map[string]any{"path": st.Path, "reviewed": false, "hidden": st.Hidden})
+		}
+		if _, err := s.AppendEvent(ctx, &store.Event{
+			ReviewID: review.ID, Origin: store.OriginSystem, Type: store.EventFileStates, VersionNumber: v.VersionNumber,
+			Payload: wire.Event(store.EventFileStates, v.VersionNumber, map[string]any{"states": states}),
+		}); err != nil {
+			return errResp(err.Error())
+		}
+	}
+	organize, err := s.store.CreateAIRequest(ctx, review.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
+	if err != nil {
+		return errResp(err.Error())
+	}
+	s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
 	url := fmt.Sprintf("http://127.0.0.1:%d/s/%s", s.httpPort, review.Slug)
 	return Response{
 		OK: true, URL: url, ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
