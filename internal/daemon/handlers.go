@@ -82,6 +82,37 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	return Response{
 		OK: true, URL: url, ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
 		HTTPPort: s.httpPort, Token: s.token,
+		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot),
+	}
+}
+
+const channelConsumer = "channel"
+
+// channelPollWindow is both how recent a channel resolve poll must be to count
+// as presence, and the boot grace during which handleStart keeps checking.
+const channelPollWindow = 3 * time.Second
+
+// channelActive reports whether a channel consumer is wired to this review:
+// attached to its SSE stream or recently polling resolve for this repo. The
+// channel server polls every second from session start, so on a long-running
+// daemon the answer is immediate. A daemon cold-booted by this very start has
+// no poll history yet, so keep checking until the boot grace window closes —
+// the channel's next 1s poll tick lands inside it. Never block resolve on
+// this: the channel's own poll is the signal source.
+func (s *Server) channelActive(ctx context.Context, reviewID, repoRoot string) bool {
+	for {
+		if s.activity.Attached(reviewID, channelConsumer) ||
+			s.activity.PolledSince(repoRoot, channelConsumer, channelPollWindow) {
+			return true
+		}
+		if time.Since(s.startedAt) >= channelPollWindow {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }
 
@@ -89,6 +120,9 @@ func (s *Server) handleResolve(ctx context.Context, req Request) Response {
 	repoRoot, err := gitdiff.RepoRoot(ctx, req.Cwd)
 	if err != nil {
 		return errResp(err.Error())
+	}
+	if req.Consumer != "" {
+		s.activity.NotePoll(repoRoot, req.Consumer)
 	}
 	resp := Response{OK: true, HTTPPort: s.httpPort, Token: s.token}
 	review, ok, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot)

@@ -84,8 +84,9 @@ func (c *Client) Start(req Request) (*Response, error) {
 }
 
 // Resolve looks up an existing review for a stream consumer, without creating.
-func (c *Client) Resolve(session, cwd string) (*Response, error) {
-	return c.do(Request{Op: OpResolve, Session: session, Cwd: cwd}, 10*time.Second)
+// consumer names the caller (watch | channel) so the daemon can track presence.
+func (c *Client) Resolve(session, cwd, consumer string) (*Response, error) {
+	return c.do(Request{Op: OpResolve, Session: session, Cwd: cwd, Consumer: consumer}, 10*time.Second)
 }
 
 // Reply posts Claude's replies.

@@ -26,12 +26,17 @@ func newWatchCmd() *cobra.Command {
 			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
 				return err
 			}
-			reviewID, port, token, err := resolveReview(ctx, daemon.NewClient(), session, mustCwd(cwd))
+			client := daemon.NewClient()
+			reviewID, port, token, err := resolveReview(ctx, client, session, mustCwd(cwd), "watch")
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			return ConsumeEvents(ctx, port, token, reviewID, "watch", func(_ int64, data string) (bool, error) {
+			src := StreamSource{
+				Port: port, Token: token, ReviewID: reviewID, Consumer: "watch",
+				Refresh: refreshHandshake(client, session, mustCwd(cwd), "watch"),
+			}
+			return ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {
 				// A failed write must propagate so the cursor doesn't advance past
 				// an undelivered event (at-least-once).
 				if _, err := fmt.Fprintln(out, data); err != nil {

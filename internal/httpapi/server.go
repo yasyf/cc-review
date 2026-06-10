@@ -14,11 +14,13 @@ import (
 )
 
 // Backend is the daemon-side capability the HTTP plane needs: subscribe to a
-// review's wakeup bus, and append an event (which persists it and publishes the
-// wakeup). The daemon's appendEvent chokepoint and Bus satisfy this.
+// review's wakeup bus, append an event (which persists it and publishes the
+// wakeup), and register a named SSE stream consumer. The daemon's appendEvent
+// chokepoint, Bus, and Activity satisfy this.
 type Backend interface {
 	Subscribe(reviewID string) (<-chan struct{}, func())
 	AppendEvent(ctx context.Context, e *store.Event) (int64, error)
+	Attach(reviewID, consumer string) func()
 }
 
 // Server is the HTTP handler tree. It is constructed by the daemon, which owns

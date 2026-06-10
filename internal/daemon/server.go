@@ -34,10 +34,13 @@ const defaultEvictTimeout = 5 * time.Second
 // Server is the running daemon: the control-plane unix-socket server plus the
 // data/UI HTTP plane it boots.
 type Server struct {
-	store  *store.Store
-	bus    *Bus
-	socket string
-	log    *log.Logger
+	store    *store.Store
+	bus      *Bus
+	activity *Activity
+	socket   string
+	log      *log.Logger
+
+	startedAt time.Time
 
 	fixedPort    int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
 	httpPort     int
@@ -64,8 +67,10 @@ func Run(ctx context.Context, fixedPort int) error {
 	s := &Server{
 		store:        st,
 		bus:          NewBus(),
+		activity:     NewActivity(),
 		socket:       paths.SocketPath(),
 		log:          log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+		startedAt:    time.Now(),
 		fixedPort:    fixedPort,
 		evictTimeout: defaultEvictTimeout,
 	}

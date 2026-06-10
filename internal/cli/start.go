@@ -33,6 +33,11 @@ func newStartCmd() *cobra.Command {
 				return errors.New(resp.Error)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), resp.URL)
+			if resp.ChannelActive {
+				fmt.Fprintln(cmd.OutOrStdout(), "channel: active")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "channel: inactive")
+			}
 			return nil
 		},
 	}

@@ -45,6 +45,7 @@ type Request struct {
 	Op             Op           `json:"op"`
 	Session        string       `json:"session,omitempty"`
 	Cwd            string       `json:"cwd,omitempty"`
+	Consumer       string       `json:"consumer,omitempty"` // stream consumer name on OpResolve (watch | channel)
 	New            bool         `json:"new,omitempty"`
 	Replies        []ReplyInput `json:"replies,omitempty"`
 	TranscriptPath string       `json:"transcript_path,omitempty"`
@@ -66,6 +67,7 @@ type Response struct {
 	FeedbackPath  string          `json:"feedback_path,omitempty"`
 	Feedback      json.RawMessage `json:"feedback,omitempty"`
 	Status        string          `json:"status,omitempty"`
+	ChannelActive bool            `json:"channel_active,omitempty"`
 	Allow         bool            `json:"allow,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
 }

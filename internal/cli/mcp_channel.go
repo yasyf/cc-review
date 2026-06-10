@@ -129,7 +129,11 @@ func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 	if reviewID == "" {
 		return
 	}
-	_ = ConsumeEvents(ctx, port, token, reviewID, "channel", func(_ int64, data string) (bool, error) {
+	src := StreamSource{
+		Port: port, Token: token, ReviewID: reviewID, Consumer: "channel",
+		Refresh: refreshHandshake(client, session, cwd, "channel"),
+	}
+	_ = ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {
 		// A failed push must propagate so the cursor doesn't advance past an
 		// undelivered event; a channel otherwise runs for the whole session.
 		err := ch.notify("notifications/claude/channel", map[string]any{
@@ -146,7 +150,7 @@ func waitForReview(ctx context.Context, client *daemon.Client, session, cwd stri
 			return "", 0, ""
 		}
 		if client.Available() {
-			if resp, err := client.Resolve(session, cwd); err == nil && resp.ReviewID != "" {
+			if resp, err := client.Resolve(session, cwd, "channel"); err == nil && resp.ReviewID != "" {
 				return resp.ReviewID, resp.HTTPPort, resp.Token
 			}
 		}

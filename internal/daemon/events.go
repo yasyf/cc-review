@@ -12,6 +12,12 @@ func (s *Server) Subscribe(reviewID string) (<-chan struct{}, func()) {
 	return s.bus.Subscribe(reviewID)
 }
 
+// Attach registers a named SSE stream consumer for a review and returns its
+// detach (satisfies httpapi.Backend).
+func (s *Server) Attach(reviewID, consumer string) func() {
+	return s.activity.Attach(reviewID, consumer)
+}
+
 // AppendEvent is the single chokepoint through which every event enters the log,
 // from any origin: it persists the event, then publishes the wakeup. Persisting
 // before publishing guarantees a woken consumer can read the row. Satisfies

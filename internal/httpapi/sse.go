@@ -28,6 +28,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	excludeClaude := r.URL.Query().Get("exclude_origin") == "claude"
+	// Named stream consumers (watch, channel) register their presence; the
+	// browser sends no consumer param and is never registered.
+	if consumer := r.URL.Query().Get("consumer"); consumer != "" {
+		defer s.backend.Attach(reviewID, consumer)()
+	}
 
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")

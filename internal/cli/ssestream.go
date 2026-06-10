@@ -28,9 +28,10 @@ type EventHandler func(seq int64, data string) (stop bool, err error)
 // resolveReview polls the daemon until a review exists for the session+cwd,
 // returning its id and the HTTP handshake. A stream consumer may start before
 // `start` has created the review (e.g. an MCP channel loaded at session start).
-func resolveReview(ctx context.Context, client *daemon.Client, session, cwd string) (reviewID string, port int, token string, err error) {
+// consumer names the caller so the daemon can track its presence.
+func resolveReview(ctx context.Context, client *daemon.Client, session, cwd, consumer string) (reviewID string, port int, token string, err error) {
 	for {
-		resp, err := client.Resolve(session, cwd)
+		resp, err := client.Resolve(session, cwd, consumer)
 		if err != nil {
 			return "", 0, "", err
 		}
@@ -45,36 +46,70 @@ func resolveReview(ctx context.Context, client *daemon.Client, session, cwd stri
 	}
 }
 
+// StreamSource identifies one SSE consumption: where to connect, as whom, and
+// how to refresh the handshake — a version-skew eviction restarts the daemon
+// mid-session, changing the port and token the consumer captured.
+type StreamSource struct {
+	Port     int
+	Token    string
+	ReviewID string
+	Consumer string
+	Refresh  func(ctx context.Context) (port int, token string, err error)
+}
+
 // ConsumeEvents streams a review's events (excluding Claude's own) to handle,
 // persisting a per-consumer cursor so a restart resumes without re-delivering.
-// It reconnects on transient drops and returns when handle signals stop or ctx
-// is cancelled. The cursor advances only after handle returns, so a crash mid-
-// delivery re-delivers rather than skips (at-least-once).
-func ConsumeEvents(ctx context.Context, port int, token, reviewID, consumer string, handle EventHandler) error {
-	cursorPath := paths.ConsumerCursorPath(reviewID, consumer)
+// It reconnects on transient drops — refreshing the handshake first, so the
+// stream survives a daemon upgrade — and returns when handle signals stop or
+// ctx is cancelled. The cursor advances only after handle returns, so a crash
+// mid-delivery re-delivers rather than skips (at-least-once).
+func ConsumeEvents(ctx context.Context, src StreamSource, handle EventHandler) error {
+	cursorPath := paths.ConsumerCursorPath(src.ReviewID, src.Consumer)
 	cursor, err := readCursor(cursorPath)
 	if err != nil {
 		return err // a corrupt cursor would silently replay the whole backlog; fail loud
 	}
-	base := fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&t=%s&exclude_origin=claude",
-		port, url.QueryEscape(reviewID), url.QueryEscape(token))
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		stop, next, fatal := readStream(ctx, base, cursor, cursorPath, handle)
+		stop, next, fatal := readStream(ctx, streamURL(src), cursor, cursorPath, handle)
 		cursor = next
-		if fatal != nil {
-			return fatal
-		}
 		if stop || ctx.Err() != nil {
 			return nil
+		}
+		refreshed := false
+		if src.Refresh != nil {
+			if port, token, err := src.Refresh(ctx); err == nil && port != 0 {
+				refreshed = port != src.Port || token != src.Token
+				src.Port, src.Token = port, token
+			}
+		}
+		if fatal != nil && !refreshed {
+			return fatal // a 4xx against the *current* handshake is permanent
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(reconnectDelay):
 		}
+	}
+}
+
+func streamURL(src StreamSource) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&t=%s&exclude_origin=claude&consumer=%s",
+		src.Port, url.QueryEscape(src.ReviewID), url.QueryEscape(src.Token), url.QueryEscape(src.Consumer))
+}
+
+// refreshHandshake returns a StreamSource.Refresh that re-resolves the daemon's
+// current port+token, so a stream survives the daemon being replaced underneath it.
+func refreshHandshake(client *daemon.Client, session, cwd, consumer string) func(context.Context) (int, string, error) {
+	return func(context.Context) (int, string, error) {
+		resp, err := client.Resolve(session, cwd, consumer)
+		if err != nil {
+			return 0, "", err
+		}
+		return resp.HTTPPort, resp.Token, nil
 	}
 }
 

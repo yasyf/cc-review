@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-review/internal/gitdiff"
 	"github.com/yasyf/cc-review/internal/store"
@@ -24,7 +25,7 @@ func testServer(t *testing.T) (*Server, string) {
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	return &Server{store: st, log: log.New(io.Discard, "", 0)}, repo
+	return &Server{store: st, activity: NewActivity(), log: log.New(io.Discard, "", 0)}, repo
 }
 
 func repoRoot(t *testing.T, cwd string) string {
@@ -92,6 +93,52 @@ func TestSessionRecordOutsideRepoIsNoop(t *testing.T) {
 	}
 	if hook.SessionID != "s1" {
 		t.Fatalf("hook session = %q", hook.SessionID)
+	}
+}
+
+func TestChannelActiveFromPollAndAttach(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+	s.startedAt = time.Now().Add(-time.Minute) // long-running daemon: no boot grace
+
+	if s.channelActive(ctx, "r1", "/repo") {
+		t.Fatal("no signal must read inactive")
+	}
+	s.activity.NotePoll("/repo", channelConsumer)
+	if !s.channelActive(ctx, "r1", "/repo") {
+		t.Fatal("a recent resolve poll must read active")
+	}
+
+	s2, _ := testServer(t)
+	s2.startedAt = time.Now().Add(-time.Minute)
+	detach := s2.activity.Attach("r1", channelConsumer)
+	defer detach()
+	if !s2.channelActive(ctx, "r1", "/repo") {
+		t.Fatal("a live SSE attachment must read active")
+	}
+}
+
+func TestChannelActiveColdBootGraceCatchesLatePoll(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+	s.startedAt = time.Now() // cold boot: grace window open
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		s.activity.NotePoll("/repo", channelConsumer)
+	}()
+	if !s.channelActive(ctx, "r1", "/repo") {
+		t.Fatal("a poll landing inside the boot grace must read active")
+	}
+
+	// Past the grace window the answer is immediate, not a 3s wait.
+	s.startedAt = time.Now().Add(-time.Minute)
+	begin := time.Now()
+	if s.channelActive(ctx, "r2", "/other") {
+		t.Fatal("no signal must read inactive")
+	}
+	if elapsed := time.Since(begin); elapsed > 500*time.Millisecond {
+		t.Fatalf("inactive answer took %s; must not wait outside the grace window", elapsed)
 	}
 }
 
