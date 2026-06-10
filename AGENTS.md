@@ -75,7 +75,13 @@ When you write a plan — in plan mode, or any "here's what I'll do" before you 
 
 ## Code Search
 
-`semble` is wired up via `.mcp.json` (project-scoped MCP server, runs via `uvx` — nothing to install). It's the default tool for any "find code by intent or symbol" question:
+`semble` is wired up via `.mcp.json` (project-scoped MCP server, runs via `uvx`). The file is **gitignored** — the plugin root is the repo root, so a committed `.mcp.json` would ship as plugin MCP config to every install. Create it locally once:
+
+```json
+{ "mcpServers": { "semble": { "command": "uvx", "args": ["--from", "semble[mcp]", "semble"] } } }
+```
+
+It's the default tool for any "find code by intent or symbol" question:
 
 1. **"How do we do X?" / "Where is the code that does Y?"** → `semble.search("...")`
 2. **"Where is `Foo` defined?"** → `semble.search("Foo")` (or `search("class Foo")` for a relevance boost)
