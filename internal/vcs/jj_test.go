@@ -113,6 +113,37 @@ func TestJJCapturePureRepo(t *testing.T) {
 	}
 }
 
+func TestJJCaptureFingerprints(t *testing.T) {
+	requireJJ(t)
+	dir := newJJRepo(t, false)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "b.go", "package b\n")
+	jjRun(t, dir, "commit", "-m", "init")
+	write(t, dir, "a.go", "package a\nfunc A() {}\n")
+	write(t, dir, "b.go", "package b\nfunc B() {}\n")
+
+	first := captureFingerprints(t, dir)
+	if first["a.go"] == "" || first["b.go"] == "" {
+		t.Fatalf("fingerprints missing: %+v", first)
+	}
+
+	// A no-op recapture yields identical fingerprints.
+	second := captureFingerprints(t, dir)
+	if first["a.go"] != second["a.go"] || first["b.go"] != second["b.go"] {
+		t.Fatalf("fingerprints drifted across no-op recapture:\n%+v\n%+v", first, second)
+	}
+
+	// Changing one file's content changes its fingerprint only.
+	write(t, dir, "a.go", "package a\nfunc A() {}\nfunc A2() {}\n")
+	third := captureFingerprints(t, dir)
+	if third["a.go"] == first["a.go"] {
+		t.Fatal("a.go content changed but its fingerprint did not")
+	}
+	if third["b.go"] != first["b.go"] {
+		t.Fatal("b.go did not change but its fingerprint did")
+	}
+}
+
 func TestJJCaptureFileStatuses(t *testing.T) {
 	requireJJ(t)
 	dir := newJJRepo(t, false)

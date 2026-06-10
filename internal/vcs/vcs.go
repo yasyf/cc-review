@@ -18,11 +18,14 @@ const (
 	backendJJ
 )
 
-// FileChange is one file's status within a snapshot.
+// FileChange is one file's status within a snapshot. Fingerprint identifies
+// the file's diff content (see fingerprint); a reviewed mark survives exactly
+// while it matches.
 type FileChange struct {
-	Path    string `json:"path"`
-	OldPath string `json:"old_path,omitempty"`
-	Status  string `json:"status"` // A | M | D | R | C
+	Path        string `json:"path"`
+	OldPath     string `json:"old_path,omitempty"`
+	Status      string `json:"status"` // A | M | D | R | C
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // Snapshot is the result of snapshotting a working copy's pending changes.

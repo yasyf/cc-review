@@ -119,6 +119,50 @@ func TestCaptureDetachedHeadHasNoBranch(t *testing.T) {
 	}
 }
 
+func TestCaptureFingerprints(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "b.go", "package b\n")
+	gitInit(t, dir, "add", "-A")
+	gitInit(t, dir, "commit", "-qm", "init")
+	write(t, dir, "a.go", "package a\nfunc A() {}\n")
+	write(t, dir, "b.go", "package b\nfunc B() {}\n")
+
+	first := captureFingerprints(t, dir)
+	if first["a.go"] == "" || first["b.go"] == "" {
+		t.Fatalf("fingerprints missing: %+v", first)
+	}
+
+	// A no-op recapture yields identical fingerprints.
+	second := captureFingerprints(t, dir)
+	if first["a.go"] != second["a.go"] || first["b.go"] != second["b.go"] {
+		t.Fatalf("fingerprints drifted across no-op recapture:\n%+v\n%+v", first, second)
+	}
+
+	// Changing one file's content changes its fingerprint only.
+	write(t, dir, "a.go", "package a\nfunc A() {}\nfunc A2() {}\n")
+	third := captureFingerprints(t, dir)
+	if third["a.go"] == first["a.go"] {
+		t.Fatal("a.go content changed but its fingerprint did not")
+	}
+	if third["b.go"] != first["b.go"] {
+		t.Fatal("b.go did not change but its fingerprint did")
+	}
+}
+
+func captureFingerprints(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	snap, err := Capture(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	out := map[string]string{}
+	for _, f := range snap.Files {
+		out[f.Path] = f.Fingerprint
+	}
+	return out
+}
+
 func TestCaptureRename(t *testing.T) {
 	dir := newRepo(t)
 	write(t, dir, "old.go", "package a\n\nfunc One() {}\nfunc Two() {}\nfunc Three() {}\n")
