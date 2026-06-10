@@ -18,10 +18,13 @@ cc-review/
 │   ├── version/        #   ldflags-injected version
 │   └── web/            #   go:embed of the built SPA (dist/)
 ├── web/                # Frontend source: Vite + React + @pierre/diffs (TanStack Router/Query)
-├── skills/start/       # The /review:start skill (thin CLI wrapper) + reference docs
-├── hooks/              # Plugin hooks: SessionStart, PreToolUse edit-guard
-├── bin/                # Prebuilt cc-review binary shipped in the plugin payload
-├── .claude-plugin/     # plugin.json (name="review") + marketplace.json
+├── plugin/             # The self-contained plugin payload — the only directory that installs
+│   ├── .claude-plugin/ #   plugin.json: manifest with mcpServers (channel server) + channels
+│   ├── skills/start/   #   the /review:start skill (thin CLI wrapper) + reference docs
+│   ├── hooks/          #   SessionStart, PreToolUse edit-guard
+│   ├── scripts/        #   install-binary.sh (downloads release asset), mcp-channel.sh
+│   └── bin/            #   cc-review binary (downloaded or built; gitignored)
+├── .claude-plugin/     # marketplace.json — plugin source points at ./plugin
 ├── AGENTS.md           # This file — shared conventions
 └── README.md           # Project overview
 ```
@@ -126,8 +129,8 @@ Reach for **`Grep`** only for material neither tool indexes: literal *content* o
 **Mechanical linting.** CI and hooks handle formatting and import order; fix only what needs human judgment. When reviewing code, don't flag mechanical lint violations (line length, whitespace, import order, trailing commas).
 
 **Testing.** Go tests live next to the code as `*_test.go`; run `go test -race ./...` from
-the repo root. The frontend lives in `web/`; run `pnpm -C web test` (and `pnpm -C web build`
-to refresh the embedded `internal/web/dist` before `go build`, since `//go:embed` reads at
-compile time). CI runs the web build first, then `go vet ./...` and `go test -race ./...`.
+the repo root. The frontend lives in `web/`; run `cd web && bunx vite build` to refresh the
+embedded `internal/web/dist` before `go build`, since `//go:embed` reads at compile time.
+CI runs the web build first, then `go vet ./...` and `go test -race ./...`.
 
 **Git.** Commits should be atomic and scoped. One logical change per commit.

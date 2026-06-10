@@ -37,5 +37,7 @@ web/dist/
 internal/web/dist/*
 !internal/web/dist/index.html
 
-# Prebuilt plugin binary — produced by the build, not committed
-bin/cc-review
+# Plugin binary — built locally or downloaded from release assets, not committed.
+# The bin/ dir itself ships (`.gitkeep`) so Claude Code adds it to the Bash PATH.
+plugin/bin/*
+!plugin/bin/.gitkeep

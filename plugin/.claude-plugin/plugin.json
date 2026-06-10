@@ -12,5 +12,11 @@
     "cc-review": {
       "command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-channel.sh"
     }
-  }
+  },
+  "channels": [
+    {
+      "server": "cc-review",
+      "displayName": "cc-review"
+    }
+  ]
 }

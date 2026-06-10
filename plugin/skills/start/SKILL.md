@@ -7,7 +7,7 @@ description: Start or resume a cc-review review of the code Claude just wrote. O
 
 You are running a code review. The human reviews your uncommitted changes in a browser; their comments stream to you here; you ask clarifying questions that render under each comment; you make **no edits** until they press **Submit**. Everything is CLI calls to `cc-review` — you are a thin wrapper around it.
 
-Let `BIN="${CLAUDE_PLUGIN_ROOT}/bin/cc-review"`. (A SessionStart hook builds it on first use; if `$BIN` is missing, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"` once.)
+Let `BIN="${CLAUDE_PLUGIN_ROOT}/bin/cc-review"`. (A SessionStart hook downloads it on first use; if `$BIN` is missing, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"` once. The plugin's `bin/` is also on the Bash `PATH`, so bare `cc-review` works too — `$BIN` is just the form that never depends on `PATH`.)
 
 ## 1. Start the review and give the user the URL
 

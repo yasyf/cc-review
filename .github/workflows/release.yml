@@ -1,0 +1,42 @@
+name: Release
+
+# Cross-compiles the cc-review binary for every supported platform and attaches
+# the assets to the release for the pushed tag. The plugin's install-binary.sh
+# downloads the asset matching the plugin.json version, so a release must exist
+# for every published plugin version.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Build web SPA (embedded via go:embed)
+        run: cd web && bun install --frozen-lockfile && bunx vite build
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cross-compile binaries
+        run: |
+          mkdir -p dist
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              GOOS=$os GOARCH=$arch CGO_ENABLED=0 \
+                go build -ldflags "-X github.com/yasyf/cc-review/internal/version.Version=${GITHUB_REF_NAME}" \
+                -o "dist/cc-review_${os}_${arch}" ./cmd/cc-review
+            done
+          done
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

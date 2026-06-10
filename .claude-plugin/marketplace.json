@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "review",
-      "source": "./",
+      "source": "./plugin",
       "description": "Local code-review daemon + Claude plugin: review what Claude writes in a PR-like web UI and stream feedback back."
     }
   ]
