@@ -6,7 +6,11 @@
 // realtime delivery is the HTTP SSE stream, not a blocking socket op.
 package daemon
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/yasyf/cc-review/internal/store"
+)
 
 // ProtocolVersion is stamped on every envelope for forward-compatibility.
 const ProtocolVersion = 1
@@ -27,16 +31,18 @@ const (
 )
 
 // ReplyInput is one reply Claude posts. A non-zero AnswerTo answers an existing
-// question (post-submit drain); otherwise it is a new Claude reply of Kind under
-// CommentID.
+// question or ask (post-submit drain); otherwise it is a new Claude reply of
+// Kind under CommentID. Ask rides with kind=ask; AskAnswer answers an ask
+// target, Answer a plain question target.
 type ReplyInput struct {
-	CommentID int64    `json:"comment_id,omitempty"`
-	Kind      string   `json:"kind,omitempty"` // question | option | clarification | note
-	Body      string   `json:"body,omitempty"`
-	Options   []string `json:"options,omitempty"`
-	Answer    string   `json:"answer,omitempty"`
-	AnswerTo  int64    `json:"answer_to,omitempty"`
-	DedupKey  string   `json:"dedup_key,omitempty"`
+	CommentID int64            `json:"comment_id,omitempty"`
+	Kind      string           `json:"kind,omitempty"` // question | ask | clarification
+	Body      string           `json:"body,omitempty"`
+	Ask       *store.Ask       `json:"ask,omitempty"`
+	Answer    string           `json:"answer,omitempty"`
+	AskAnswer *store.AskAnswer `json:"ask_answer,omitempty"`
+	AnswerTo  int64            `json:"answer_to,omitempty"`
+	DedupKey  string           `json:"dedup_key,omitempty"`
 }
 
 // Request is one control-plane RPC.

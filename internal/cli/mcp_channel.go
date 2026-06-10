@@ -165,16 +165,46 @@ func waitForReview(ctx context.Context, client *daemon.Client, session, cwd stri
 func replyToolSchema() map[string]any {
 	return map[string]any{
 		"name":        "reply",
-		"description": "Post a question, option set, or clarification under a cc-review comment, or answer a question.",
+		"description": "Post a question, structured ask, or clarification under a cc-review comment, or answer one.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"comment_id": map[string]any{"type": "integer", "description": "comment id to reply under"},
-				"kind":       map[string]any{"type": "string", "enum": []string{"question", "option", "clarification"}},
-				"body":       map[string]any{"type": "string"},
-				"options":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"answer":     map[string]any{"type": "string"},
-				"answer_to":  map[string]any{"type": "integer", "description": "reply id of a question being answered"},
+				"kind":       map[string]any{"type": "string", "enum": []string{"question", "ask", "clarification"}, "description": "required for new replies; omit only with answer_to"},
+				"body":       map[string]any{"type": "string", "description": "reply text (the question for kind=ask)"},
+				"ask": map[string]any{
+					"type":        "object",
+					"description": "structured options for kind=ask, mirroring AskUserQuestion",
+					"properties": map[string]any{
+						"header":      map[string]any{"type": "string", "description": "short chip, e.g. Approach"},
+						"multiSelect": map[string]any{"type": "boolean"},
+						"options": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"label":       map[string]any{"type": "string"},
+									"description": map[string]any{"type": "string"},
+									"preview":     map[string]any{"type": "string", "description": "markdown/code shown when the option is focused"},
+								},
+								"required": []string{"label"},
+							},
+						},
+					},
+					"required": []string{"options"},
+				},
+				"answer": map[string]any{"type": "string", "description": "answer text for a plain question target"},
+				"ask_answer": map[string]any{
+					"type":        "object",
+					"description": "answer for an ask target",
+					"properties": map[string]any{
+						"selected": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"other":    map[string]any{"type": "string"},
+						"notes":    map[string]any{"type": "string"},
+					},
+					"required": []string{"selected"},
+				},
+				"answer_to": map[string]any{"type": "integer", "description": "reply id of the question or ask being answered"},
 			},
 		},
 	}

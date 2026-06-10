@@ -58,8 +58,10 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 ```bash
 # a clarifying question
 cc-review reply --comment <commentId> --kind question --body "Did you mean X or Y here?"
-# an option set
-cc-review reply --comment <commentId> --kind option --option "Keep as-is" --option "Extract a helper"
+# a structured ask (renders as an AskUserQuestion-style card)
+cc-review reply --comment <commentId> --kind ask --body "Which approach?" \
+  --header "Approach" [--multi-select] \
+  --options-json '[{"label":"Keep as-is","description":"why..."},{"label":"Extract a helper","description":"why...","preview":"code or markdown shown in a side pane"}]'
 # a free-form note
 cc-review reply --comment <commentId> --kind clarification --body "Note: this also affects callers in foo.go"
 ```
@@ -74,7 +76,13 @@ The submit signal is the Monitor's final line (it exits) on the Monitor path, or
 cc-review feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
-This prints the frozen feedback JSON: `threads` (every comment + the back-and-forth) and `open_questions` (your questions the human didn't answer in the UI). For each open question, ask the human via **AskUserQuestion** (≤4 per call; loop if there are more), using the question `body` and any `options`. Write each answer back:
+This prints the frozen feedback JSON: `threads` (every comment + the back-and-forth) and `open_questions` (your questions the human didn't answer in the UI). Asks the human already answered in the web UI arrived earlier as `comment.updated` events — the ask reply carries `answered: true` and `askAnswer` — and are not in `open_questions`; don't re-ask them. For each open question, ask the human via **AskUserQuestion** (≤4 per call; loop if there are more). When the entry carries `ask`, map it 1:1 onto AskUserQuestion — the field names match: `question` is the question text, `ask.header` the header, `ask.options[].label`/`description` the options, `ask.multiSelect` the multiSelect (absent means false), and an option's `preview` the option preview. Write the pick back:
+
+```bash
+cc-review reply --answer-to <replyId> --select "<label>" [--select "<label>"] [--other "<free text>"] [--notes "<note>"]
+```
+
+For a plain `question` entry (no `ask`), write back free text instead:
 
 ```bash
 cc-review reply --answer-to <replyId> --answer "<the human's answer>"

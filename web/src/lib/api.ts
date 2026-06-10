@@ -1,5 +1,5 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { LineRange, SessionResponse, Side } from './types';
+import type { AskAnswer, LineRange, SessionResponse, Side } from './types';
 
 export type VersionKey = number | 'latest';
 
@@ -72,17 +72,18 @@ export function useResolveComment() {
   });
 }
 
-export interface CreateReplyInput {
-  commentId: string;
-  answer?: string;
-  body?: string;
-  questionReplyId?: string;
-}
+// A reply is exactly one of: a free-text note, or a structured answer to an
+// ask reply. Plain question replies are answered post-submit via the drain,
+// never from the web.
+export type CreateReplyInput =
+  | { commentId: string; body: string }
+  | { commentId: string; askAnswer: AskAnswer; questionReplyId: string };
 
 export function useCreateReply() {
   return useMutation({
+    // Notes return {id}; ask answers return {ok} — no caller reads either.
     mutationFn: ({ commentId, ...rest }: CreateReplyInput) =>
-      request<{ id: string }>(`/api/replies/${commentId}`, {
+      request<{ id: string } | { ok: true }>(`/api/replies/${commentId}`, {
         method: 'POST',
         body: JSON.stringify({ origin: 'user', ...rest }),
       }),

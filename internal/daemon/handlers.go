@@ -148,31 +148,38 @@ func (s *Server) handleResolve(ctx context.Context, req Request) Response {
 func (s *Server) handleReply(ctx context.Context, req Request) Response {
 	for _, in := range req.Replies {
 		if in.AnswerTo != 0 {
-			if err := s.store.AnswerReply(ctx, in.AnswerTo, in.Answer, "askuserquestion"); err != nil {
-				return errResp(err.Error())
+			if resp := s.handleAnswer(ctx, in); !resp.OK {
+				return resp
 			}
 			continue
 		}
 		if in.CommentID == 0 {
 			return errResp("reply requires comment_id or answer_to")
 		}
+		if err := validateReplyKind(in); err != nil {
+			return errResp(err.Error())
+		}
 		reviewID, versionNumber, err := s.store.ResolveCommentContext(ctx, in.CommentID)
 		if err != nil {
 			return errResp(err.Error())
 		}
-		kind := normalizeKind(in.Kind)
-		optsJSON := "[]"
-		if len(in.Options) > 0 {
-			b, _ := json.Marshal(in.Options)
-			optsJSON = string(b)
+		// Hash the daemon's own re-marshal of Ask, never the client's raw JSON,
+		// so semantically identical asks dedup regardless of key order.
+		askJSON := ""
+		if in.Ask != nil {
+			b, err := json.Marshal(in.Ask)
+			if err != nil {
+				return errResp(fmt.Sprintf("encode ask: %v", err))
+			}
+			askJSON = string(b)
 		}
 		dedup := in.DedupKey
 		if dedup == "" {
-			dedup = deriveDedup(in.CommentID, kind, in.Body, optsJSON)
+			dedup = deriveDedup(in.CommentID, in.Kind, in.Body, askJSON)
 		}
 		rid, inserted, err := s.store.CreateReply(ctx, store.Reply{
-			CommentID: in.CommentID, Origin: store.OriginClaude, Kind: kind, Body: in.Body,
-			OptionsJSON: optsJSON, DedupKey: dedup,
+			CommentID: in.CommentID, Origin: store.OriginClaude, Kind: in.Kind, Body: in.Body,
+			Ask: in.Ask, DedupKey: dedup,
 		})
 		if err != nil {
 			return errResp(err.Error())
@@ -180,14 +187,78 @@ func (s *Server) handleReply(ctx context.Context, req Request) Response {
 		if !inserted {
 			continue // a redelivered duplicate; do not re-emit
 		}
-		r := store.Reply{
-			ID: rid, CommentID: in.CommentID, Origin: store.OriginClaude, Kind: kind,
-			Body: in.Body, OptionsJSON: optsJSON, CreatedAt: time.Now(),
+		// Re-read the persisted row so the frame carries the stored created_at
+		// (and can never drift from a later fetch of the same reply).
+		r, err := s.store.GetReply(ctx, rid)
+		if err != nil {
+			return errResp(err.Error())
 		}
-		typ := claudeEventType(kind)
-		s.emitReply(ctx, reviewID, typ, versionNumber, in.CommentID, r)
+		s.emitReply(ctx, reviewID, claudeEventType(in.Kind), versionNumber, in.CommentID, r)
 	}
 	return Response{OK: true}
+}
+
+// handleAnswer records a post-submit drain answer against a question or ask
+// reply, then emits comment.updated so an open browser flips the card to its
+// answered state. Origin claude keeps the frame out of Claude's own stream.
+func (s *Server) handleAnswer(ctx context.Context, in ReplyInput) Response {
+	target, err := s.store.GetReply(ctx, in.AnswerTo)
+	if err != nil {
+		return errResp(err.Error())
+	}
+	switch target.Kind {
+	case "ask":
+		if in.AskAnswer == nil {
+			return errResp(fmt.Sprintf("reply %d is an ask: answer with ask_answer (select/other/notes)", in.AnswerTo))
+		}
+		if err := s.store.AnswerAsk(ctx, in.AnswerTo, *in.AskAnswer, "askuserquestion"); err != nil {
+			return errResp(err.Error())
+		}
+	case "question":
+		if in.Answer == "" {
+			return errResp(fmt.Sprintf("reply %d is a question: answer with answer text", in.AnswerTo))
+		}
+		if err := s.store.AnswerQuestion(ctx, in.AnswerTo, in.Answer, "askuserquestion"); err != nil {
+			return errResp(err.Error())
+		}
+		// Mirror the web path's visible answer bubble: wire.Reply carries no
+		// plain-answer text, so without a sibling row the drained answer would
+		// be invisible in an open browser. Origin user — the human authored it.
+		if _, _, err := s.store.CreateReply(ctx, store.Reply{
+			CommentID: target.CommentID, Origin: store.OriginUser, Kind: "answer", Body: in.Answer,
+			DedupKey: deriveDedup(target.CommentID, "answer", in.Answer, ""),
+		}); err != nil {
+			return errResp(err.Error())
+		}
+	default:
+		return errResp(fmt.Sprintf("reply %d is kind %q: not answerable", in.AnswerTo, target.Kind))
+	}
+	reviewID, versionNumber, err := s.store.ResolveCommentContext(ctx, target.CommentID)
+	if err != nil {
+		return errResp(err.Error())
+	}
+	s.emitThread(ctx, reviewID, versionNumber, target.CommentID)
+	return Response{OK: true}
+}
+
+func validateReplyKind(in ReplyInput) error {
+	switch in.Kind {
+	case "question", "clarification":
+		if in.Ask != nil {
+			return fmt.Errorf("kind %q does not take an ask payload", in.Kind)
+		}
+		return nil
+	case "ask":
+		if in.Ask == nil {
+			return fmt.Errorf("kind ask requires an ask payload")
+		}
+		if in.Body == "" {
+			return fmt.Errorf("kind ask requires a body (the question text)")
+		}
+		return in.Ask.Validate()
+	default:
+		return fmt.Errorf("unknown reply kind %q (want question | ask | clarification)", in.Kind)
+	}
 }
 
 func (s *Server) handleFeedback(ctx context.Context, req Request) Response {
@@ -304,29 +375,38 @@ func (s *Server) emitReply(ctx context.Context, reviewID, typ string, version in
 	})
 }
 
-func errResp(msg string) Response { return Response{OK: false, Error: msg} }
-
-func normalizeKind(kind string) string {
-	switch kind {
-	case "question", "option", "clarification":
-		return kind
-	default:
-		return "clarification"
+// emitThread re-reads a comment with its replies and emits comment.updated.
+func (s *Server) emitThread(ctx context.Context, reviewID string, version int, commentID int64) {
+	c, err := s.store.GetComment(ctx, commentID)
+	if err != nil {
+		return
 	}
+	replies, err := s.store.ListRepliesByComment(ctx, commentID)
+	if err != nil {
+		return
+	}
+	_, _ = s.AppendEvent(ctx, &store.Event{
+		ReviewID: reviewID, Origin: store.OriginClaude, Type: store.EventCommentUpdated, VersionNumber: version,
+		Payload: wire.Event(store.EventCommentUpdated, version, map[string]any{
+			"commentId": strconv.FormatInt(commentID, 10), "comment": wire.ToComment(c, replies),
+		}),
+	})
 }
+
+func errResp(msg string) Response { return Response{OK: false, Error: msg} }
 
 func claudeEventType(kind string) string {
 	switch kind {
 	case "question":
 		return store.EventClaudeQuestion
-	case "option":
-		return store.EventClaudeOption
+	case "ask":
+		return store.EventClaudeAsk
 	default:
 		return store.EventClaudeClarification
 	}
 }
 
-func deriveDedup(commentID int64, kind, body, optsJSON string) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{strconv.FormatInt(commentID, 10), kind, body, optsJSON}, "\x00")))
+func deriveDedup(commentID int64, kind, body, askJSON string) string {
+	h := sha256.Sum256([]byte(strings.Join([]string{strconv.FormatInt(commentID, 10), kind, body, askJSON}, "\x00")))
 	return hex.EncodeToString(h[:])
 }

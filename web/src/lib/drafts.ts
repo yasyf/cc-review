@@ -20,3 +20,26 @@ export function writeDraft(key: string, text: string): void {
 export function clearDraft(key: string): void {
   drafts.delete(key);
 }
+
+// An in-progress ask answer is structured, so it gets its own typed map,
+// keyed by the ask reply's id.
+export interface AskDraft {
+  selected: string[];
+  otherChosen: boolean;
+  otherText: string;
+  notes: string;
+}
+
+const askDrafts = new Map<string, AskDraft>();
+
+export function readAskDraft(replyId: string): AskDraft | undefined {
+  return askDrafts.get(replyId);
+}
+
+export function writeAskDraft(replyId: string, draft: AskDraft): void {
+  askDrafts.set(replyId, draft);
+}
+
+export function clearAskDraft(replyId: string): void {
+  askDrafts.delete(replyId);
+}

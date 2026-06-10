@@ -48,7 +48,7 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
         ),
       };
     case 'claude.question':
-    case 'claude.option':
+    case 'claude.ask':
     case 'claude.clarification':
       return {
         ...session,
@@ -70,9 +70,8 @@ function notificationFor(ev: ReviewEvent): Omit<Notification, 'id' | 'at'> | nul
     case 'notification':
       return { level: ev.level, message: ev.message };
     case 'claude.question':
+    case 'claude.ask':
       return { level: 'info', message: `Claude asked: ${ev.reply.body}` };
-    case 'claude.option':
-      return { level: 'info', message: `Claude offered options: ${ev.reply.body}` };
     case 'claude.clarification':
       return { level: 'info', message: `Claude clarified: ${ev.reply.body}` };
     case 'submit':

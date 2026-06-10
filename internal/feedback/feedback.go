@@ -16,14 +16,15 @@ import (
 
 // Reply is one turn under a comment, frozen.
 type Reply struct {
-	ID          int64    `json:"id"`
-	Origin      string   `json:"origin"`
-	Kind        string   `json:"kind"`
-	Body        string   `json:"body,omitempty"`
-	Options     []string `json:"options,omitempty"`
-	Answered    bool     `json:"answered"`
-	Answer      string   `json:"answer,omitempty"`
-	AnsweredVia string   `json:"answered_via,omitempty"`
+	ID          int64            `json:"id"`
+	Origin      string           `json:"origin"`
+	Kind        string           `json:"kind"`
+	Body        string           `json:"body,omitempty"`
+	Ask         *store.Ask       `json:"ask,omitempty"`
+	Answered    bool             `json:"answered"`
+	Answer      string           `json:"answer,omitempty"`
+	AskAnswer   *store.AskAnswer `json:"ask_answer,omitempty"`
+	AnsweredVia string           `json:"answered_via,omitempty"`
 }
 
 // Thread is a comment plus its replies.
@@ -41,13 +42,13 @@ type Thread struct {
 
 // OpenQuestion is a Claude question still awaiting an answer at submit time.
 type OpenQuestion struct {
-	ReplyID     int64    `json:"reply_id"`
-	CommentID   int64    `json:"comment_id"`
-	FilePath    string   `json:"file_path"`
-	StartLine   int      `json:"start_line"`
-	CommentBody string   `json:"comment_body"`
-	Question    string   `json:"question"`
-	Options     []string `json:"options,omitempty"`
+	ReplyID     int64      `json:"reply_id"`
+	CommentID   int64      `json:"comment_id"`
+	FilePath    string     `json:"file_path"`
+	StartLine   int        `json:"start_line"`
+	CommentBody string     `json:"comment_body"`
+	Question    string     `json:"question"`
+	Ask         *store.Ask `json:"ask,omitempty"`
 }
 
 // Feedback is the full frozen snapshot for one version of a review.
@@ -85,7 +86,7 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 	for _, q := range open {
 		questions = append(questions, OpenQuestion{
 			ReplyID: q.ReplyID, CommentID: q.CommentID, FilePath: q.FilePath, StartLine: q.StartLine,
-			CommentBody: q.CommentBody, Question: q.Question, Options: decodeOptions(q.OptionsJSON),
+			CommentBody: q.CommentBody, Question: q.Question, Ask: q.Ask,
 		})
 	}
 	return Feedback{
@@ -123,20 +124,9 @@ func toReplies(in []store.Reply) []Reply {
 	out := make([]Reply, 0, len(in))
 	for _, r := range in {
 		out = append(out, Reply{
-			ID: r.ID, Origin: r.Origin, Kind: r.Kind, Body: r.Body, Options: decodeOptions(r.OptionsJSON),
-			Answered: r.Answered, Answer: r.Answer, AnsweredVia: r.AnsweredVia,
+			ID: r.ID, Origin: r.Origin, Kind: r.Kind, Body: r.Body, Ask: r.Ask,
+			Answered: r.Answered, Answer: r.Answer, AskAnswer: r.AskAnswer, AnsweredVia: r.AnsweredVia,
 		})
-	}
-	return out
-}
-
-func decodeOptions(s string) []string {
-	if s == "" || s == "[]" {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
 	}
 	return out
 }

@@ -427,14 +427,126 @@ button.primary {
   white-space: pre-wrap;
   line-height: 1.4;
 }
-.reply-options {
+.question-card {
   display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-  margin-top: 0.4rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
 }
-.option-btn {
+.qc-chip {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+.qc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.5rem;
+  align-items: start;
+}
+.qc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.qc-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+}
+.qc-option-focused {
+  border-color: var(--dim);
+}
+.qc-option-selected {
+  border-color: var(--accent);
+}
+.qc-option-selected .qc-option-label {
+  color: var(--accent);
+}
+.qc-option-label {
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.qc-option-desc {
+  color: var(--dim);
+  font-size: 0.78rem;
+}
+.qc-preview {
+  margin: 0;
+  min-width: 0;
+  max-height: 16rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+.qc-preview-empty {
+  font-family: inherit;
+  font-style: italic;
+  color: var(--dim);
+}
+.qc-other-input,
+.qc-notes {
+  width: 100%;
+  font: inherit;
+  padding: 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.qc-notes {
+  min-height: 2.75rem;
+  resize: vertical;
+}
+.qc-actions {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 0.5rem;
+}
+.qc-error {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+.qc-answered .qc-option:not(.qc-option-selected) {
+  opacity: 0.6;
+}
+.qc-notes-text {
+  white-space: pre-wrap;
+  font-size: 0.82rem;
+  color: var(--dim);
+  border-left: 2px solid var(--border);
+  padding-left: 0.5rem;
+}
+.qc-meta {
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+.qc-hint {
   font-size: 0.8rem;
+  font-style: italic;
+  color: var(--dim);
 }
 
 .answer-box,

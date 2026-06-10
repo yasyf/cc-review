@@ -12,7 +12,11 @@ const storageKey = (reviewId: string) => `cc-review:seen:${reviewId}`;
 
 export function latestEntry(comment: Comment): { id: string; origin: Origin } {
   const last = comment.replies[comment.replies.length - 1];
-  return last ? { id: last.id, origin: last.origin } : { id: comment.id, origin: comment.origin };
+  if (!last) return { id: comment.id, origin: comment.origin };
+  // An answered ask carries the user's answer in place of a user reply row,
+  // so it counts as user-authored for read-state.
+  const origin = last.kind === 'ask' && last.answered ? 'user' : last.origin;
+  return { id: last.id, origin };
 }
 
 export function isUnread(comment: Comment, seen: SeenMap): boolean {

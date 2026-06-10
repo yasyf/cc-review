@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_session_repo
   ON reviews(session_id, repo_root) WHERE session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_reviews_repo ON reviews(repo_root);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_slug ON reviews(slug) WHERE slug <> '';
 CREATE TABLE IF NOT EXISTS review_versions (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   review_id      TEXT NOT NULL REFERENCES reviews(id),
@@ -72,7 +73,7 @@ CREATE TABLE IF NOT EXISTS replies (
   origin       TEXT NOT NULL,
   kind         TEXT NOT NULL,
   body         TEXT NOT NULL DEFAULT '',
-  options_json TEXT NOT NULL DEFAULT '[]',
+  ask_json     TEXT NOT NULL DEFAULT '',
   answered     INTEGER NOT NULL DEFAULT 0,
   answer       TEXT NOT NULL DEFAULT '',
   answered_via TEXT NOT NULL DEFAULT '',
@@ -111,7 +112,8 @@ CREATE INDEX IF NOT EXISTS idx_review_sessions_review ON review_sessions(review_
 
 // Open opens (creating if needed) the database at path and applies the schema.
 // A single serialized writer (SetMaxOpenConns(1)) with WAL avoids "database is
-// locked" across the SSE fan-out, REST, and the event bus.
+// locked" across the SSE fan-out, REST, and the event bus. There are no
+// migrations: on a schema change, wipe the local state dir.
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)")
 	if err != nil {
@@ -123,64 +125,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	if err := migrate(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
 	return s, nil
-}
-
-// migrate brings pre-slug databases up to the current schema: the slug column
-// must exist before its unique index, and the backfill (keyed on slug=”) makes
-// every run idempotent.
-func migrate(db *sql.DB) error {
-	var hasSlug int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name='slug'`).Scan(&hasSlug); err != nil {
-		return fmt.Errorf("inspect reviews schema: %w", err)
-	}
-	if hasSlug == 0 {
-		if _, err := db.Exec(`ALTER TABLE reviews ADD COLUMN slug TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("add slug column: %w", err)
-		}
-	}
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_slug ON reviews(slug) WHERE slug <> ''`); err != nil {
-		return fmt.Errorf("create slug index: %w", err)
-	}
-	return backfillSlugs(db)
-}
-
-func backfillSlugs(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("backfill slugs: %w", err)
-	}
-	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT r.id, COALESCE(
-		(SELECT v.branch FROM review_versions v WHERE v.review_id = r.id ORDER BY v.version_number ASC LIMIT 1), '')
-		FROM reviews r WHERE r.slug = ''`)
-	if err != nil {
-		return fmt.Errorf("backfill slugs: %w", err)
-	}
-	slugs := map[string]string{}
-	for rows.Next() {
-		var id, branch string
-		if err := rows.Scan(&id, &branch); err != nil {
-			rows.Close()
-			return fmt.Errorf("backfill slugs: %w", err)
-		}
-		slugs[id] = ReviewSlug(branch, id)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("backfill slugs: %w", err)
-	}
-	rows.Close()
-	for id, slug := range slugs {
-		if _, err := tx.Exec(`UPDATE reviews SET slug=? WHERE id=?`, slug, id); err != nil {
-			return fmt.Errorf("backfill slug for %s: %w", id, err)
-		}
-	}
-	return tx.Commit()
 }
 
 // Close closes the underlying database.

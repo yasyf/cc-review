@@ -46,9 +46,9 @@ type updateCommentReq struct {
 }
 
 type createReplyReq struct {
-	Answer          string `json:"answer"`
-	Body            string `json:"body"`
-	QuestionReplyID string `json:"questionReplyId"`
+	Body            string           `json:"body"`
+	AskAnswer       *store.AskAnswer `json:"askAnswer"`
+	QuestionReplyID string           `json:"questionReplyId"`
 }
 
 type submitReq struct {
@@ -207,26 +207,37 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 		notFoundOr500(w, err)
 		return
 	}
-	body := req.Body
-	kind := "note"
-	if req.Answer != "" {
-		body = req.Answer
-		kind = "answer"
+	// An ask answer mutates the ask reply itself — no sibling reply row, so the
+	// thread has exactly one source of truth for the structured answer.
+	if req.AskAnswer != nil {
+		qrid, perr := strconv.ParseInt(req.QuestionReplyID, 10, 64)
+		if perr != nil {
+			http.Error(w, "askAnswer requires questionReplyId", http.StatusBadRequest)
+			return
+		}
+		// The open check rides inside the UPDATE: an answer racing Submit gets
+		// a 409, never a silent write into an already-frozen feedback file.
+		if err := s.store.AnswerAskIfOpen(ctx, qrid, *req.AskAnswer, "web"); err != nil {
+			switch {
+			case errors.Is(err, store.ErrReviewNotOpen):
+				http.Error(w, "review is submitted: Claude will ask this directly", http.StatusConflict)
+			case errors.Is(err, store.ErrNotFound):
+				http.Error(w, err.Error(), http.StatusNotFound)
+			default:
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			}
+			return
+		}
+		s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, commentID)
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
 	}
 	id, _, err := s.store.CreateReply(ctx, store.Reply{
-		CommentID: commentID, Origin: store.OriginUser, Kind: kind, Body: body,
+		CommentID: commentID, Origin: store.OriginUser, Kind: "note", Body: req.Body,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if req.QuestionReplyID != "" {
-		if qrid, perr := strconv.ParseInt(req.QuestionReplyID, 10, 64); perr == nil {
-			if err := s.store.AnswerReply(ctx, qrid, body, "web"); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
 	}
 	// A user inline reply streams back as comment.updated carrying the refreshed
 	// thread (the SPA has no separate user.reply event), and origin=user lets the

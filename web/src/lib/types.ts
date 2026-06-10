@@ -13,9 +13,25 @@ export interface LineRange {
 export type ReviewStatus = 'open' | 'submitted';
 export type CommentStatus = 'open' | 'resolved';
 export type Origin = 'user' | 'claude';
+export type AnsweredVia = 'web' | 'askuserquestion';
 
-// Claude streams these reply kinds under a comment; a user answer is kind 'answer'.
-export type ReplyKind = 'question' | 'option' | 'clarification' | 'note' | 'answer';
+export interface AskOption {
+  label: string;
+  description?: string;
+  preview?: string;
+}
+
+export interface Ask {
+  header?: string;
+  multiSelect?: boolean;
+  options: AskOption[];
+}
+
+export interface AskAnswer {
+  selected: string[];
+  other?: string;
+  notes?: string;
+}
 
 export interface Review {
   id: string;
@@ -25,16 +41,26 @@ export interface Review {
   createdAt: string;
 }
 
-export interface Reply {
+interface ReplyBase {
   id: string;
   commentId: string;
   origin: Origin;
-  kind: ReplyKind;
   body: string;
-  // Present for kind 'option' — the selectable choices Claude offered.
-  options?: string[];
   createdAt: string;
 }
+
+// Claude streams these reply kinds under a comment; a user answer is kind 'answer'.
+export type Reply =
+  | (ReplyBase & { kind: 'question' | 'clarification' | 'note' | 'answer' })
+  | (ReplyBase & {
+      kind: 'ask';
+      ask: Ask;
+      answered?: boolean;
+      askAnswer?: AskAnswer;
+      answeredVia?: AnsweredVia;
+    });
+
+export type ReplyKind = Reply['kind'];
 
 export interface Comment {
   id: string;
@@ -76,7 +102,7 @@ export type ReviewEvent =
   | { type: 'comment.updated'; version_number: number; commentId: string; comment: Comment }
   | { type: 'comment.resolved'; version_number: number; commentId: string }
   | { type: 'claude.question'; version_number: number; commentId: string; reply: Reply }
-  | { type: 'claude.option'; version_number: number; commentId: string; reply: Reply }
+  | { type: 'claude.ask'; version_number: number; commentId: string; reply: Reply }
   | { type: 'claude.clarification'; version_number: number; commentId: string; reply: Reply }
   | { type: 'status.changed'; version_number: number; status: ReviewStatus }
   | { type: 'submit'; version_number: number; feedbackPath: string }

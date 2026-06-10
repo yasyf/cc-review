@@ -25,7 +25,143 @@ func testServer(t *testing.T) (*Server, string) {
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	return &Server{store: st, activity: NewActivity(), log: log.New(io.Discard, "", 0)}, repo
+	return &Server{store: st, bus: NewBus(), activity: NewActivity(), log: log.New(io.Discard, "", 0)}, repo
+}
+
+func seedComment(t *testing.T, s *Server, root string) (reviewID string, commentID int64) {
+	t.Helper()
+	ctx := context.Background()
+	r, err := s.store.CreateReview(ctx, "s1", root, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.store.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cid, err := s.store.CreateComment(ctx, store.Comment{
+		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "hm",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.ID, cid
+}
+
+func TestHandleReplyValidatesKind(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	_, cid := seedComment(t, s, repoRoot(t, repo))
+
+	ask := &store.Ask{Options: []store.AskOption{{Label: "A"}, {Label: "B"}}}
+	for _, tc := range []struct {
+		name   string
+		in     ReplyInput
+		wantOK bool
+	}{
+		{"clarification ok", ReplyInput{CommentID: cid, Kind: "clarification", Body: "fyi"}, true},
+		{"ask ok", ReplyInput{CommentID: cid, Kind: "ask", Body: "pick", Ask: ask}, true},
+		{"unknown kind", ReplyInput{CommentID: cid, Kind: "option", Body: "x"}, false},
+		{"empty kind", ReplyInput{CommentID: cid, Body: "x"}, false},
+		{"ask without payload", ReplyInput{CommentID: cid, Kind: "ask", Body: "x"}, false},
+		{"ask without body", ReplyInput{CommentID: cid, Kind: "ask", Ask: ask}, false},
+		{"question with payload", ReplyInput{CommentID: cid, Kind: "question", Body: "x", Ask: ask}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := s.handleReply(ctx, Request{Replies: []ReplyInput{tc.in}})
+			if resp.OK != tc.wantOK {
+				t.Fatalf("ok=%v (err=%q), want %v", resp.OK, resp.Error, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestHandleReplyDedupsEquivalentAsks(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	reviewID, cid := seedComment(t, s, repoRoot(t, repo))
+
+	in := ReplyInput{CommentID: cid, Kind: "ask", Body: "pick",
+		Ask: &store.Ask{Header: "H", Options: []store.AskOption{{Label: "A", Description: "d"}, {Label: "B"}}}}
+	for i := 0; i < 2; i++ {
+		if resp := s.handleReply(ctx, Request{Replies: []ReplyInput{in}}); !resp.OK {
+			t.Fatalf("reply %d: %s", i, resp.Error)
+		}
+	}
+
+	replies, err := s.store.ListRepliesByComment(ctx, cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replies) != 1 {
+		t.Fatalf("got %d replies, want 1 (redelivery deduped)", len(replies))
+	}
+	events, err := s.store.EventsSince(ctx, reviewID, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	askEvents := 0
+	for _, e := range events {
+		if e.Type == store.EventClaudeAsk {
+			askEvents++
+		}
+	}
+	if askEvents != 1 {
+		t.Fatalf("got %d claude.ask events, want 1 (no re-emit on duplicate)", askEvents)
+	}
+}
+
+func TestHandleAnswerRoutesByTargetKind(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	reviewID, cid := seedComment(t, s, repoRoot(t, repo))
+
+	askID, _, err := s.store.CreateReply(ctx, store.Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "pick",
+		Ask: &store.Ask{Options: []store.AskOption{{Label: "A"}, {Label: "B"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qID, _, err := s.store.CreateReply(ctx, store.Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wrong answer shape for the target kind is rejected.
+	if resp := s.handleReply(ctx, Request{Replies: []ReplyInput{{AnswerTo: askID, Answer: "text"}}}); resp.OK {
+		t.Fatal("plain answer against an ask must fail")
+	}
+	if resp := s.handleReply(ctx, Request{Replies: []ReplyInput{{AnswerTo: qID, AskAnswer: &store.AskAnswer{Selected: []string{"A"}}}}}); resp.OK {
+		t.Fatal("ask_answer against a question must fail")
+	}
+
+	resp := s.handleReply(ctx, Request{Replies: []ReplyInput{
+		{AnswerTo: askID, AskAnswer: &store.AskAnswer{Selected: []string{"B"}, Notes: "n"}},
+		{AnswerTo: qID, Answer: "because"},
+	}})
+	if !resp.OK {
+		t.Fatalf("answers failed: %s", resp.Error)
+	}
+
+	gotAsk, _ := s.store.GetReply(ctx, askID)
+	if !gotAsk.Answered || gotAsk.AskAnswer == nil || gotAsk.AskAnswer.Selected[0] != "B" || gotAsk.AnsweredVia != "askuserquestion" {
+		t.Fatalf("ask answer = %+v via %q", gotAsk.AskAnswer, gotAsk.AnsweredVia)
+	}
+	gotQ, _ := s.store.GetReply(ctx, qID)
+	if !gotQ.Answered || gotQ.Answer != "because" {
+		t.Fatalf("question answer = %q", gotQ.Answer)
+	}
+
+	// Each drain answer emits comment.updated so an open browser converges.
+	events, _ := s.store.EventsSince(ctx, reviewID, 0, false)
+	updated := 0
+	for _, e := range events {
+		if e.Type == store.EventCommentUpdated {
+			updated++
+		}
+	}
+	if updated != 2 {
+		t.Fatalf("got %d comment.updated events, want 2", updated)
+	}
 }
 
 func repoRoot(t *testing.T, cwd string) string {

@@ -4,12 +4,13 @@ import { clearDraft, readDraft, replyDraftKey, writeDraft } from '../lib/drafts'
 import { useReview } from '../lib/review-context';
 import { useUnread } from '../lib/unread';
 import type { Origin, Reply } from '../lib/types';
+import { QuestionCard } from './QuestionCard';
 
 function Avatar({ origin }: { origin: Origin }) {
   return <div className={`avatar avatar-${origin}`}>{origin === 'claude' ? 'C' : 'Y'}</div>;
 }
 
-function ReplyBubble({ reply, onChoose }: { reply: Reply; onChoose(option: string): void }) {
+function ReplyBubble({ reply, disabled }: { reply: Reply; disabled: boolean }) {
   const who = reply.origin === 'claude' ? 'Claude' : 'You';
   return (
     <div className={`reply reply-${reply.origin} reply-kind-${reply.kind}`}>
@@ -19,16 +20,11 @@ function ReplyBubble({ reply, onChoose }: { reply: Reply; onChoose(option: strin
           <span className="reply-who">{who}</span>
           <span className="reply-kind">{reply.kind}</span>
         </div>
-        <div className="reply-body">{reply.body}</div>
-        {reply.kind === 'option' && reply.options && reply.options.length > 0 ? (
-          <div className="reply-options">
-            {reply.options.map((option) => (
-              <button key={option} type="button" className="option-btn" onClick={() => onChoose(option)}>
-                {option}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        {reply.kind === 'ask' ? (
+          <QuestionCard reply={reply} commentId={reply.commentId} disabled={disabled} />
+        ) : (
+          <div className="reply-body">{reply.body}</div>
+        )}
       </div>
     </div>
   );
@@ -68,6 +64,7 @@ export function CommentThread({ commentId }: { commentId: string }) {
   if (!comment) return null;
 
   const resolved = comment.status === 'resolved';
+  const submitted = data?.review.status === 'submitted';
 
   function updateAnswer(text: string) {
     setAnswer(text);
@@ -80,10 +77,6 @@ export function CommentThread({ commentId }: { commentId: string }) {
     createReply.mutate({ commentId, body });
     clearDraft(replyDraftKey(commentId));
     setAnswer('');
-  }
-
-  function chooseOption(reply: Reply, option: string) {
-    createReply.mutate({ commentId, answer: option, questionReplyId: reply.id });
   }
 
   return (
@@ -113,25 +106,29 @@ export function CommentThread({ commentId }: { commentId: string }) {
       </div>
 
       {comment.replies.map((reply) => (
-        <ReplyBubble key={reply.id} reply={reply} onChoose={(option) => chooseOption(reply, option)} />
+        <ReplyBubble key={reply.id} reply={reply} disabled={submitted} />
       ))}
 
-      <div className="answer-box">
-        <textarea
-          value={answer}
-          placeholder="Reply…"
-          onChange={(e) => updateAnswer(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              sendAnswer();
-            }
-          }}
-        />
-        <button type="button" disabled={createReply.isPending || !answer.trim()} onClick={sendAnswer}>
-          Send
-        </button>
-      </div>
+      {submitted ? (
+        <div className="qc-hint">Review submitted — feedback is frozen.</div>
+      ) : (
+        <div className="answer-box">
+          <textarea
+            value={answer}
+            placeholder="Reply…"
+            onChange={(e) => updateAnswer(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                sendAnswer();
+              }
+            }}
+          />
+          <button type="button" disabled={createReply.isPending || !answer.trim()} onClick={sendAnswer}>
+            Send
+          </button>
+        </div>
+      )}
     </div>
   );
 }

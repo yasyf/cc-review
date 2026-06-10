@@ -7,7 +7,7 @@ const (
 	EventCommentUpdated      = "comment.updated"
 	EventCommentResolved     = "comment.resolved"
 	EventClaudeQuestion      = "claude.question"
-	EventClaudeOption        = "claude.option"
+	EventClaudeAsk           = "claude.ask"
 	EventClaudeClarification = "claude.clarification"
 	EventSubmit              = "submit"
 )

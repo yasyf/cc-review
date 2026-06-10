@@ -32,13 +32,16 @@ type LineRange struct {
 
 // Reply is one turn under a comment.
 type Reply struct {
-	ID        string   `json:"id"`
-	CommentID string   `json:"commentId"`
-	Origin    string   `json:"origin"`
-	Kind      string   `json:"kind"`
-	Body      string   `json:"body"`
-	Options   []string `json:"options,omitempty"`
-	CreatedAt string   `json:"createdAt"`
+	ID          string           `json:"id"`
+	CommentID   string           `json:"commentId"`
+	Origin      string           `json:"origin"`
+	Kind        string           `json:"kind"`
+	Body        string           `json:"body"`
+	Ask         *store.Ask       `json:"ask,omitempty"`
+	Answered    bool             `json:"answered,omitempty"`
+	AskAnswer   *store.AskAnswer `json:"askAnswer,omitempty"`
+	AnsweredVia string           `json:"answeredVia,omitempty"`
+	CreatedAt   string           `json:"createdAt"`
 }
 
 // Comment is an inline comment with its thread.
@@ -71,11 +74,13 @@ func ToReview(r store.Review, branch string) Review {
 	return Review{ID: r.ID, Status: r.Status, RepoRoot: r.RepoRoot, Branch: branch, CreatedAt: iso(r.CreatedAt)}
 }
 
-// ToReply converts a store reply.
+// ToReply converts a store reply. The store already decoded ask_json and the
+// structured answer, so this is an infallible copy.
 func ToReply(r store.Reply) Reply {
 	return Reply{
 		ID: id(r.ID), CommentID: id(r.CommentID), Origin: r.Origin, Kind: r.Kind, Body: r.Body,
-		Options: DecodeOptions(r.OptionsJSON), CreatedAt: iso(r.CreatedAt),
+		Ask: r.Ask, Answered: r.Answered, AskAnswer: r.AskAnswer, AnsweredVia: r.AnsweredVia,
+		CreatedAt: iso(r.CreatedAt),
 	}
 }
 
@@ -111,18 +116,6 @@ func Event(typ string, version int, fields map[string]any) []byte {
 	}
 	b, _ := json.Marshal(m)
 	return b
-}
-
-// DecodeOptions parses a stored options_json array, returning nil when empty.
-func DecodeOptions(s string) []string {
-	if s == "" || s == "[]" {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
 }
 
 func id(n int64) string      { return strconv.FormatInt(n, 10) }

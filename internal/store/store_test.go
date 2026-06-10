@@ -2,8 +2,9 @@ package store
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -353,55 +354,207 @@ func TestGetReviewByRef(t *testing.T) {
 	}
 }
 
-func TestOpenBackfillsSlugs(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	db, err := sql.Open("sqlite", path)
+func TestAskReplyRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+
+	ask := &Ask{Header: "Approach", MultiSelect: true, Options: []AskOption{
+		{Label: "Keep as-is", Description: "minimal churn"},
+		{Label: "Extract a helper", Preview: "func helper() {}"},
+	}}
+	id, inserted, err := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "Which?", Ask: ask})
+	if err != nil || !inserted {
+		t.Fatalf("create ask: ins=%v err=%v", inserted, err)
+	}
+
+	got, err := s.GetReply(ctx, id)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("get reply: %v", err)
 	}
-	// The pre-slug schema: reviews without the slug column, plus enough of
-	// review_versions for the backfill to find each review's first branch.
-	for _, stmt := range []string{
-		`CREATE TABLE reviews (
-			id TEXT PRIMARY KEY, session_id TEXT, repo_root TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'open', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
-		`CREATE TABLE review_versions (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, review_id TEXT NOT NULL,
-			version_number INTEGER NOT NULL, branch TEXT NOT NULL DEFAULT '',
-			base_ref TEXT NOT NULL DEFAULT '', patch_path TEXT NOT NULL,
-			files_json TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL)`,
-		`INSERT INTO reviews VALUES ('aaaa0000000000000000000000000000', 's1', '/repo', 'open', 1, 1)`,
-		`INSERT INTO review_versions(review_id, version_number, branch, patch_path, created_at)
-			VALUES ('aaaa0000000000000000000000000000', 2, 'other', '/p2', 2),
-			       ('aaaa0000000000000000000000000000', 1, 'feat/x', '/p1', 1)`,
-		`INSERT INTO reviews VALUES ('bbbb0000000000000000000000000000', 's2', '/repo2', 'open', 1, 1)`,
+	if got.Kind != "ask" || got.Ask == nil {
+		t.Fatalf("got kind=%q ask=%v, want decoded ask", got.Kind, got.Ask)
+	}
+	if !reflect.DeepEqual(*got.Ask, *ask) {
+		t.Fatalf("ask round-trip = %+v, want %+v", *got.Ask, *ask)
+	}
+	if got.AskAnswer != nil {
+		t.Fatalf("unanswered ask has AskAnswer %+v", *got.AskAnswer)
+	}
+
+	for _, tc := range []struct {
+		name string
+		r    Reply
+	}{
+		{"ask without payload", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x"}},
+		{"non-ask with payload", Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "x", Ask: ask}},
+		{"empty options", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x", Ask: &Ask{}}},
+		{"duplicate labels", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x",
+			Ask: &Ask{Options: []AskOption{{Label: "A"}, {Label: "A"}}}}},
 	} {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatalf("seed old schema: %v", err)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := s.CreateReply(ctx, tc.r); err == nil {
+				t.Fatal("want error, got nil")
+			}
+		})
 	}
-	if err := db.Close(); err != nil {
+}
+
+func TestAnswerAsk(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+
+	newAsk := func(multi bool) int64 {
+		id, _, err := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "Q",
+			Ask: &Ask{MultiSelect: multi, Options: []AskOption{{Label: "A"}, {Label: "B"}}}})
+		if err != nil {
+			t.Fatalf("seed ask: %v", err)
+		}
+		return id
+	}
+
+	for _, tc := range []struct {
+		name    string
+		multi   bool
+		ans     AskAnswer
+		wantErr bool
+	}{
+		{"single select", false, AskAnswer{Selected: []string{"A"}}, false},
+		{"multi select two", true, AskAnswer{Selected: []string{"A", "B"}}, false},
+		{"other only", false, AskAnswer{Other: "something else"}, false},
+		{"notes ride along", false, AskAnswer{Selected: []string{"B"}, Notes: "context"}, false},
+		{"label not offered", false, AskAnswer{Selected: []string{"C"}}, true},
+		{"two picks single-select", false, AskAnswer{Selected: []string{"A", "B"}}, true},
+		{"selected plus other single-select", false, AskAnswer{Selected: []string{"A"}, Other: "x"}, true},
+		{"empty answer", false, AskAnswer{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := newAsk(tc.multi)
+			err := s.AnswerAsk(ctx, id, tc.ans, "web")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("want error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("answer ask: %v", err)
+			}
+			got, err := s.GetReply(ctx, id)
+			if err != nil {
+				t.Fatalf("get reply: %v", err)
+			}
+			if !got.Answered || got.AnsweredVia != "web" {
+				t.Fatalf("answered=%v via=%q, want true/web", got.Answered, got.AnsweredVia)
+			}
+			// selected serializes as [] (never null) per the wire contract.
+			want := tc.ans
+			if want.Selected == nil {
+				want.Selected = []string{}
+			}
+			if !reflect.DeepEqual(*got.AskAnswer, want) {
+				t.Fatalf("answer round-trip = %+v, want %+v", *got.AskAnswer, want)
+			}
+		})
+	}
+
+	t.Run("re-answer overwrites", func(t *testing.T) {
+		id := newAsk(false)
+		if err := s.AnswerAsk(ctx, id, AskAnswer{Selected: []string{"A"}}, "web"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AnswerAsk(ctx, id, AskAnswer{Selected: []string{"B"}}, "askuserquestion"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.GetReply(ctx, id)
+		if got.AskAnswer.Selected[0] != "B" || got.AnsweredVia != "askuserquestion" {
+			t.Fatalf("got %+v via %q, want B via askuserquestion", got.AskAnswer, got.AnsweredVia)
+		}
+	})
+
+	t.Run("question target rejected", func(t *testing.T) {
+		qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "Q?"})
+		if err := s.AnswerAsk(ctx, qid, AskAnswer{Selected: []string{"A"}}, "web"); err == nil {
+			t.Fatal("want error answering a question via AnswerAsk")
+		}
+	})
+
+	t.Run("web answer blocked once submitted, drain still works", func(t *testing.T) {
+		openID := newAsk(false)
+		if err := s.AnswerAskIfOpen(ctx, openID, AskAnswer{Selected: []string{"A"}}, "web"); err != nil {
+			t.Fatalf("open review: %v", err)
+		}
+		frozenID := newAsk(false)
+		if err := s.SetReviewStatus(ctx, r.ID, "submitted"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AnswerAskIfOpen(ctx, frozenID, AskAnswer{Selected: []string{"A"}}, "web"); !errors.Is(err, ErrReviewNotOpen) {
+			t.Fatalf("err=%v, want ErrReviewNotOpen", err)
+		}
+		if err := s.AnswerAsk(ctx, frozenID, AskAnswer{Selected: []string{"B"}}, "askuserquestion"); err != nil {
+			t.Fatalf("drain on submitted review: %v", err)
+		}
+	})
+}
+
+func TestAnswerQuestion(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+
+	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "Q?"})
+	if err := s.AnswerQuestion(ctx, qid, "because", "web"); err != nil {
+		t.Fatalf("answer question: %v", err)
+	}
+	got, _ := s.GetReply(ctx, qid)
+	if !got.Answered || got.Answer != "because" || got.AnsweredVia != "web" {
+		t.Fatalf("got answered=%v answer=%q via=%q", got.Answered, got.Answer, got.AnsweredVia)
+	}
+
+	aid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "Q",
+		Ask: &Ask{Options: []AskOption{{Label: "A"}}}})
+	if err := s.AnswerQuestion(ctx, aid, "text", "web"); err == nil {
+		t.Fatal("want error answering an ask via AnswerQuestion")
+	}
+	if err := s.AnswerQuestion(ctx, 99999, "text", "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing id: err=%v, want ErrNotFound", err)
+	}
+}
+
+func TestListOpenQuestionsIncludesAsk(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
+	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm"})
+
+	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "free-form?"})
+	ask := &Ask{Options: []AskOption{{Label: "A"}, {Label: "B", Description: "alt"}}}
+	aid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "pick", Ask: ask})
+	answeredID, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "done",
+		Ask: &Ask{Options: []AskOption{{Label: "X"}}}})
+	if err := s.AnswerAsk(ctx, answeredID, AskAnswer{Selected: []string{"X"}}, "web"); err != nil {
 		t.Fatal(err)
 	}
 
-	wants := map[string]string{
-		"aaaa0000000000000000000000000000": "feat--x--aaaa0000", // first version's branch, not the latest
-		"bbbb0000000000000000000000000000": "bbbb0000",          // no versions: bare id prefix
+	open, err := s.ListOpenQuestions(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("list open: %v", err)
 	}
-	for _, run := range []string{"first open", "idempotent reopen"} {
-		s, err := Open(path)
-		if err != nil {
-			t.Fatalf("%s: %v", run, err)
-		}
-		for id, want := range wants {
-			r, err := s.GetReview(context.Background(), id)
-			if err != nil {
-				t.Fatalf("%s: get %s: %v", run, id, err)
-			}
-			if r.Slug != want {
-				t.Fatalf("%s: slug for %s = %q, want %q", run, id, r.Slug, want)
-			}
-		}
-		s.Close()
+	if len(open) != 2 {
+		t.Fatalf("got %d open questions, want 2 (answered ask excluded)", len(open))
+	}
+	if open[0].ReplyID != qid || open[0].Ask != nil {
+		t.Fatalf("first = %+v, want plain question %d", open[0], qid)
+	}
+	if open[1].ReplyID != aid || open[1].Ask == nil || !reflect.DeepEqual(*open[1].Ask, *ask) {
+		t.Fatalf("second = %+v, want ask %d with decoded options", open[1], aid)
 	}
 }
