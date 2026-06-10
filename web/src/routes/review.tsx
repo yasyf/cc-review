@@ -1,9 +1,13 @@
+import { useRef } from 'react';
 import { getRouteApi } from '@tanstack/react-router';
 import { useSession } from '../lib/api';
 import { EventStreamProvider } from '../lib/events';
 import { ReviewProvider, useReview } from '../lib/review-context';
+import { UnreadProvider } from '../lib/unread';
 import { DiffView } from '../components/DiffView';
+import type { DiffViewHandle } from '../components/DiffView';
 import { NotificationsBar } from '../components/NotificationsBar';
+import { Sidebar } from '../components/Sidebar';
 import { SubmitBar } from '../components/SubmitBar';
 
 const routeApi = getRouteApi('/s/$slug');
@@ -11,6 +15,7 @@ const routeApi = getRouteApi('/s/$slug');
 function ReviewContent() {
   const { slug, version } = useReview();
   const { data, isPending, error } = useSession(slug, version);
+  const diffRef = useRef<DiffViewHandle>(null);
 
   if (isPending) return <div className="state">Loading review…</div>;
   if (error) return <div className="state state-error">{error.message}</div>;
@@ -19,9 +24,18 @@ function ReviewContent() {
     <div className="app">
       <SubmitBar session={data} />
       <NotificationsBar />
-      <main className="main">
-        <DiffView session={data} />
-      </main>
+      <UnreadProvider reviewId={slug} comments={data.comments} prune={version === undefined}>
+        <div className="body">
+          <Sidebar
+            session={data}
+            onSelectFile={(path) => diffRef.current?.scrollToFile(path)}
+            onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
+          />
+          <main className="main">
+            <DiffView key={data.versionId} session={data} ref={diffRef} />
+          </main>
+        </div>
+      </UnreadProvider>
     </div>
   );
 }

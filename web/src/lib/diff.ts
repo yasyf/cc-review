@@ -1,14 +1,24 @@
-import type { CodeViewItem, DiffLineAnnotation, FileDiffMetadata } from '@pierre/diffs';
+import type { CodeViewItem, DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from '@pierre/diffs';
 import { parsePatchFiles } from '@pierre/diffs';
 import type { Comment, Side } from './types';
 
-// The per-line annotation only needs to locate its thread; the comment body and
-// replies are read live from the Query cache by CommentThread via this id.
-export interface ThreadMeta {
-  commentId: string;
+// A line annotation is either a persisted comment thread (body and replies are
+// read live from the Query cache by CommentThread via the comment id) or the
+// one in-flight comment composer.
+export type AnnotationMeta =
+  | { kind: 'thread'; commentId: string }
+  | { kind: 'composer' };
+
+// A comment being drafted, anchored to the selected lines of one file. `seq`
+// increases on every open/replace so consecutive drafts never share an item
+// version.
+export interface ComposerDraft {
+  filePath: string;
+  range: SelectedLineRange;
+  seq: number;
 }
 
-export type ReviewItem = CodeViewItem<ThreadMeta>;
+export type ReviewItem = CodeViewItem<AnnotationMeta>;
 
 function anchorOf(comment: Comment): { side: Side; lineNumber: number } {
   return {
@@ -24,28 +34,49 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
   return parsePatchFiles(patchText).flatMap((patch) => patch.files);
 }
 
-// Attach each comment as a line annotation on its file's item. `version` is the
-// annotation count: it changes only when a comment is added or removed, which is
-// the sole event that mutates an item's annotation set (replies and body edits
-// re-render the thread component via its own cache subscription, so they need no
-// item-level re-render).
-export function buildItems(files: readonly FileDiffMetadata[], comments: readonly Comment[]): ReviewItem[] {
-  const byFile = new Map<string, DiffLineAnnotation<ThreadMeta>[]>();
+// Attach each comment as a line annotation on its file's item, plus the open
+// composer draft as a transient annotation on its file. The composer is always
+// appended last: annotation portals are keyed by array index, so keeping thread
+// indices stable preserves their component state.
+//
+// `version` only changes when the annotation set changes (replies and body
+// edits re-render the thread component via its own cache subscription). The
+// parity scheme keeps consecutive states distinct: draft versions are odd and
+// strictly increase with `seq`; non-draft versions are even and increase with
+// the append-only comment count — so "draft open with N comments" → "draft
+// closed with N+1 comments" never collides.
+export function buildItems(
+  files: readonly FileDiffMetadata[],
+  comments: readonly Comment[],
+  draft: ComposerDraft | null,
+): ReviewItem[] {
+  const byFile = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
   for (const comment of comments) {
     const anchor = anchorOf(comment);
     const list = byFile.get(comment.filePath) ?? [];
-    list.push({ ...anchor, metadata: { commentId: comment.id } });
+    list.push({ ...anchor, metadata: { kind: 'thread', commentId: comment.id } });
     byFile.set(comment.filePath, list);
   }
 
   return files.map((file): ReviewItem => {
-    const annotations = byFile.get(file.name) ?? [];
+    const threads = byFile.get(file.name) ?? [];
+    const fileDraft = draft?.filePath === file.name ? draft : null;
+    const annotations = fileDraft
+      ? [
+          ...threads,
+          {
+            side: fileDraft.range.endSide ?? fileDraft.range.side ?? 'additions',
+            lineNumber: fileDraft.range.end,
+            metadata: { kind: 'composer' } satisfies AnnotationMeta,
+          },
+        ]
+      : threads;
     return {
       id: file.name,
       type: 'diff',
       fileDiff: file,
       annotations,
-      version: annotations.length,
+      version: fileDraft ? 2 * (threads.length + fileDraft.seq) + 1 : 2 * threads.length,
     };
   });
 }

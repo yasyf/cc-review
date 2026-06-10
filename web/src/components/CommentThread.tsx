@@ -1,26 +1,35 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCreateReply, useResolveComment, useSession } from '../lib/api';
+import { clearDraft, readDraft, replyDraftKey, writeDraft } from '../lib/drafts';
 import { useReview } from '../lib/review-context';
-import type { Reply } from '../lib/types';
+import { useUnread } from '../lib/unread';
+import type { Origin, Reply } from '../lib/types';
+
+function Avatar({ origin }: { origin: Origin }) {
+  return <div className={`avatar avatar-${origin}`}>{origin === 'claude' ? 'C' : 'Y'}</div>;
+}
 
 function ReplyBubble({ reply, onChoose }: { reply: Reply; onChoose(option: string): void }) {
   const who = reply.origin === 'claude' ? 'Claude' : 'You';
   return (
     <div className={`reply reply-${reply.origin} reply-kind-${reply.kind}`}>
-      <div className="reply-meta">
-        <span className="reply-who">{who}</span>
-        <span className="reply-kind">{reply.kind}</span>
-      </div>
-      <div className="reply-body">{reply.body}</div>
-      {reply.kind === 'option' && reply.options && reply.options.length > 0 ? (
-        <div className="reply-options">
-          {reply.options.map((option) => (
-            <button key={option} type="button" className="option-btn" onClick={() => onChoose(option)}>
-              {option}
-            </button>
-          ))}
+      <Avatar origin={reply.origin} />
+      <div className="bubble">
+        <div className="reply-meta">
+          <span className="reply-who">{who}</span>
+          <span className="reply-kind">{reply.kind}</span>
         </div>
-      ) : null}
+        <div className="reply-body">{reply.body}</div>
+        {reply.kind === 'option' && reply.options && reply.options.length > 0 ? (
+          <div className="reply-options">
+            {reply.options.map((option) => (
+              <button key={option} type="button" className="option-btn" onClick={() => onChoose(option)}>
+                {option}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -28,19 +37,48 @@ function ReplyBubble({ reply, onChoose }: { reply: Reply; onChoose(option: strin
 export function CommentThread({ commentId }: { commentId: string }) {
   const { slug, version } = useReview();
   const { data } = useSession(slug, version);
+  const { markSeen } = useUnread();
   const createReply = useCreateReply();
   const resolveComment = useResolveComment();
-  const [answer, setAnswer] = useState('');
+  // Rehydrate across portal remounts (virtualizer releases the file's item
+  // when it scrolls far off screen, unmounting every annotation under it).
+  const [answer, setAnswer] = useState(() => readDraft(replyDraftKey(commentId)));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
 
   const comment = data?.comments.find((c) => c.id === commentId);
+  const mounted = comment !== undefined;
+
+  // Annotation mount is file-granular, so "rendered" is not "viewed": gate
+  // markSeen on actual viewport intersection of the thread itself.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) =>
+      setVisible(entries.some((entry) => entry.isIntersecting)),
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [mounted]);
+
+  useEffect(() => {
+    if (visible && comment) markSeen(comment);
+  }, [visible, comment, markSeen]);
+
   if (!comment) return null;
 
   const resolved = comment.status === 'resolved';
+
+  function updateAnswer(text: string) {
+    setAnswer(text);
+    writeDraft(replyDraftKey(commentId), text);
+  }
 
   function sendAnswer() {
     const body = answer.trim();
     if (!body) return;
     createReply.mutate({ commentId, body });
+    clearDraft(replyDraftKey(commentId));
     setAnswer('');
   }
 
@@ -49,7 +87,7 @@ export function CommentThread({ commentId }: { commentId: string }) {
   }
 
   return (
-    <div className={`thread${resolved ? ' thread-resolved' : ''}`}>
+    <div ref={rootRef} className={`thread${resolved ? ' thread-resolved' : ''}`}>
       <div className="thread-head">
         <code className="thread-line">{comment.lineContent}</code>
         <button
@@ -65,10 +103,13 @@ export function CommentThread({ commentId }: { commentId: string }) {
       </div>
 
       <div className={`reply reply-${comment.origin}`}>
-        <div className="reply-meta">
-          <span className="reply-who">{comment.origin === 'claude' ? 'Claude' : 'You'}</span>
+        <Avatar origin={comment.origin} />
+        <div className="bubble">
+          <div className="reply-meta">
+            <span className="reply-who">{comment.origin === 'claude' ? 'Claude' : 'You'}</span>
+          </div>
+          <div className="reply-body">{comment.body}</div>
         </div>
-        <div className="reply-body">{comment.body}</div>
       </div>
 
       {comment.replies.map((reply) => (
@@ -79,7 +120,7 @@ export function CommentThread({ commentId }: { commentId: string }) {
         <textarea
           value={answer}
           placeholder="Reply…"
-          onChange={(e) => setAnswer(e.target.value)}
+          onChange={(e) => updateAnswer(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
