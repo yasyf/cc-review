@@ -33,6 +33,20 @@ func (c *Client) Available() bool {
 	return true
 }
 
+// WaitGone polls until the socket stops accepting connections or timeout elapses.
+func (c *Client) WaitGone(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("unix", c.socket, 200*time.Millisecond)
+		if err != nil {
+			return true
+		}
+		conn.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
 // do sends one request and reads one response over a fresh connection.
 func (c *Client) do(req Request, timeout time.Duration) (*Response, error) {
 	conn, err := net.DialTimeout("unix", c.socket, dialTimeout)

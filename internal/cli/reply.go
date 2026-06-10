@@ -28,7 +28,7 @@ func newReplyCmd() *cobra.Command {
 			if answerTo == 0 && comment == 0 {
 				return errors.New("reply requires --comment (new reply) or --answer-to (answer a question)")
 			}
-			if err := daemon.EnsureRunning(startTimeout); err != nil {
+			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
 				return err
 			}
 			resp, err := daemon.NewClient().Reply([]daemon.ReplyInput{{

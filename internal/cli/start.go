@@ -20,7 +20,7 @@ func newStartCmd() *cobra.Command {
 		Short: "Start or resume a review of the working tree and print its URL",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := daemon.EnsureRunning(startTimeout); err != nil {
+			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
 				return err
 			}
 			resp, err := daemon.NewClient().Start(daemon.Request{

@@ -23,7 +23,7 @@ func newWatchCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			if err := daemon.EnsureRunning(startTimeout); err != nil {
+			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
 				return err
 			}
 			reviewID, port, token, err := resolveReview(ctx, daemon.NewClient(), session, mustCwd(cwd))

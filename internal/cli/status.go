@@ -23,6 +23,11 @@ func newStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "daemon: not running")
 				return nil
 			}
+			// A running daemon gets the version handshake (and upgrade) like
+			// every other op; a stopped one is just reported, not spawned.
+			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
+				return err
+			}
 			resp, err := client.Status(session, mustCwd(cwd))
 			if err != nil {
 				return err

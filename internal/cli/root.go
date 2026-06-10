@@ -5,15 +5,10 @@
 package cli
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-review/internal/version"
 )
-
-// startTimeout bounds how long lazy-start waits for the daemon to come up.
-const startTimeout = 10 * time.Second
 
 // NewRootCmd builds the root command with every subcommand attached.
 func NewRootCmd() *cobra.Command {

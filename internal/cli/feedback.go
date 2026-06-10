@@ -19,7 +19,7 @@ func newFeedbackCmd() *cobra.Command {
 		Short: "Print the frozen feedback JSON (threads + open questions) after Submit",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := daemon.EnsureRunning(startTimeout); err != nil {
+			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
 				return err
 			}
 			resp, err := daemon.NewClient().Feedback(session, mustCwd(cwd))

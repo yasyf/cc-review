@@ -27,6 +27,10 @@ import (
 // shells out to git to snapshot the tree; every other op is sub-second.
 const handleTimeout = 35 * time.Second
 
+// defaultEvictTimeout bounds each phase of evicting a version-skewed holder:
+// the graceful-shutdown wait, the post-SIGKILL wait, and the process-exit wait.
+const defaultEvictTimeout = 5 * time.Second
+
 // Server is the running daemon: the control-plane unix-socket server plus the
 // data/UI HTTP plane it boots.
 type Server struct {
@@ -35,9 +39,10 @@ type Server struct {
 	socket string
 	log    *log.Logger
 
-	fixedPort int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
-	httpPort  int
-	token     string
+	fixedPort    int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
+	httpPort     int
+	token        string
+	evictTimeout time.Duration
 
 	triggerShutdown context.CancelFunc
 	wg              sync.WaitGroup
@@ -57,11 +62,12 @@ func Run(ctx context.Context, fixedPort int) error {
 	defer st.Close()
 
 	s := &Server{
-		store:     st,
-		bus:       NewBus(),
-		socket:    paths.SocketPath(),
-		log:       log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
-		fixedPort: fixedPort,
+		store:        st,
+		bus:          NewBus(),
+		socket:       paths.SocketPath(),
+		log:          log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+		fixedPort:    fixedPort,
+		evictTimeout: defaultEvictTimeout,
 	}
 	return s.serve(ctx)
 }
@@ -71,10 +77,10 @@ func (s *Server) serve(parent context.Context) error {
 	defer stop()
 	s.triggerShutdown = stop
 
-	if err := s.startHTTP(ctx); err != nil {
-		return err
-	}
-
+	// Bind (and evict any skewed holder of) the control socket before publishing
+	// the HTTP handshake: the evicted daemon deletes http.json on its way out, so
+	// writing ours first would get clobbered. Connections queue in the listener
+	// backlog until the accept loop starts below, so nothing observes the gap.
 	ln, err := s.listen()
 	if err != nil {
 		return err
@@ -82,6 +88,10 @@ func (s *Server) serve(parent context.Context) error {
 	var once sync.Once
 	closeListener := func() { once.Do(func() { _ = ln.Close() }) }
 	defer closeListener()
+
+	if err := s.startHTTP(ctx); err != nil {
+		return err
+	}
 
 	s.log.Printf("daemon %s started; socket=%s http=127.0.0.1:%d", version.String(), s.socket, s.httpPort)
 
@@ -113,10 +123,13 @@ func (s *Server) serve(parent context.Context) error {
 	return nil
 }
 
-// listen binds the control socket. There is no version-skew eviction: a stale
-// socket left by a crashed daemon is simply removed before binding, and the
-// lazy-start flock already prevents two live daemons from racing here.
+// listen binds the control socket, first evicting any version-skewed daemon
+// holding it. A stale socket left by a crashed daemon is removed before
+// binding; the lazy-start flock prevents two live daemons from racing here.
 func (s *Server) listen() (net.Listener, error) {
+	if err := s.evictHolder(); err != nil {
+		return nil, err
+	}
 	_ = os.Remove(s.socket)
 	if err := os.MkdirAll(filepath.Dir(s.socket), 0o700); err != nil {
 		return nil, err
@@ -130,6 +143,48 @@ func (s *Server) listen() (net.Listener, error) {
 		return nil, err
 	}
 	return ln, nil
+}
+
+// evictHolder clears a version-skewed daemon holding the socket: ask it to step
+// down, then SIGKILL the exact socket peer if it wedges. A same-version holder
+// is never evicted — that is a legitimate running daemon, so refusing here is
+// what prevents two daemons from ever evicting each other.
+func (s *Server) evictHolder() error {
+	c := &Client{socket: s.socket}
+	resp, err := c.Health()
+	if err != nil {
+		return nil // no live holder; a stale socket file is removed by listen
+	}
+	if resp.DaemonVersion == version.String() {
+		return errors.New("another cc-review daemon at the same version is already running")
+	}
+	s.log.Printf("evicting version-skewed daemon (%s) holding the socket", resp.DaemonVersion)
+	pid, _ := c.peerPID() // grab before shutdown: the peer is gone afterwards
+	if _, err := c.Shutdown(); err != nil {
+		return fmt.Errorf("evict holder %s: %w", resp.DaemonVersion, err)
+	}
+	if !c.WaitGone(s.evictTimeout) {
+		if _, err := c.KillHolder(); err != nil {
+			s.log.Printf("kill holder: %v", err)
+		}
+		if !c.WaitGone(s.evictTimeout) {
+			return fmt.Errorf("holder %s did not release the socket within %s", resp.DaemonVersion, s.evictTimeout)
+		}
+	}
+	// The old daemon deletes http.json on its way out, up to its drain window
+	// after the socket closes — shipped code we cannot patch. Wait for the
+	// process itself to exit so our handshake is not clobbered.
+	if pid > 1 && pid != os.Getpid() {
+		deadline := time.Now().Add(s.evictTimeout)
+		for time.Now().Before(deadline) {
+			if err := killProc(pid, syscall.Signal(0)); errors.Is(err, syscall.ESRCH) {
+				return nil
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		s.log.Printf("holder pid %d still exiting; the handshake may be rewritten once", pid)
+	}
+	return nil
 }
 
 // startHTTP binds the data/UI plane on an ephemeral 127.0.0.1 port, publishes the
