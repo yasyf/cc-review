@@ -16,8 +16,8 @@ export function CommentComposer({
   versionId: string;
   onClose(): void;
 }) {
-  const { reviewId, token } = useReview();
-  const createComment = useCreateComment(reviewId, token);
+  const { slug } = useReview();
+  const createComment = useCreateComment(slug);
   const [body, setBody] = useState('');
 
   const side: Side = selection.range.endSide ?? selection.range.side ?? 'additions';

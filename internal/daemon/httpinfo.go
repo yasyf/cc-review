@@ -9,10 +9,9 @@ import (
 )
 
 // HTTPInfo is the handshake the daemon publishes so CLI stream consumers (watch,
-// mcp-channel) can reach the HTTP/SSE plane on its ephemeral port.
+// mcp-channel) and the Vite dev proxy can find the HTTP/SSE plane's ephemeral port.
 type HTTPInfo struct {
-	Port  int    `json:"port"`
-	Token string `json:"token"`
+	Port int `json:"port"`
 }
 
 func writeHTTPInfo(info HTTPInfo) error {
@@ -24,17 +23,4 @@ func writeHTTPInfo(info HTTPInfo) error {
 		return fmt.Errorf("write http info: %w", err)
 	}
 	return nil
-}
-
-// ReadHTTPInfo reads the daemon's published HTTP handshake.
-func ReadHTTPInfo() (HTTPInfo, error) {
-	b, err := os.ReadFile(paths.HTTPInfoPath())
-	if err != nil {
-		return HTTPInfo{}, fmt.Errorf("read http info: %w", err)
-	}
-	var info HTTPInfo
-	if err := json.Unmarshal(b, &info); err != nil {
-		return HTTPInfo{}, fmt.Errorf("parse http info: %w", err)
-	}
-	return info, nil
 }

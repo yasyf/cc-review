@@ -29,18 +29,18 @@ type EventHandler func(seq int64, data string) (stop bool, err error)
 // returning its id and the HTTP handshake. A stream consumer may start before
 // `start` has created the review (e.g. an MCP channel loaded at session start).
 // consumer names the caller so the daemon can track its presence.
-func resolveReview(ctx context.Context, client *daemon.Client, session, cwd, consumer string) (reviewID string, port int, token string, err error) {
+func resolveReview(ctx context.Context, client *daemon.Client, session, cwd, consumer string) (reviewID string, port int, err error) {
 	for {
 		resp, err := client.Resolve(session, cwd, consumer)
 		if err != nil {
-			return "", 0, "", err
+			return "", 0, err
 		}
 		if resp.ReviewID != "" {
-			return resp.ReviewID, resp.HTTPPort, resp.Token, nil
+			return resp.ReviewID, resp.HTTPPort, nil
 		}
 		select {
 		case <-ctx.Done():
-			return "", 0, "", ctx.Err()
+			return "", 0, ctx.Err()
 		case <-time.After(time.Second):
 		}
 	}
@@ -48,13 +48,12 @@ func resolveReview(ctx context.Context, client *daemon.Client, session, cwd, con
 
 // StreamSource identifies one SSE consumption: where to connect, as whom, and
 // how to refresh the handshake — a version-skew eviction restarts the daemon
-// mid-session, changing the port and token the consumer captured.
+// mid-session, changing the port the consumer captured.
 type StreamSource struct {
 	Port     int
-	Token    string
 	ReviewID string
 	Consumer string
-	Refresh  func(ctx context.Context) (port int, token string, err error)
+	Refresh  func(ctx context.Context) (port int, err error)
 }
 
 // ConsumeEvents streams a review's events (excluding Claude's own) to handle,
@@ -78,11 +77,13 @@ func ConsumeEvents(ctx context.Context, src StreamSource, handle EventHandler) e
 		if stop || ctx.Err() != nil {
 			return nil
 		}
+		// Port is the only swap signal now; on a fixed dev port a same-port daemon
+		// swap is invisible, which is fine — the DB and cursors persist across it.
 		refreshed := false
 		if src.Refresh != nil {
-			if port, token, err := src.Refresh(ctx); err == nil && port != 0 {
-				refreshed = port != src.Port || token != src.Token
-				src.Port, src.Token = port, token
+			if port, err := src.Refresh(ctx); err == nil && port != 0 {
+				refreshed = port != src.Port
+				src.Port = port
 			}
 		}
 		if fatal != nil && !refreshed {
@@ -97,25 +98,25 @@ func ConsumeEvents(ctx context.Context, src StreamSource, handle EventHandler) e
 }
 
 func streamURL(src StreamSource) string {
-	return fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&t=%s&exclude_origin=claude&consumer=%s",
-		src.Port, url.QueryEscape(src.ReviewID), url.QueryEscape(src.Token), url.QueryEscape(src.Consumer))
+	return fmt.Sprintf("http://127.0.0.1:%d/events?session=%s&exclude_origin=claude&consumer=%s",
+		src.Port, url.QueryEscape(src.ReviewID), url.QueryEscape(src.Consumer))
 }
 
 // refreshHandshake returns a StreamSource.Refresh that re-resolves the daemon's
-// current port+token, so a stream survives the daemon being replaced underneath it.
-func refreshHandshake(client *daemon.Client, session, cwd, consumer string) func(context.Context) (int, string, error) {
-	return func(context.Context) (int, string, error) {
+// current port, so a stream survives the daemon being replaced underneath it.
+func refreshHandshake(client *daemon.Client, session, cwd, consumer string) func(context.Context) (int, error) {
+	return func(context.Context) (int, error) {
 		resp, err := client.Resolve(session, cwd, consumer)
 		if err != nil {
-			return 0, "", err
+			return 0, err
 		}
-		return resp.HTTPPort, resp.Token, nil
+		return resp.HTTPPort, nil
 	}
 }
 
 // readStream consumes one SSE connection. A nil fatal means a transient drop
-// (reconnect); a non-nil fatal is a permanent failure (bad token, unknown review,
-// or an event frame larger than the buffer) the caller should surface and stop on.
+// (reconnect); a non-nil fatal is a permanent failure (unknown review, or an
+// event frame larger than the buffer) the caller should surface and stop on.
 func readStream(ctx context.Context, base string, cursor int64, cursorPath string, handle EventHandler) (stop bool, next int64, fatal error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base, nil)
 	if err != nil {
@@ -131,7 +132,7 @@ func readStream(ctx context.Context, base string, cursor int64, cursorPath strin
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			return false, cursor, fmt.Errorf("events endpoint returned %d (stale token or unknown review); stopping", resp.StatusCode)
+			return false, cursor, fmt.Errorf("events endpoint returned %d (unknown review); stopping", resp.StatusCode)
 		}
 		return false, cursor, nil // 5xx: reconnect
 	}

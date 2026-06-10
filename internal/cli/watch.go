@@ -27,13 +27,13 @@ func newWatchCmd() *cobra.Command {
 				return err
 			}
 			client := daemon.NewClient()
-			reviewID, port, token, err := resolveReview(ctx, client, session, mustCwd(cwd), "watch")
+			reviewID, port, err := resolveReview(ctx, client, session, mustCwd(cwd), "watch")
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
 			src := StreamSource{
-				Port: port, Token: token, ReviewID: reviewID, Consumer: "watch",
+				Port: port, ReviewID: reviewID, Consumer: "watch",
 				Refresh: refreshHandshake(client, session, mustCwd(cwd), "watch"),
 			}
 			return ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {

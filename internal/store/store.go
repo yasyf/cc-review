@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 CREATE TABLE IF NOT EXISTS reviews (
   id         TEXT PRIMARY KEY,
+  slug       TEXT NOT NULL DEFAULT '',
   session_id TEXT,
   repo_root  TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'open',
@@ -122,7 +123,64 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return s, nil
+}
+
+// migrate brings pre-slug databases up to the current schema: the slug column
+// must exist before its unique index, and the backfill (keyed on slug=”) makes
+// every run idempotent.
+func migrate(db *sql.DB) error {
+	var hasSlug int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name='slug'`).Scan(&hasSlug); err != nil {
+		return fmt.Errorf("inspect reviews schema: %w", err)
+	}
+	if hasSlug == 0 {
+		if _, err := db.Exec(`ALTER TABLE reviews ADD COLUMN slug TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add slug column: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_slug ON reviews(slug) WHERE slug <> ''`); err != nil {
+		return fmt.Errorf("create slug index: %w", err)
+	}
+	return backfillSlugs(db)
+}
+
+func backfillSlugs(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("backfill slugs: %w", err)
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT r.id, COALESCE(
+		(SELECT v.branch FROM review_versions v WHERE v.review_id = r.id ORDER BY v.version_number ASC LIMIT 1), '')
+		FROM reviews r WHERE r.slug = ''`)
+	if err != nil {
+		return fmt.Errorf("backfill slugs: %w", err)
+	}
+	slugs := map[string]string{}
+	for rows.Next() {
+		var id, branch string
+		if err := rows.Scan(&id, &branch); err != nil {
+			rows.Close()
+			return fmt.Errorf("backfill slugs: %w", err)
+		}
+		slugs[id] = ReviewSlug(branch, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("backfill slugs: %w", err)
+	}
+	rows.Close()
+	for id, slug := range slugs {
+		if _, err := tx.Exec(`UPDATE reviews SET slug=? WHERE id=?`, slug, id); err != nil {
+			return fmt.Errorf("backfill slug for %s: %w", id, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // Close closes the underlying database.

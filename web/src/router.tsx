@@ -7,24 +7,22 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: () => (
-    <div className="state">Open a review link: <code>/s/&lt;reviewId&gt;?t=&lt;token&gt;</code></div>
+    <div className="state">Open a review link: <code>/s/&lt;branch-slug&gt;--&lt;hash&gt;</code></div>
   ),
 });
 
 export interface ReviewSearch {
-  t: string;
   version?: number;
 }
 
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/s/$reviewId',
+  path: '/s/$slug',
   validateSearch: (search: Record<string, unknown>): ReviewSearch => {
-    const t = typeof search.t === 'string' ? search.t : '';
     const raw = search.version;
     const version =
       typeof raw === 'number' ? raw : typeof raw === 'string' && raw !== '' ? Number(raw) : undefined;
-    return version === undefined || Number.isNaN(version) ? { t } : { t, version };
+    return version === undefined || Number.isNaN(version) ? {} : { version };
   },
   component: ReviewView,
 });

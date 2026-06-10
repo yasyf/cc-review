@@ -1,5 +1,4 @@
 import { getRouteApi } from '@tanstack/react-router';
-import type { VersionKey } from '../lib/api';
 import { useSession } from '../lib/api';
 import { EventStreamProvider } from '../lib/events';
 import { ReviewProvider, useReview } from '../lib/review-context';
@@ -7,11 +6,11 @@ import { DiffView } from '../components/DiffView';
 import { NotificationsBar } from '../components/NotificationsBar';
 import { SubmitBar } from '../components/SubmitBar';
 
-const routeApi = getRouteApi('/s/$reviewId');
+const routeApi = getRouteApi('/s/$slug');
 
 function ReviewContent() {
-  const { reviewId, token, version } = useReview();
-  const { data, isPending, error } = useSession(reviewId, token, version);
+  const { slug, version } = useReview();
+  const { data, isPending, error } = useSession(slug, version);
 
   if (isPending) return <div className="state">Loading review…</div>;
   if (error) return <div className="state state-error">{error.message}</div>;
@@ -28,13 +27,12 @@ function ReviewContent() {
 }
 
 export function ReviewView() {
-  const { reviewId } = routeApi.useParams();
-  const { t, version } = routeApi.useSearch();
-  const versionKey: VersionKey = version ?? 'latest';
+  const { slug } = routeApi.useParams();
+  const search = routeApi.useSearch();
 
   return (
-    <ReviewProvider value={{ reviewId, token: t, version: versionKey }}>
-      <EventStreamProvider reviewId={reviewId} token={t} version={versionKey}>
+    <ReviewProvider value={{ slug, ...search }}>
+      <EventStreamProvider slug={slug} {...search}>
         <ReviewContent />
       </EventStreamProvider>
     </ReviewProvider>

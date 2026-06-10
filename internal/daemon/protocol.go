@@ -63,7 +63,6 @@ type Response struct {
 	Version       int             `json:"version,omitempty"`
 	Resumed       bool            `json:"resumed,omitempty"`
 	HTTPPort      int             `json:"http_port,omitempty"`
-	Token         string          `json:"token,omitempty"`
 	FeedbackPath  string          `json:"feedback_path,omitempty"`
 	Feedback      json.RawMessage `json:"feedback,omitempty"`
 	Status        string          `json:"status,omitempty"`

@@ -8,6 +8,7 @@ import (
 // Review is a code-review session keyed to a Claude session id + repo root.
 type Review struct {
 	ID        string
+	Slug      string // URL name: sanitized creation-time branch + first 8 hex of ID
 	SessionID string // empty when NULL (repo-root-only, pre-backfill)
 	RepoRoot  string
 	Status    string // open | submitted | closed

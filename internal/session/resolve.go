@@ -14,7 +14,8 @@ import (
 type Opts struct {
 	SessionID string
 	RepoRoot  string
-	New       bool // force a fresh review, detaching any existing session match
+	Branch    string // names a fresh review's slug; never part of the key
+	New       bool   // force a fresh review, detaching any existing session match
 }
 
 // Resolve returns the review a start should attach to and whether it is a resume
@@ -64,7 +65,7 @@ func Resolve(ctx context.Context, st *store.Store, o Opts) (store.Review, bool, 
 }
 
 func create(ctx context.Context, st *store.Store, o Opts) (store.Review, bool, error) {
-	r, err := st.CreateReview(ctx, o.SessionID, o.RepoRoot)
+	r, err := st.CreateReview(ctx, o.SessionID, o.RepoRoot, o.Branch)
 	if err != nil {
 		return store.Review{}, false, fmt.Errorf("create review: %w", err)
 	}

@@ -125,12 +125,12 @@ func runMCPChannel(ctx context.Context, session, cwd string, in io.Reader, out i
 // as a claude/channel notification for the lifetime of the session.
 func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 	client := daemon.NewClient()
-	reviewID, port, token := waitForReview(ctx, client, session, cwd)
+	reviewID, port := waitForReview(ctx, client, session, cwd)
 	if reviewID == "" {
 		return
 	}
 	src := StreamSource{
-		Port: port, Token: token, ReviewID: reviewID, Consumer: "channel",
+		Port: port, ReviewID: reviewID, Consumer: "channel",
 		Refresh: refreshHandshake(client, session, cwd, "channel"),
 	}
 	_ = ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {
@@ -144,19 +144,19 @@ func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 	})
 }
 
-func waitForReview(ctx context.Context, client *daemon.Client, session, cwd string) (reviewID string, port int, token string) {
+func waitForReview(ctx context.Context, client *daemon.Client, session, cwd string) (reviewID string, port int) {
 	for {
 		if ctx.Err() != nil {
-			return "", 0, ""
+			return "", 0
 		}
 		if client.Available() {
 			if resp, err := client.Resolve(session, cwd, "channel"); err == nil && resp.ReviewID != "" {
-				return resp.ReviewID, resp.HTTPPort, resp.Token
+				return resp.ReviewID, resp.HTTPPort
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return "", 0, ""
+			return "", 0
 		case <-time.After(time.Second):
 		}
 	}

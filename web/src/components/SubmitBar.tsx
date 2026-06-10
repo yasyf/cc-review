@@ -4,8 +4,8 @@ import { useReview } from '../lib/review-context';
 import type { SessionResponse } from '../lib/types';
 
 export function SubmitBar({ session }: { session: SessionResponse }) {
-  const { reviewId, token } = useReview();
-  const submit = useSubmit(reviewId, token);
+  const { slug } = useReview();
+  const submit = useSubmit(slug);
   const { feedbackPath } = useEventStream();
 
   const submitted = session.review.status === 'submitted';

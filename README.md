@@ -30,7 +30,7 @@ In any git repo with uncommitted changes Claude just made, run:
 /review:start
 ```
 
-Claude prints a `http://127.0.0.1:<port>/s/<id>` URL. Open it to see a PR-style diff of
+Claude prints a `http://127.0.0.1:<port>/s/<branch-slug>--<hash>` URL. Open it to see a PR-style diff of
 the working tree, leave inline comments, and watch Claude reply with questions and
 options under each one. Press **Submit** at the top when you're done — Claude reads the
 frozen feedback, asks any leftover questions inline, and then makes the changes. Run

@@ -49,9 +49,9 @@ func TestConsumeEventsSendsConsumerParamAndRefreshes(t *testing.T) {
 	t.Cleanup(b.Close)
 
 	src := StreamSource{
-		Port: ssePort(t, a), Token: "tok", ReviewID: "stream-test", Consumer: "watch",
-		Refresh: func(context.Context) (int, string, error) {
-			return ssePort(t, b), "tok", nil
+		Port: ssePort(t, a), ReviewID: "stream-test", Consumer: "watch",
+		Refresh: func(context.Context) (int, error) {
+			return ssePort(t, b), nil
 		},
 	}
 	var got []string

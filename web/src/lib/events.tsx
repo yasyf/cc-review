@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { sessionKey } from './api';
-import type { VersionKey } from './api';
 import type { Comment, Notification, Reply, ReviewEvent, SessionResponse } from './types';
 
 interface EventStreamValue {
@@ -86,14 +85,12 @@ function notificationFor(ev: ReviewEvent): Omit<Notification, 'id' | 'at'> | nul
 let notificationSeq = 0;
 
 export function EventStreamProvider({
-  reviewId,
-  token,
+  slug,
   version,
   children,
 }: {
-  reviewId: string;
-  token: string;
-  version: VersionKey;
+  slug: string;
+  version?: number;
   children: ReactNode;
 }) {
   const qc = useQueryClient();
@@ -102,7 +99,7 @@ export function EventStreamProvider({
   const [feedbackPath, setFeedbackPath] = useState<string | null>(null);
 
   useEffect(() => {
-    const url = `/events?session=${encodeURIComponent(reviewId)}&t=${encodeURIComponent(token)}`;
+    const url = `/events?session=${encodeURIComponent(slug)}`;
     const source = new EventSource(url);
 
     source.onopen = () => setConnected(true);
@@ -111,7 +108,7 @@ export function EventStreamProvider({
     source.onmessage = (raw: MessageEvent<string>) => {
       const ev = JSON.parse(raw.data) as ReviewEvent;
 
-      const key = sessionKey(reviewId, version);
+      const key = sessionKey(slug, version ?? 'latest');
       const current = qc.getQueryData<SessionResponse>(key);
       // Only patch when the frame belongs to the version on screen.
       if (current && ev.version_number === current.version) {
@@ -128,7 +125,7 @@ export function EventStreamProvider({
     };
 
     return () => source.close();
-  }, [qc, reviewId, token, version]);
+  }, [qc, slug, version]);
 
   function dismiss(id: string) {
     setNotifications((prev) => prev.filter((n) => n.id !== id));

@@ -1,5 +1,5 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { LineRange, SessionResponse, Side, VersionSummary } from './types';
+import type { LineRange, SessionResponse, Side } from './types';
 
 export type VersionKey = number | 'latest';
 
@@ -9,20 +9,11 @@ export const queryClient = new QueryClient({
   },
 });
 
-export const sessionKey = (reviewId: string, version: VersionKey) =>
-  ['session', reviewId, version] as const;
+export const sessionKey = (slug: string, version: VersionKey) =>
+  ['session', slug, version] as const;
 
-export const versionsKey = (reviewId: string) => ['versions', reviewId] as const;
-
-export const notificationsKey = (reviewId: string) => ['notifications', reviewId] as const;
-
-function withToken(path: string, token: string): string {
-  const sep = path.includes('?') ? '&' : '?';
-  return `${path}${sep}t=${encodeURIComponent(token)}`;
-}
-
-async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(withToken(path, token), {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
     ...init,
     headers: { 'content-type': 'application/json', ...init?.headers },
   });
@@ -33,29 +24,16 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return res.json() as Promise<T>;
 }
 
-export function fetchSession(
-  reviewId: string,
-  token: string,
-  version: VersionKey,
-): Promise<SessionResponse> {
+export function fetchSession(slug: string, version?: number): Promise<SessionResponse> {
   const path =
-    version === 'latest'
-      ? `/api/session/${reviewId}`
-      : `/api/session/${reviewId}?version=${version}`;
-  return request<SessionResponse>(path, token);
+    version === undefined ? `/api/session/${slug}` : `/api/session/${slug}?version=${version}`;
+  return request<SessionResponse>(path);
 }
 
-export function useSession(reviewId: string, token: string, version: VersionKey) {
+export function useSession(slug: string, version?: number) {
   return useQuery({
-    queryKey: sessionKey(reviewId, version),
-    queryFn: () => fetchSession(reviewId, token, version),
-  });
-}
-
-export function useVersions(reviewId: string, token: string) {
-  return useQuery({
-    queryKey: versionsKey(reviewId),
-    queryFn: () => request<VersionSummary[]>(`/api/session/${reviewId}/versions`, token),
+    queryKey: sessionKey(slug, version ?? 'latest'),
+    queryFn: () => fetchSession(slug, version),
   });
 }
 
@@ -68,26 +46,26 @@ export interface CreateCommentInput {
   body: string;
 }
 
-export function useCreateComment(reviewId: string, token: string) {
+export function useCreateComment(slug: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateCommentInput) =>
-      request<{ id: string }>('/api/comments', token, {
+      request<{ id: string }>('/api/comments', {
         method: 'POST',
         body: JSON.stringify(input),
       }),
     // The created comment streams back over SSE and patches the session cache;
     // we only invalidate as a safety net if the stream is momentarily behind.
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['session', reviewId], exact: false });
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
     },
   });
 }
 
-export function useResolveComment(token: string) {
+export function useResolveComment() {
   return useMutation({
     mutationFn: (input: { id: string; status: 'open' | 'resolved'; body?: string }) =>
-      request<{ ok: true }>(`/api/comments/${input.id}`, token, {
+      request<{ ok: true }>(`/api/comments/${input.id}`, {
         method: 'PUT',
         body: JSON.stringify({ status: input.status, body: input.body }),
       }),
@@ -101,22 +79,22 @@ export interface CreateReplyInput {
   questionReplyId?: string;
 }
 
-export function useCreateReply(token: string) {
+export function useCreateReply() {
   return useMutation({
     mutationFn: ({ commentId, ...rest }: CreateReplyInput) =>
-      request<{ id: string }>(`/api/replies/${commentId}`, token, {
+      request<{ id: string }>(`/api/replies/${commentId}`, {
         method: 'POST',
         body: JSON.stringify({ origin: 'user', ...rest }),
       }),
   });
 }
 
-export function useSubmit(reviewId: string, token: string) {
+export function useSubmit(slug: string) {
   return useMutation({
     mutationFn: () =>
-      request<{ ok: boolean; feedbackPath: string }>('/api/submit', token, {
+      request<{ ok: boolean; feedbackPath: string }>('/api/submit', {
         method: 'POST',
-        body: JSON.stringify({ reviewId }),
+        body: JSON.stringify({ reviewId: slug }),
       }),
   });
 }

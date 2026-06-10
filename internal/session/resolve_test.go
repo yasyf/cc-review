@@ -40,7 +40,7 @@ func TestResolveAdoptsOpenRepoReviewByDefault(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
 	// An open review bound to another session (e.g. before a session rotation).
-	pre, _ := st.CreateReview(ctx, "s1", "/repo")
+	pre, _ := st.CreateReview(ctx, "s1", "/repo", "main")
 
 	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s2", RepoRoot: "/repo"})
 	if err != nil {
@@ -68,8 +68,8 @@ func TestResolveAdoptsOpenRepoReviewByDefault(t *testing.T) {
 func TestResolveExactMatchWinsOverNewerOpenReview(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
-	mine, _ := st.CreateReview(ctx, "s2", "/repo")
-	other, _ := st.CreateReview(ctx, "s1", "/repo")
+	mine, _ := st.CreateReview(ctx, "s2", "/repo", "main")
+	other, _ := st.CreateReview(ctx, "s1", "/repo", "main")
 
 	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "s2", RepoRoot: "/repo"})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestResolveExactMatchWinsOverNewerOpenReview(t *testing.T) {
 func TestResolveSessionlessStartAdoptsWithoutBinding(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
-	pre, _ := st.CreateReview(ctx, "s1", "/repo")
+	pre, _ := st.CreateReview(ctx, "s1", "/repo", "main")
 
 	r, resumed, err := Resolve(ctx, st, Opts{SessionID: "", RepoRoot: "/repo"})
 	if err != nil {
@@ -110,7 +110,7 @@ func TestResolveSessionlessStartAdoptsWithoutBinding(t *testing.T) {
 func TestResolveCreatesWhenNoOpenReview(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
-	pre, _ := st.CreateReview(ctx, "s1", "/repo")
+	pre, _ := st.CreateReview(ctx, "s1", "/repo", "main")
 	if err := st.SetReviewStatus(ctx, pre.ID, "submitted"); err != nil {
 		t.Fatal(err)
 	}

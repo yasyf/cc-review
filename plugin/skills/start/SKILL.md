@@ -15,7 +15,7 @@ You are running a code review. The human reviews your uncommitted changes in a b
 cc-review start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
-It prints two lines: a `http://127.0.0.1:<port>/s/<id>?t=…` URL, then `channel: active` or `channel: inactive`. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+It prints two lines: a `http://127.0.0.1:<port>/s/<branch-slug>--<hash>` URL, then `channel: active` or `channel: inactive`. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
 
 ## 2. Wire up event delivery — then keep working
 

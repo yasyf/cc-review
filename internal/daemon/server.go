@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,7 +42,6 @@ type Server struct {
 
 	fixedPort    int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
 	httpPort     int
-	token        string
 	evictTimeout time.Duration
 
 	triggerShutdown context.CancelFunc
@@ -193,11 +190,10 @@ func (s *Server) evictHolder() error {
 }
 
 // startHTTP binds the data/UI plane on an ephemeral 127.0.0.1 port, publishes the
-// port+token handshake, and serves until ctx is cancelled. Request contexts
-// derive from ctx (BaseContext), so cancelling it ends every parked SSE handler
+// port handshake, and serves until ctx is cancelled. Request contexts derive
+// from ctx (BaseContext), so cancelling it ends every parked SSE handler
 // before the graceful Shutdown drains them — and before Run closes the store.
 func (s *Server) startHTTP(ctx context.Context) error {
-	s.token = randomToken()
 	addr := "127.0.0.1:0"
 	if s.fixedPort != 0 {
 		addr = fmt.Sprintf("127.0.0.1:%d", s.fixedPort)
@@ -207,11 +203,11 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		return err
 	}
 	s.httpPort = ln.Addr().(*net.TCPAddr).Port
-	if err := writeHTTPInfo(HTTPInfo{Port: s.httpPort, Token: s.token}); err != nil {
+	if err := writeHTTPInfo(HTTPInfo{Port: s.httpPort}); err != nil {
 		ln.Close()
 		return err
 	}
-	api := httpapi.New(s.store, s, s.token)
+	api := httpapi.New(s.store, s)
 	srv := &http.Server{
 		Handler:     api.Handler(),
 		BaseContext: func(net.Listener) context.Context { return ctx },
@@ -276,12 +272,4 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 func writeResp(conn net.Conn, r Response) {
 	r.Proto = ProtocolVersion
 	_ = json.NewEncoder(conn).Encode(r)
-}
-
-func randomToken() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b[:])
 }

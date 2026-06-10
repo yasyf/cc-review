@@ -26,10 +26,10 @@ function ReplyBubble({ reply, onChoose }: { reply: Reply; onChoose(option: strin
 }
 
 export function CommentThread({ commentId }: { commentId: string }) {
-  const { reviewId, token, version } = useReview();
-  const { data } = useSession(reviewId, token, version);
-  const createReply = useCreateReply(token);
-  const resolveComment = useResolveComment(token);
+  const { slug, version } = useReview();
+  const { data } = useSession(slug, version);
+  const createReply = useCreateReply();
+  const resolveComment = useResolveComment();
   const [answer, setAnswer] = useState('');
 
   const comment = data?.comments.find((c) => c.id === commentId);

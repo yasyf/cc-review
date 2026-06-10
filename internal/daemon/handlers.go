@@ -29,7 +29,7 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 		return errResp(err.Error())
 	}
 	review, resumed, err := session.Resolve(ctx, s.store, session.Opts{
-		SessionID: req.Session, RepoRoot: snap.RepoRoot, New: req.New,
+		SessionID: req.Session, RepoRoot: snap.RepoRoot, Branch: snap.Branch, New: req.New,
 	})
 	if err != nil {
 		return errResp(err.Error())
@@ -78,10 +78,10 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 			return errResp(err.Error())
 		}
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/s/%s?t=%s", s.httpPort, review.ID, s.token)
+	url := fmt.Sprintf("http://127.0.0.1:%d/s/%s", s.httpPort, review.Slug)
 	return Response{
 		OK: true, URL: url, ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
-		HTTPPort: s.httpPort, Token: s.token,
+		HTTPPort:      s.httpPort,
 		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot),
 	}
 }
@@ -124,7 +124,7 @@ func (s *Server) handleResolve(ctx context.Context, req Request) Response {
 	if req.Consumer != "" {
 		s.activity.NotePoll(repoRoot, req.Consumer)
 	}
-	resp := Response{OK: true, HTTPPort: s.httpPort, Token: s.token}
+	resp := Response{OK: true, HTTPPort: s.httpPort}
 	review, ok, err := s.store.FindReviewBySessionRepo(ctx, req.Session, repoRoot)
 	if err != nil {
 		return errResp(err.Error())

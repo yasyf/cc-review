@@ -31,8 +31,8 @@ func SocketPath() string { return filepath.Join(StateDir(), "daemon.sock") }
 // LogPath is the daemon log path.
 func LogPath() string { return filepath.Join(StateDir(), "daemon.log") }
 
-// HTTPInfoPath is where the daemon publishes its ephemeral port and access
-// token so the CLI and the SSE consumers can reach the HTTP plane.
+// HTTPInfoPath is where the daemon publishes its ephemeral port so the CLI
+// and the SSE consumers can reach the HTTP plane.
 func HTTPInfoPath() string { return filepath.Join(StateDir(), "http.json") }
 
 // LockDir holds the lazy-start flock file.

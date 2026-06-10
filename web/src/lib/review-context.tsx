@@ -1,10 +1,8 @@
 import { createContext, useContext } from 'react';
-import type { VersionKey } from './api';
 
 export interface ReviewContextValue {
-  reviewId: string;
-  token: string;
-  version: VersionKey;
+  slug: string;
+  version?: number;
 }
 
 const ReviewContext = createContext<ReviewContextValue | null>(null);

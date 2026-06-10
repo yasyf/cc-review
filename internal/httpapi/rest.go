@@ -27,10 +27,10 @@ type sessionResponse struct {
 }
 
 type createCommentReq struct {
-	VersionID   string `json:"versionId"`
-	FilePath    string `json:"filePath"`
-	Side        string `json:"side"`
-	Range       struct {
+	VersionID string `json:"versionId"`
+	FilePath  string `json:"filePath"`
+	Side      string `json:"side"`
+	Range     struct {
 		Start     int    `json:"start"`
 		End       int    `json:"end"`
 		StartSide string `json:"startSide"`
@@ -59,8 +59,7 @@ type submitReq struct {
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	reviewID := r.PathValue("reviewId")
-	review, err := s.store.GetReview(ctx, reviewID)
+	review, err := s.store.GetReviewByRef(ctx, r.PathValue("reviewId"))
 	if err != nil {
 		notFoundOr500(w, err)
 		return
@@ -68,10 +67,10 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	var version store.Version
 	if v := r.URL.Query().Get("version"); v != "" {
 		n, _ := strconv.Atoi(v)
-		version, err = s.store.GetVersion(ctx, reviewID, n)
+		version, err = s.store.GetVersion(ctx, review.ID, n)
 	} else {
 		var ok bool
-		version, ok, err = s.store.LatestVersion(ctx, reviewID)
+		version, ok, err = s.store.LatestVersion(ctx, review.ID)
 		if err == nil && !ok {
 			err = store.ErrNotFound
 		}
@@ -110,7 +109,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetVersions(w http.ResponseWriter, r *http.Request) {
-	versions, err := s.store.ListVersions(r.Context(), r.PathValue("reviewId"))
+	review, err := s.store.GetReviewByRef(r.Context(), r.PathValue("reviewId"))
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	versions, err := s.store.ListVersions(r.Context(), review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -237,7 +241,12 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	version, ok, err := s.store.LatestVersion(ctx, req.ReviewID)
+	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	version, ok, err := s.store.LatestVersion(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -246,25 +255,25 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "review has no versions", http.StatusBadRequest)
 		return
 	}
-	fb, err := feedback.Build(ctx, s.store, req.ReviewID, version, time.Now())
+	fb, err := feedback.Build(ctx, s.store, review.ID, version, time.Now())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := paths.EnsureReviewDir(req.ReviewID); err != nil {
+	if err := paths.EnsureReviewDir(review.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fbPath := paths.FeedbackPath(req.ReviewID, version.VersionNumber)
+	fbPath := paths.FeedbackPath(review.ID, version.VersionNumber)
 	if err := feedback.Freeze(fbPath, fb); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := s.store.SetReviewStatus(ctx, req.ReviewID, "submitted"); err != nil {
+	if err := s.store.SetReviewStatus(ctx, review.ID, "submitted"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.emit(ctx, req.ReviewID, store.OriginSystem, store.EventSubmit, version.VersionNumber,
+	s.emit(ctx, review.ID, store.OriginSystem, store.EventSubmit, version.VersionNumber,
 		map[string]any{"feedbackPath": fbPath})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "feedbackPath": fbPath})
 }

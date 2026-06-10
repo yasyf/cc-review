@@ -41,7 +41,7 @@ func TestSessionRecordReparentsLatestOpenReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	r, _ := s.store.CreateReview(ctx, "s1", root)
+	r, _ := s.store.CreateReview(ctx, "s1", root, "main")
 
 	resp := s.handleSessionRecord(ctx, Request{Session: "s2", Cwd: repo})
 	if !resp.OK {
@@ -61,8 +61,8 @@ func TestSessionRecordSkipsWhenSessionAlreadyBound(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	mine, _ := s.store.CreateReview(ctx, "s2", root)
-	other, _ := s.store.CreateReview(ctx, "s1", root)
+	mine, _ := s.store.CreateReview(ctx, "s2", root, "main")
+	other, _ := s.store.CreateReview(ctx, "s1", root, "main")
 
 	resp := s.handleSessionRecord(ctx, Request{Session: "s2", Cwd: repo})
 	if !resp.OK {
@@ -146,7 +146,7 @@ func TestGuardEditBlocksAfterRotation(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	if _, err := s.store.CreateReview(ctx, "s1", root); err != nil {
+	if _, err := s.store.CreateReview(ctx, "s1", root, "main"); err != nil {
 		t.Fatal(err)
 	}
 

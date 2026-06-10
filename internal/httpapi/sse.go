@@ -11,17 +11,26 @@ import (
 
 const keepaliveInterval = 20 * time.Second
 
-// handleEvents streams a review's event log as Server-Sent Events. The browser
-// omits exclude_origin and sees every origin (including Claude's replies); the
-// Claude-side stream consumers pass exclude_origin=claude to drop their own echo.
-// Resume is via Last-Event-ID (header, or the ?last_event_id= query fallback for
-// native EventSource which cannot set headers on the initial request).
+// handleEvents streams a review's event log as Server-Sent Events. ?session=
+// is a review ref — the browser sends the slug, the Claude-side stream
+// consumers the full id — resolved here to the canonical id, which is what
+// keys the Bus and the events table. The browser omits exclude_origin and sees
+// every origin (including Claude's replies); the Claude-side stream consumers
+// pass exclude_origin=claude to drop their own echo. Resume is via
+// Last-Event-ID (header, or the ?last_event_id= query fallback for native
+// EventSource which cannot set headers on the initial request).
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	reviewID := r.URL.Query().Get("session")
-	if reviewID == "" {
+	ref := r.URL.Query().Get("session")
+	if ref == "" {
 		http.Error(w, "missing session", http.StatusBadRequest)
 		return
 	}
+	review, err := s.store.GetReviewByRef(r.Context(), ref)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	reviewID := review.ID
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "stream unsupported", http.StatusInternalServerError)

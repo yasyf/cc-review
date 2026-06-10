@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -21,7 +22,7 @@ func TestReviewResolution(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 
-	r, err := s.CreateReview(ctx, "sess-1", "/repo/a")
+	r, err := s.CreateReview(ctx, "sess-1", "/repo/a", "main")
 	if err != nil {
 		t.Fatalf("create review: %v", err)
 	}
@@ -42,10 +43,10 @@ func TestReviewResolution(t *testing.T) {
 	}
 
 	// A session-less review must not collide with another on the partial index.
-	if _, err := s.CreateReview(ctx, "", "/repo/b"); err != nil {
+	if _, err := s.CreateReview(ctx, "", "/repo/b", "main"); err != nil {
 		t.Fatalf("session-less review 1: %v", err)
 	}
-	if _, err := s.CreateReview(ctx, "", "/repo/c"); err != nil {
+	if _, err := s.CreateReview(ctx, "", "/repo/c", "main"); err != nil {
 		t.Fatalf("session-less review 2: %v", err)
 	}
 
@@ -59,7 +60,7 @@ func TestCreateReviewRecordsInitialBinding(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 
-	sessioned, _ := s.CreateReview(ctx, "s1", "/repo/a")
+	sessioned, _ := s.CreateReview(ctx, "s1", "/repo/a", "main")
 	hist, err := s.ListReviewSessions(ctx, sessioned.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +69,7 @@ func TestCreateReviewRecordsInitialBinding(t *testing.T) {
 		t.Fatalf("sessioned create history = %+v, want one create:s1 row", hist)
 	}
 
-	sessionless, _ := s.CreateReview(ctx, "", "/repo/b")
+	sessionless, _ := s.CreateReview(ctx, "", "/repo/b", "main")
 	hist, _ = s.ListReviewSessions(ctx, sessionless.ID)
 	if len(hist) != 0 {
 		t.Fatalf("sessionless create should record no binding, got %+v", hist)
@@ -78,7 +79,7 @@ func TestCreateReviewRecordsInitialBinding(t *testing.T) {
 func TestReparentReviewSession(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s1", "/repo")
+	r, _ := s.CreateReview(ctx, "s1", "/repo", "main")
 
 	if err := s.ReparentReviewSession(ctx, r.ID, "s2", "adopt"); err != nil {
 		t.Fatalf("reparent: %v", err)
@@ -98,7 +99,7 @@ func TestReparentReviewSession(t *testing.T) {
 func TestReparentAppendsAuditRowPerRebind(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s1", "/repo")
+	r, _ := s.CreateReview(ctx, "s1", "/repo", "main")
 
 	if err := s.ReparentReviewSession(ctx, r.ID, "s2", "adopt"); err != nil {
 		t.Fatal(err)
@@ -126,8 +127,8 @@ func TestReparentAppendsAuditRowPerRebind(t *testing.T) {
 func TestReparentCollisionFailsAtomically(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	a, _ := s.CreateReview(ctx, "s1", "/repo")
-	if _, err := s.CreateReview(ctx, "s2", "/repo"); err != nil {
+	a, _ := s.CreateReview(ctx, "s1", "/repo", "main")
+	if _, err := s.CreateReview(ctx, "s2", "/repo", "main"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +157,7 @@ func TestReparentUnknownReviewErrNotFound(t *testing.T) {
 func TestVersionNumbersAreMonotonic(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo")
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
 
 	for want := 1; want <= 3; want++ {
 		v, err := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p.patch", "[]")
@@ -176,7 +177,7 @@ func TestVersionNumbersAreMonotonic(t *testing.T) {
 func TestReplyDedupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo")
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -204,7 +205,7 @@ func TestReplyDedupIsIdempotent(t *testing.T) {
 func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo")
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -251,7 +252,7 @@ func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 func TestAppendEventSeqAndOriginFilter(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo")
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
 
 	want := []struct {
 		origin string
@@ -292,7 +293,7 @@ func TestAppendEventSeqAndOriginFilter(t *testing.T) {
 func TestEventDedupReturnsExistingSeq(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", "/repo")
+	r, _ := s.CreateReview(ctx, "s", "/repo", "main")
 
 	first, _ := s.AppendEvent(ctx, &Event{ReviewID: r.ID, Origin: "user", Type: "t", DedupKey: "dk"})
 	second, _ := s.AppendEvent(ctx, &Event{ReviewID: r.ID, Origin: "user", Type: "t", DedupKey: "dk"})
@@ -305,3 +306,102 @@ func TestEventDedupReturnsExistingSeq(t *testing.T) {
 	}
 }
 
+func TestReviewSlug(t *testing.T) {
+	const id = "0123456789abcdef0123456789abcdef"
+	cases := []struct {
+		name   string
+		branch string
+		want   string
+	}{
+		{"nested branch", "feat/a/b", "feat--a--b--01234567"},
+		{"empty branch (detached HEAD)", "", "01234567"},
+		{"branch already containing --", "feat--x", "feat--x--01234567"},
+		{"dotted release branch", "release-1.2", "release-1.2--01234567"},
+		{"hash mark sanitized", "wip#2", "wip-2--01234567"},
+		{"space sanitized", "a b", "a-b--01234567"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ReviewSlug(tc.branch, id); got != tc.want {
+				t.Fatalf("ReviewSlug(%q) = %q, want %q", tc.branch, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetReviewByRef(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, err := s.CreateReview(ctx, "s", "/repo", "feat/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "feat--login--" + r.ID[:8]; r.Slug != want {
+		t.Fatalf("slug = %q, want %q", r.Slug, want)
+	}
+
+	bySlug, err := s.GetReviewByRef(ctx, r.Slug)
+	if err != nil || bySlug.ID != r.ID {
+		t.Fatalf("by slug: id=%q err=%v, want %q", bySlug.ID, err, r.ID)
+	}
+	byID, err := s.GetReviewByRef(ctx, r.ID)
+	if err != nil || byID.Slug != r.Slug {
+		t.Fatalf("by id: slug=%q err=%v, want %q", byID.Slug, err, r.Slug)
+	}
+	if _, err := s.GetReviewByRef(ctx, "nope"); err != ErrNotFound {
+		t.Fatalf("unknown ref err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestOpenBackfillsSlugs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pre-slug schema: reviews without the slug column, plus enough of
+	// review_versions for the backfill to find each review's first branch.
+	for _, stmt := range []string{
+		`CREATE TABLE reviews (
+			id TEXT PRIMARY KEY, session_id TEXT, repo_root TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'open', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE review_versions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, review_id TEXT NOT NULL,
+			version_number INTEGER NOT NULL, branch TEXT NOT NULL DEFAULT '',
+			base_ref TEXT NOT NULL DEFAULT '', patch_path TEXT NOT NULL,
+			files_json TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL)`,
+		`INSERT INTO reviews VALUES ('aaaa0000000000000000000000000000', 's1', '/repo', 'open', 1, 1)`,
+		`INSERT INTO review_versions(review_id, version_number, branch, patch_path, created_at)
+			VALUES ('aaaa0000000000000000000000000000', 2, 'other', '/p2', 2),
+			       ('aaaa0000000000000000000000000000', 1, 'feat/x', '/p1', 1)`,
+		`INSERT INTO reviews VALUES ('bbbb0000000000000000000000000000', 's2', '/repo2', 'open', 1, 1)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed old schema: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	wants := map[string]string{
+		"aaaa0000000000000000000000000000": "feat--x--aaaa0000", // first version's branch, not the latest
+		"bbbb0000000000000000000000000000": "bbbb0000",          // no versions: bare id prefix
+	}
+	for _, run := range []string{"first open", "idempotent reopen"} {
+		s, err := Open(path)
+		if err != nil {
+			t.Fatalf("%s: %v", run, err)
+		}
+		for id, want := range wants {
+			r, err := s.GetReview(context.Background(), id)
+			if err != nil {
+				t.Fatalf("%s: get %s: %v", run, id, err)
+			}
+			if r.Slug != want {
+				t.Fatalf("%s: slug for %s = %q, want %q", run, id, r.Slug, want)
+			}
+		}
+		s.Close()
+	}
+}

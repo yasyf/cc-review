@@ -69,14 +69,6 @@ export interface SessionResponse {
   comments: Comment[];
 }
 
-export interface VersionSummary {
-  versionId: string;
-  version: number;
-  branch: string;
-  baseRef: string;
-  createdAt: string;
-}
-
 // The SSE payload is a tagged union on `type`. Every frame carries the
 // version_number it belongs to so a stale stream can be filtered out.
 export type ReviewEvent =

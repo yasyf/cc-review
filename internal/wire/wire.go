@@ -125,5 +125,5 @@ func DecodeOptions(s string) []string {
 	return out
 }
 
-func id(n int64) string  { return strconv.FormatInt(n, 10) }
+func id(n int64) string      { return strconv.FormatInt(n, 10) }
 func iso(t time.Time) string { return t.UTC().Format(time.RFC3339) }

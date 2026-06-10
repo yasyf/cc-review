@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,7 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 		created int64
 		updated int64
 	)
-	if err := row.Scan(&r.ID, &session, &r.RepoRoot, &r.Status, &created, &updated); err != nil {
+	if err := row.Scan(&r.ID, &r.Slug, &session, &r.RepoRoot, &r.Status, &created, &updated); err != nil {
 		return Review{}, err
 	}
 	r.SessionID = session.String
@@ -27,22 +28,54 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 	return r, nil
 }
 
-const reviewCols = `id, session_id, repo_root, status, created_at, updated_at`
+const reviewCols = `id, slug, session_id, repo_root, status, created_at, updated_at`
+
+// ReviewSlug derives a review's URL name from its creation-time branch and id:
+// the sanitized branch, `--`, and the first 8 hex chars of the id. An empty
+// branch (detached HEAD) yields just the id prefix.
+func ReviewSlug(branch, id string) string {
+	hash := id[:8]
+	if branch == "" {
+		return hash
+	}
+	return sanitizeBranch(branch) + "--" + hash
+}
+
+// sanitizeBranch makes a branch name URL-safe: `/` becomes `--`, and any other
+// rune outside [A-Za-z0-9._-] becomes `-` (git allows `#`, `%` etc., which
+// break URLs; the id-prefix suffix keeps slugs unique regardless).
+func sanitizeBranch(branch string) string {
+	var b strings.Builder
+	for _, r := range branch {
+		switch {
+		case r == '/':
+			b.WriteString("--")
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
 
 // CreateReview inserts a new open review and, when sessioned, the initial
 // review_sessions binding row. A blank sessionID is stored as NULL so the
 // partial unique index does not collapse all session-less reviews together.
-func (s *Store) CreateReview(ctx context.Context, sessionID, repoRoot string) (Review, error) {
+// branch names the slug; it is fixed at creation even if later versions land
+// on another branch.
+func (s *Store) CreateReview(ctx context.Context, sessionID, repoRoot, branch string) (Review, error) {
 	now := time.Now()
 	r := Review{ID: newID(), SessionID: sessionID, RepoRoot: repoRoot, Status: "open", CreatedAt: now, UpdatedAt: now}
+	r.Slug = ReviewSlug(branch, r.ID)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Review{}, fmt.Errorf("create review: %w", err)
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO reviews(id, session_id, repo_root, status, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
-		r.ID, nullString(sessionID), repoRoot, r.Status, unix(now), unix(now)); err != nil {
+		`INSERT INTO reviews(id, slug, session_id, repo_root, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?)`,
+		r.ID, r.Slug, nullString(sessionID), repoRoot, r.Status, unix(now), unix(now)); err != nil {
 		return Review{}, fmt.Errorf("create review: %w", err)
 	}
 	if sessionID != "" {
@@ -61,6 +94,19 @@ func (s *Store) CreateReview(ctx context.Context, sessionID, repoRoot string) (R
 // GetReview returns the review by id, or ErrNotFound.
 func (s *Store) GetReview(ctx context.Context, id string) (Review, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+reviewCols+` FROM reviews WHERE id=?`, id)
+	r, err := scanReview(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Review{}, ErrNotFound
+	}
+	return r, err
+}
+
+// GetReviewByRef returns the review named by ref — a slug (what the browser
+// sends) or a full id (what the Claude-side stream consumers send) — or
+// ErrNotFound. The namespaces cannot collide: slugs are 8 chars or contain
+// `--`, ids are 32 hex chars.
+func (s *Store) GetReviewByRef(ctx context.Context, ref string) (Review, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+reviewCols+` FROM reviews WHERE slug=? OR id=?`, ref, ref)
 	r, err := scanReview(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Review{}, ErrNotFound
