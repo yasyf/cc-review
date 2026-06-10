@@ -32,6 +32,7 @@ func NewRootCmd() *cobra.Command {
 		newSessionRecordCmd(),
 		newGuardEditCmd(),
 		newMCPChannelCmd(),
+		newSetupChannelsCmd(),
 	)
 	return root
 }

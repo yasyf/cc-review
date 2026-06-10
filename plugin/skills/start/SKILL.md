@@ -30,6 +30,21 @@ It prints two lines: a `http://127.0.0.1:<port>/s/<id>?t=…` URL, then `channel
 
 Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
 
+## First run only: offer to silence the dev-channels warning
+
+Once event delivery is wired up and you're idle, run this — **don't block the review on it**:
+
+```bash
+cc-review setup-channels --check
+```
+
+If it prints `{"offer":true,…}`, ask the user via **AskUserQuestion**: stop the *"Loading development channels"* confirmation that appears on every launch? cc-review gets added to Claude's approved channels (one macOS admin-password prompt).
+
+- **Yes** — run `cc-review setup-channels --apply` (a password dialog appears). Then tell them: relaunch with `--channels plugin:review@cc-review` in place of `--dangerously-load-development-channels plugin:review@cc-review` — same channel, no warning.
+- **No** — run `cc-review setup-channels --decline`.
+
+Asked once either way. If `offer` is false or the command errors, skip silently. See `reference/channels-setup.md`.
+
 ## 3. React to each event — READ ONLY, make NO code changes
 
 Each event (Monitor line or channel tag) is a JSON object with a `type`. The ones you act on:
@@ -77,3 +92,4 @@ After you make changes, the user can run `/review:start` again. It resumes the *
 - `reference/event-schema.md` — the event types and payload shapes.
 - `reference/troubleshooting.md` — Monitor buffering, daemon, resume keying.
 - `reference/channels.md` — opt-in: receive comments as `<channel>` tags instead of via Monitor.
+- `reference/channels-setup.md` — the one-time offer that approves cc-review's channel so it loads without the dev-channels warning.
