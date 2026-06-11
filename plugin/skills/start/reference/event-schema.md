@@ -11,9 +11,9 @@
 | `status.changed` | `status` | Informational. |
 | `notification` | `level`, `message` | Informational. |
 | `ai.request.created` | `request` (`id`, `source`, `prompt`, `status`, `summary`, `unmatched`, `changes`, `createdAt`, `updatedAt`) | Yes — dispatch the `cc-review:organize` agent in the background (Agent tool, `run_in_background: true`) with the `request` JSON as its prompt — unless `request.id` matches the request already dispatched from `start`'s `organize:` line (the same request redelivered): ignore it. Dedupe by exact id only. `source: "system"` is the daemon's auto-organize request; `source: "user"` came from the AI bar. |
-| `ai.request.updated` | `request` | Informational — a human undo (`status: "undone"`); your own `update_ai_request` calls are filtered out. |
+| `ai.request.updated` | `request` | Informational — a human undo (`status: "undone"`) or the daemon closing an organize request it carried forward (`status: "done"`); the organize agent's own `update_ai_request` calls are filtered out. |
 | `file.states` | `states` (`[{path, reviewed, hidden, reason?}]`), `aiRequestId?`, `undoOf?` | Informational — the human's checkboxes, an undo, or the daemon unmarking changed files. Values are absolute per path, never deltas. |
-| `organization.updated` | `organization` (`overview`, `chapters`) | Never delivered to you — it originates from your own `submit_organization`; the browser renders it. |
+| `organization.updated` | `organization` (`overview`, `chapters`) | Never delivered to you — it originates from the organize agent's `submit_organization` (or the daemon carrying the organization forward onto an identical new version); the browser renders it. |
 | `version.created` | *(none beyond `type`, `version_number`)* | Informational — a new version was captured. |
 | `channel.changed` | `connected` | Informational. |
 

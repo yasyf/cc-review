@@ -173,6 +173,13 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	for _, f := range snap.Files {
 		fingerprints[f.Path] = f.Fingerprint
 	}
+	// The carry upsert lands before the version.created append: the SPA
+	// refetches the session on that event, and the refetch must already see the
+	// new version's organization row.
+	carried, carriedOK, err := s.carryOrganizationForward(ctx, review.ID, v, fingerprints)
+	if err != nil {
+		return errResp(err.Error())
+	}
 	unmarked, err := s.store.UnreviewChangedFiles(ctx, review.ID, fingerprints)
 	if err != nil {
 		return errResp(err.Error())
@@ -193,6 +200,26 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 			Payload: wire.Event(store.EventFileStates, v.VersionNumber, map[string]any{"states": states}),
 		}); err != nil {
 			return errResp(err.Error())
+		}
+	}
+	if carriedOK {
+		// The carried organization is the agent's own authored content
+		// reattached verbatim, so the event keeps the claude origin a
+		// submit_organization would have — the channel stream filters
+		// claude-origin frames, and no organize agent is dispatched for it.
+		_, _ = s.AppendEvent(ctx, &store.Event{
+			ReviewID: review.ID, Origin: store.OriginClaude, Type: store.EventOrganizationUpdated, VersionNumber: v.VersionNumber,
+			Payload: wire.Event(store.EventOrganizationUpdated, v.VersionNumber, map[string]any{"organization": carried}),
+		})
+		if err := s.closeStaleOrganizeRequests(ctx, review.ID, v.VersionNumber); err != nil {
+			return errResp(err.Error())
+		}
+		// No AIRequest: the skill dispatches no organize agent, matching the
+		// unchanged-resume contract.
+		return Response{
+			OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
+			HTTPPort:      s.httpPort,
+			ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
 		}
 	}
 	organize, err := s.store.CreateAIRequest(ctx, review.ID, v.VersionNumber, store.OriginSystem, organizePrompt)

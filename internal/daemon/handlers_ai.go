@@ -3,11 +3,14 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/vcs"
 	"github.com/yasyf/cc-review/internal/wire"
 )
 
@@ -200,11 +203,100 @@ func (s *Server) handleReviewFiles(ctx context.Context, req Request) Response {
 		}
 		entries = append(entries, e)
 	}
-	b, err := json.Marshal(map[string]any{"version_number": v.VersionNumber, "files": entries})
+	result := map[string]any{"version_number": v.VersionNumber, "files": entries}
+	if org, basis, ok, err := s.store.LatestOrganization(ctx, review.ID); err != nil {
+		return errResp(err.Error())
+	} else if ok {
+		block, err := organizationContext(org, basis, v)
+		if err != nil {
+			return errResp(err.Error())
+		}
+		result["organization"] = block
+	}
+	b, err := json.Marshal(result)
 	if err != nil {
 		return errResp(err.Error())
 	}
 	return Response{OK: true, ReviewFiles: b}
+}
+
+// organizationContext annotates the latest organization against the current
+// version so the organize agent rebuilds incrementally instead of from
+// scratch: per file a delta mark (absent = unchanged diff), plus the current
+// paths the basis never covered. Files are joined by path first, then by base
+// origin — every version diffs the review's pinned base, so a rename's
+// old_path keys it back to the basis entry. A direct path match always wins
+// over an origin join: when a basis D+A pair flips to a rename, both org
+// entries would otherwise claim the rename target, and a literal agent would
+// submit one current path in two chapters.
+func organizationContext(org store.Organization, basis, current store.Version) (map[string]any, error) {
+	basisFiles, err := basis.Files()
+	if err != nil {
+		return nil, err
+	}
+	currentFiles, err := current.Files()
+	if err != nil {
+		return nil, err
+	}
+	basisByPath := make(map[string]vcs.FileChange, len(basisFiles))
+	for _, f := range basisFiles {
+		basisByPath[f.Path] = f
+	}
+	currentByPath := make(map[string]vcs.FileChange, len(currentFiles))
+	renamedByOrigin := make(map[string]vcs.FileChange)
+	for _, f := range currentFiles {
+		currentByPath[f.Path] = f
+		if f.OldPath != "" {
+			renamedByOrigin[f.OldPath] = f
+		}
+	}
+	directClaimed := make(map[string]bool)
+	for _, ch := range org.Chapters {
+		for _, f := range ch.Files {
+			if _, ok := currentByPath[f.Path]; ok {
+				directClaimed[f.Path] = true
+			}
+		}
+	}
+	matched := make(map[string]bool, len(currentFiles))
+	chapters := make([]map[string]any, 0, len(org.Chapters))
+	for _, ch := range org.Chapters {
+		files := make([]map[string]any, 0, len(ch.Files))
+		for _, f := range ch.Files {
+			entry := map[string]any{"path": f.Path, "risk": f.Risk, "rationale": f.Rationale}
+			bf := basisByPath[f.Path]
+			origin := bf.OldPath
+			if origin == "" {
+				origin = bf.Path
+			}
+			if cf, ok := currentByPath[f.Path]; ok {
+				matched[f.Path] = true
+				if cf.Fingerprint != bf.Fingerprint {
+					entry["delta"] = "changed"
+				}
+			} else if cf, ok := renamedByOrigin[origin]; ok && !directClaimed[cf.Path] {
+				matched[cf.Path] = true
+				entry["delta"] = "moved"
+				entry["now"] = cf.Path
+			} else {
+				entry["delta"] = "removed"
+			}
+			files = append(files, entry)
+		}
+		chapters = append(chapters, map[string]any{"title": ch.Title, "summary": ch.Summary, "files": files})
+	}
+	newPaths := make([]string, 0)
+	for _, cf := range currentFiles {
+		if !matched[cf.Path] {
+			newPaths = append(newPaths, cf.Path)
+		}
+	}
+	return map[string]any{
+		"basis_version": basis.VersionNumber,
+		"overview":      org.Overview,
+		"chapters":      chapters,
+		"new_paths":     newPaths,
+	}, nil
 }
 
 // emitAIRequest appends an ai.request.* event carrying the full request
@@ -228,4 +320,57 @@ func versionFingerprints(v store.Version) (map[string]string, error) {
 		out[f.Path] = f.Fingerprint
 	}
 	return out, nil
+}
+
+// carryOrganizationForward copies the review's latest organization onto v when
+// v's path set and per-file fingerprints exactly match the organization's
+// owning version: identical content tells the same story, so no re-organize is
+// needed. Fingerprints hash status, old/new names, file modes, and full diff
+// content, so map equality covers renames, mode flips, and status changes too.
+func (s *Server) carryOrganizationForward(ctx context.Context, reviewID string, v store.Version, fingerprints map[string]string) (store.Organization, bool, error) {
+	org, owner, ok, err := s.store.LatestOrganization(ctx, reviewID)
+	if err != nil {
+		return store.Organization{}, false, err
+	}
+	if !ok {
+		return store.Organization{}, false, nil
+	}
+	ownerPrints, err := versionFingerprints(owner)
+	if err != nil {
+		return store.Organization{}, false, err
+	}
+	if !maps.Equal(ownerPrints, fingerprints) {
+		return store.Organization{}, false, nil
+	}
+	if err := s.store.UpsertOrganization(ctx, v.ID, org); err != nil {
+		return store.Organization{}, false, err
+	}
+	return org, true, nil
+}
+
+// closeStaleOrganizeRequests marks the review's open system organize requests
+// done after a carry: no agent is coming to close them, and an open one keeps
+// the UI's "organizing…" chip lit forever.
+func (s *Server) closeStaleOrganizeRequests(ctx context.Context, reviewID string, versionNumber int) error {
+	requests, err := s.store.ListAIRequests(ctx, reviewID)
+	if err != nil {
+		return err
+	}
+	summary := fmt.Sprintf("diff unchanged; organization carried to version %d", versionNumber)
+	for _, ar := range requests {
+		if ar.Source != store.OriginSystem || (ar.Status != "pending" && ar.Status != "working") {
+			continue
+		}
+		updated, err := s.store.TransitionAIRequest(ctx, ar.ID, "done", summary, nil)
+		if err != nil {
+			// A live agent's own update_ai_request can close the request between
+			// the list above and this transition; already-closed is the goal state.
+			if errors.Is(err, store.ErrInvalidTransition) {
+				continue
+			}
+			return err
+		}
+		s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestUpdated, versionNumber, updated)
+	}
+	return nil
 }

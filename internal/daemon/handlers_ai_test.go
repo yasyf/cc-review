@@ -502,3 +502,244 @@ func TestHandleUpdateAIRequestLifecycle(t *testing.T) {
 		t.Fatalf("done payload = %+v, want full updated request", payload.Request)
 	}
 }
+
+// submitOrg submits a one-chapter organization covering paths on the review's
+// given version.
+func submitOrg(t *testing.T, s *Server, req Request, version int, paths ...string) store.Organization {
+	t.Helper()
+	files := make([]store.ChapterFile, 0, len(paths))
+	for _, p := range paths {
+		files = append(files, store.ChapterFile{Path: p, Risk: "low", Rationale: "r"})
+	}
+	org := store.Organization{Chapters: []store.Chapter{{Title: "All", Summary: "s", Files: files}}}
+	r := req
+	r.Organization = &org
+	r.VersionNumber = version
+	if resp := s.handleSubmitOrganization(context.Background(), r); !resp.OK {
+		t.Fatalf("submit organization: %s", resp.Error)
+	}
+	return org
+}
+
+func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	req, started := startedReview(t, s, repo)
+	org := submitOrg(t, s, req, started.Version, "a.go", "b.go")
+
+	// v2: a changed tree queues a fresh organize request that never completes.
+	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
+	second := s.handleStart(ctx, req)
+	if !second.OK || second.Version != 2 {
+		t.Fatalf("second start: ok=%v version=%d err=%q", second.OK, second.Version, second.Error)
+	}
+	// v3: reverting restores v1's per-file fingerprints exactly, so the daemon
+	// reattaches v1's organization instead of dispatching an agent.
+	writeFile(t, repo, "a.go", "package a\n")
+	third := s.handleStart(ctx, req)
+	if !third.OK || third.Version != 3 {
+		t.Fatalf("third start: ok=%v version=%d err=%q", third.OK, third.Version, third.Error)
+	}
+	if len(third.AIRequest) != 0 {
+		t.Fatalf("carried start returned ai_request %s, want empty", third.AIRequest)
+	}
+	v3, _, err := s.store.LatestVersion(ctx, started.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.store.GetOrganization(ctx, v3.ID)
+	if err != nil || !ok {
+		t.Fatalf("v3 organization: ok=%v err=%v", ok, err)
+	}
+	if !reflect.DeepEqual(got, org) {
+		t.Fatalf("carried organization = %+v, want %+v", got, org)
+	}
+	if got := countEvents(t, s, started.ReviewID, store.EventAIRequestCreated); got != 2 {
+		t.Fatalf("ai.request.created events = %d, want 2 (v1 + v2 only)", got)
+	}
+	updated := eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, false)
+	if len(updated) != 2 {
+		t.Fatalf("organization.updated events = %d, want submit + carry", len(updated))
+	}
+	if carried := updated[1]; carried.Origin != store.OriginClaude || carried.VersionNumber != 3 {
+		t.Fatalf("carried event origin=%s version=%d, want claude origin on version 3", carried.Origin, carried.VersionNumber)
+	}
+	// Claude-origin keeps the carried event off the Claude-side stream.
+	if got := len(eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, true)); got != 0 {
+		t.Fatalf("excludeClaude organization.updated = %d, want 0", got)
+	}
+	// The carry closes both stranded system organize requests; nothing is left
+	// to keep the UI's "organizing…" chip lit.
+	requests, err := s.store.ListAIRequests(ctx, started.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ar := range requests {
+		if ar.Source != store.OriginSystem {
+			continue
+		}
+		if ar.Status != "done" || !strings.Contains(ar.Summary, "carried to version 3") {
+			t.Fatalf("system request %d: status=%q summary=%q, want done via carry", ar.ID, ar.Status, ar.Summary)
+		}
+	}
+}
+
+func TestStartDoesNotCarryAcrossAChangedDiff(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	req, started := startedReview(t, s, repo)
+	submitOrg(t, s, req, started.Version, "a.go", "b.go")
+
+	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
+	second := s.handleStart(ctx, req)
+	if !second.OK || len(second.AIRequest) == 0 {
+		t.Fatalf("second start: ok=%v err=%q ai_request=%s", second.OK, second.Error, second.AIRequest)
+	}
+	v2, _, err := s.store.LatestVersion(ctx, started.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.store.GetOrganization(ctx, v2.ID); err != nil || ok {
+		t.Fatalf("v2 organization: ok=%v err=%v, want absent", ok, err)
+	}
+	if got := len(eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, false)); got != 1 {
+		t.Fatalf("organization.updated events = %d, want only the v1 submit", got)
+	}
+}
+
+func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	// A committed file with enough lines that a later git mv stays above the
+	// rename-similarity threshold; the small touch puts it in the v1 diff.
+	libBody := "package lib\n" + strings.Repeat("// padding\n", 20)
+	writeFile(t, repo, "lib.go", libBody)
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "lib")
+	writeFile(t, repo, "lib.go", libBody+"func Touched() {}\n")
+	req, started := startedReview(t, s, repo)
+
+	type rfFile struct {
+		Path      string `json:"path"`
+		Risk      string `json:"risk"`
+		Rationale string `json:"rationale"`
+		Delta     string `json:"delta"`
+		Now       string `json:"now"`
+	}
+	type rfOrg struct {
+		BasisVersion int `json:"basis_version"`
+		Chapters     []struct {
+			Title string   `json:"title"`
+			Files []rfFile `json:"files"`
+		} `json:"chapters"`
+		NewPaths []string `json:"new_paths"`
+	}
+	reviewFiles := func() (int, *rfOrg) {
+		t.Helper()
+		resp := s.handleReviewFiles(ctx, req)
+		if !resp.OK {
+			t.Fatalf("review-files: %s", resp.Error)
+		}
+		var rf struct {
+			VersionNumber int    `json:"version_number"`
+			Organization  *rfOrg `json:"organization"`
+		}
+		if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
+			t.Fatal(err)
+		}
+		return rf.VersionNumber, rf.Organization
+	}
+
+	if _, org := reviewFiles(); org != nil {
+		t.Fatalf("unorganized review returned organization %+v", org)
+	}
+
+	submitOrg(t, s, req, started.Version, "a.go", "b.go", "lib.go")
+	version, org := reviewFiles()
+	if org == nil || org.BasisVersion != version {
+		t.Fatalf("live organization = %+v at version %d, want basis == version", org, version)
+	}
+	for _, f := range org.Chapters[0].Files {
+		if f.Delta != "" {
+			t.Fatalf("live organization annotated %s as %q", f.Path, f.Delta)
+		}
+	}
+	if len(org.NewPaths) != 0 {
+		t.Fatalf("live organization new_paths = %v, want none", org.NewPaths)
+	}
+
+	// v2: a.go changes, b.go vanishes, lib.go moves, c.go is new.
+	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
+	if err := os.Remove(filepath.Join(repo, "b.go")); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "mv", "lib.go", "moved.go")
+	writeFile(t, repo, "c.go", "package c\n")
+	if resp := s.handleStart(ctx, req); !resp.OK {
+		t.Fatalf("second start: %s", resp.Error)
+	}
+
+	version, org = reviewFiles()
+	if version != 2 || org == nil || org.BasisVersion != 1 {
+		t.Fatalf("stale organization = %+v at version %d, want basis 1", org, version)
+	}
+	deltas := make(map[string]rfFile, len(org.Chapters[0].Files))
+	for _, f := range org.Chapters[0].Files {
+		deltas[f.Path] = f
+	}
+	if f := deltas["a.go"]; f.Delta != "changed" {
+		t.Fatalf("a.go delta = %q, want changed", f.Delta)
+	}
+	if f := deltas["b.go"]; f.Delta != "removed" {
+		t.Fatalf("b.go delta = %q, want removed", f.Delta)
+	}
+	if f := deltas["lib.go"]; f.Delta != "moved" || f.Now != "moved.go" {
+		t.Fatalf("lib.go delta = %q now = %q, want moved to moved.go", f.Delta, f.Now)
+	}
+	if !reflect.DeepEqual(org.NewPaths, []string{"c.go"}) {
+		t.Fatalf("new_paths = %v, want [c.go]", org.NewPaths)
+	}
+}
+
+// A basis D x.go + A p.go pair that git later pairs as R x.go -> p.go must not
+// produce two org entries claiming p.go (the agent would submit one current
+// path in two chapters and Validate would reject): the direct match wins and
+// the origin-joined entry degrades to removed.
+func TestOrganizationContextDirectMatchWinsOverOriginJoin(t *testing.T) {
+	basis := store.Version{VersionNumber: 1, FilesJSON: `[
+		{"path":"p.go","status":"A","fingerprint":"fpA"},
+		{"path":"x.go","status":"D","fingerprint":"fpD"}
+	]`}
+	current := store.Version{VersionNumber: 2, FilesJSON: `[
+		{"path":"p.go","old_path":"x.go","status":"R","fingerprint":"fpR"}
+	]`}
+	org := store.Organization{Chapters: []store.Chapter{{
+		Title: "Both",
+		Files: []store.ChapterFile{
+			{Path: "p.go", Risk: "low", Rationale: "added"},
+			{Path: "x.go", Risk: "low", Rationale: "deleted"},
+		},
+	}}}
+
+	out, err := organizationContext(org, basis, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := out["chapters"].([]map[string]any)[0]["files"].([]map[string]any)
+	deltas := make(map[string]map[string]any, len(files))
+	for _, f := range files {
+		deltas[f["path"].(string)] = f
+	}
+	if d := deltas["p.go"]["delta"]; d != "changed" {
+		t.Fatalf("p.go delta = %v, want changed", d)
+	}
+	if d := deltas["x.go"]["delta"]; d != "removed" {
+		t.Fatalf("x.go delta = %v, want removed (p.go is already direct-claimed)", d)
+	}
+	if now, ok := deltas["x.go"]["now"]; ok {
+		t.Fatalf("x.go now = %v, want no rename claim", now)
+	}
+	if newPaths := out["new_paths"].([]string); len(newPaths) != 0 {
+		t.Fatalf("new_paths = %v, want none (p.go is claimed)", newPaths)
+	}
+}

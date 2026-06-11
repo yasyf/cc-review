@@ -149,6 +149,18 @@ func TestCaptureFingerprints(t *testing.T) {
 	if third["b.go"] != first["b.go"] {
 		t.Fatal("b.go did not change but its fingerprint did")
 	}
+
+	// A mode-only flip (chmod +x) changes the fingerprint too.
+	if err := os.Chmod(filepath.Join(dir, "a.go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fourth := captureFingerprints(t, dir)
+	if fourth["a.go"] == third["a.go"] {
+		t.Fatal("a.go mode changed but its fingerprint did not")
+	}
+	if fourth["b.go"] != third["b.go"] {
+		t.Fatal("b.go did not change but its fingerprint did")
+	}
 }
 
 func captureFingerprints(t *testing.T, dir string) map[string]string {

@@ -23,6 +23,20 @@ Open the request with `update_ai_request {ai_request_id: <id>, status: "working"
 
 3. Close the request: `update_ai_request {ai_request_id, status: "done", summary}` — without it the UI's "organizing…" chip never clears.
 
+### Rebuild from a prior organization
+
+`get_review_files` may include `organization`: the last submitted `overview` and chapters with `basis_version`, per-file `delta` marks, and `new_paths`. Start from it — never re-chapter from scratch.
+
+- No `delta` → copy the file verbatim: same chapter, risk, rationale.
+- `delta: "changed"` → re-read its diff; re-rate risk and rewrite the rationale. A stale rationale is worse than none.
+- `delta: "moved"` → submit `now` as the path; re-read like changed.
+- `delta: "removed"` → drop the file; drop the chapter when it empties.
+- `new_paths` → put each in the chapter its change causally belongs to; open a new chapter only when none fits.
+- Keep the carried `overview` and unchanged chapters' titles and summaries word-for-word. Restructure or rewrite only when the delta changes the story.
+- `basis_version` equal to `version_number` → you are editing the live organization: apply the prompt, keep everything it does not touch.
+
+Submit the full organization: every file from `files` in exactly one chapter, carried files included.
+
 ### Chaptering
 
 - Cluster by CAUSAL relationship, never by directory: the schema, the API handler, and the UI of one feature are one chapter. A file belongs with the change that made it necessary.
@@ -63,7 +77,7 @@ Rate the danger of skimming the file, not its size. When torn between two levels
 Rules:
 - Never hide a file with open comments.
 - Never mark a file reviewed that the prompt does not clearly include.
-- A re-organization request ("split the API chapter", "group by risk") → rebuild and submit_organization again, reflecting the instruction in the changed summaries, then close the request.
+- A re-organization request ("split the API chapter", "group by risk") → rebuild from the returned `organization` and submit_organization again, reflecting the instruction in the changed summaries, then close the request.
 - A question ("what's risky here?") → no state changes; answer in the done summary.
 - An unsatisfiable request → `update_ai_request {ai_request_id, status: "failed", summary: <reason>}`.
 - The UI applies your batch immediately and offers one-click undo; the daemon owns undo. Never revert your own batch.
@@ -71,3 +85,4 @@ Rules:
 ## Out of scope
 
 - Version churn: the daemon carries reviewed state forward and unmarks only changed files. You never touch reviewed flags because the version changed.
+- An unchanged or reverted snapshot: the daemon reuses the version or carries the organization forward itself; no request reaches you.
