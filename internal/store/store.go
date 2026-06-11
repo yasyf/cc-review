@@ -122,6 +122,30 @@ CREATE TABLE IF NOT EXISTS events (
   PRIMARY KEY (review_id, seq)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(review_id, dedup_key) WHERE dedup_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS turns (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_root         TEXT NOT NULL,
+  backend           TEXT NOT NULL DEFAULT 'git',
+  session_id        TEXT NOT NULL DEFAULT '',
+  claude_pid        INTEGER NOT NULL DEFAULT 0,
+  prompt_excerpt    TEXT NOT NULL DEFAULT '',
+  transcript_path   TEXT NOT NULL DEFAULT '',
+  transcript_offset INTEGER NOT NULL DEFAULT -1,
+  tree_start        TEXT NOT NULL,
+  tree_end          TEXT NOT NULL DEFAULT '',
+  status            TEXT NOT NULL DEFAULT 'open',
+  started_at        INTEGER NOT NULL,
+  ended_at          INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_turns_repo ON turns(repo_root, id);
+CREATE INDEX IF NOT EXISTS idx_turns_repo_open ON turns(repo_root, claude_pid) WHERE status='open';
+CREATE TABLE IF NOT EXISTS turn_attributions (
+  version_id  INTEGER NOT NULL REFERENCES review_versions(id),
+  file_path   TEXT NOT NULL,
+  ranges_json TEXT NOT NULL DEFAULT '[]',
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (version_id, file_path)
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the schema.
