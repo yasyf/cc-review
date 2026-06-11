@@ -11,7 +11,7 @@ The plugin's SessionStart hook downloads the `cc-review` binary into `plugin/bin
 cc-review start [--session <id>] [--cwd <dir>] [--new] [--base <ref>]
 ```
 
-Start or resume a review of the working tree. Prints, in order: the review URL; `channel: active` or `channel: inactive` depending on whether the MCP channel is connected; `setup: {"offer":…,"reason":…}` — the first-run channel-approval offer (always printed; an offer-check error degrades to `offer: false` with the error as the reason); and, only when a new version was created, `organize: <AI request JSON>` — the daemon's eager organize request, omitted on an unchanged resume.
+Start or resume a review of the working tree. Prints, in order: the review URL; `channel: active|pending|inactive` — `active` when this window's channel is proven (its first delivered tag was acknowledged via `channel-ack`) and the channel consumer is attached, `pending` when the channel server is attached but the window is unproven, `inactive` when no channel consumer exists; `setup: {"offer":…,"reason":…}` — the first-run channel-approval offer (always printed; an offer-check error degrades to `offer: false` with the error as the reason); and `organize: <AI request JSON>` — the daemon's eager organize request, printed when a new version was created and re-offered (same id) when an unchanged resume finds the latest version still unorganized.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -144,4 +144,4 @@ cc-review setup-channels --check
 
 ## Hidden internal commands
 
-The binary also carries hidden entry points the plugin uses for itself. `daemon` runs the lazy-started background process, `session-record` handles the SessionStart hook, `guard-edit` handles the PreToolUse edit guard, and `mcp-channel` runs the MCP channel server. See [Internals](/cc-review/internals/) for how they fit together.
+The binary also carries hidden entry points the plugin uses for itself. `daemon` runs the lazy-started background process, `session-record` handles the SessionStart hook, `guard-edit` handles the PreToolUse edit guard, `mcp-channel` runs the MCP channel server, and `channel-ack` marks a window's channel proven after its first delivered tag. See [Internals](/cc-review/internals/) for how they fit together.

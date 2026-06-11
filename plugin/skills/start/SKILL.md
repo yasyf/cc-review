@@ -19,27 +19,29 @@ It prints, in order:
 
 ```
 http://127.0.0.1:<port>/s/<branch-slug>--<hash>
-channel: active|inactive
+channel: active|pending|inactive
 setup: {"offer":<bool>,"reason":"<string>"}
 organize: {"id":"<n>","source":"system","prompt":"Organize this review into chapters and rate per-file risk.","status":"pending","summary":"","unmatched":[],"changes":[],"createdAt":"<RFC3339 UTC>","updatedAt":"<RFC3339 UTC>"}
 ```
 
-The `organize:` line appears only when a new version needs organizing; an unchanged resume — or a new version identical to the last organized one, whose organization the daemon carries forward itself — omits it. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+The `organize:` line appears when a new version needs organizing, and again when an unchanged resume finds the latest version still unorganized — the daemon re-offers the still-open request with the same `id`. A new version identical to the last organized one, whose organization the daemon carries forward itself, omits it. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
 
 ## 2. When `organize:` is present, dispatch the organize agent
 
-Use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_background: true`, and the `organize:` line's JSON, verbatim, as the prompt. Don't wait for it — show the user the URL and move on. The agent builds the chapters and closes the request itself. Remember the request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4).
+Use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_background: true`, and the `organize:` line's JSON, verbatim, as the prompt. Don't wait for it — show the user the URL and move on. The agent builds the chapters and closes the request itself. Remember the request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4). If the `organize:` line's `id` is one you already dispatched in this conversation — the daemon re-offers a still-open request on resume — do not dispatch again.
 
 ## 3. Wire up event delivery — then keep working
 
-- **`channel: active`** — this session's MCP channel is streaming the review. Do **not** arm a Monitor (you would receive every event twice). Comments arrive as `<channel source="cc-review">` tags carrying the same JSON event payloads.
-- **`channel: inactive`** — launch a **Monitor** (persistent) wrapping:
+- **`channel: active`** — this window's channel is proven and streaming the review. Do **not** arm a Monitor (you would receive every event twice). Comments arrive as `<channel source="cc-review">` tags carrying the same JSON event payloads.
+- **`channel: pending`** or **`channel: inactive`** — launch a **Monitor** (persistent) wrapping:
 
   ```bash
   cc-review watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
   ```
 
-  Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification.
+  Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification. `pending` means the channel server is wired but unproven — Claude Code may be silently dropping its notifications — so the Monitor is the route.
+
+If a `<channel source="cc-review">` tag arrives while the Monitor is armed, channels are live: run `cc-review channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop the Monitor with **TaskStop**, and rely on tags from then on — dedupe the brief overlap by event id. Delivery is at-least-once: a Monitor re-armed in a later session may replay events you already handled as tags; treat already-handled events as informational (replies dedupe server-side, organize dispatch dedupes by request id).
 
 Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
 

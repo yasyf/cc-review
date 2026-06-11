@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-11
+
+### Changed
+- `start`'s channel line is three-state: `channel: pending` until this window's
+  channel is proven — the first delivered `<channel>` tag acknowledged via the
+  hidden `cc-review channel-ack` — `active` only afterward, and `inactive` with
+  no channel consumer. Fixes the false `channel: active` when Claude Code
+  rejects channels, which skipped the Monitor and left no event route at all.
+
+### Fixed
+- An unchanged resume no longer strands an open organize request from a dead
+  session: the still-open request is re-offered in `start`'s `organize:` line
+  (same id), or closed when the latest version is already organized — clearing
+  the stuck QUEUED chip.
+
 ## [0.7.1] - 2026-06-11
 
 ### Fixed
