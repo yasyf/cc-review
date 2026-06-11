@@ -40,17 +40,18 @@ export function InlineComposer({
       ...(draft.range.side ? { startSide: draft.range.side } : {}),
       ...(draft.range.endSide ? { endSide: draft.range.endSide } : {}),
     };
-    createComment.mutate(
-      {
-        versionId,
-        filePath: draft.filePath,
-        side,
-        range,
-        lineContent: lineContentAt(fileDiff, side, draft.range.end),
-        body: text,
-      },
-      { onSuccess: onClose },
-    );
+    createComment.mutate({
+      versionId,
+      filePath: draft.filePath,
+      side,
+      range,
+      lineContent: lineContentAt(fileDiff, side, draft.range.end),
+      body: text,
+    });
+    // Close eagerly, like the reply box: the comment.created SSE event shifts
+    // this portal's annotation index and remounts it, which drops any
+    // mutate-level onSuccess before it can fire.
+    onClose();
   }
 
   return (
@@ -78,7 +79,7 @@ export function InlineComposer({
         <button type="button" onClick={onClose}>
           Cancel
         </button>
-        <button type="button" className="primary" disabled={createComment.isPending || !body.trim()} onClick={submit}>
+        <button type="button" className="primary" disabled={!body.trim()} onClick={submit}>
           Add comment
         </button>
       </div>
