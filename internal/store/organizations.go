@@ -74,6 +74,34 @@ func (s *Store) UpsertOrganization(ctx context.Context, versionID int64, org Org
 	return nil
 }
 
+// LatestOrganization returns the review's newest organization and the version
+// that owns it (the highest version_number with an organization row); ok is
+// false when no version of the review has been organized.
+func (s *Store) LatestOrganization(ctx context.Context, reviewID string) (Organization, Version, bool, error) {
+	var (
+		chaptersJSON string
+		v            Version
+		created      int64
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT o.chapters_json, v.id, v.review_id, v.version_number, v.branch, v.base_ref, v.patch_path, v.files_json, v.created_at
+		 FROM organizations o JOIN review_versions v ON v.id = o.version_id
+		 WHERE v.review_id=? ORDER BY v.version_number DESC LIMIT 1`, reviewID).
+		Scan(&chaptersJSON, &v.ID, &v.ReviewID, &v.VersionNumber, &v.Branch, &v.BaseRef, &v.PatchPath, &v.FilesJSON, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Organization{}, Version{}, false, nil
+	}
+	if err != nil {
+		return Organization{}, Version{}, false, err
+	}
+	v.CreatedAt = fromUnix(created)
+	var org Organization
+	if err := json.Unmarshal([]byte(chaptersJSON), &org); err != nil {
+		return Organization{}, Version{}, false, fmt.Errorf("version %d: decode organization: %w", v.ID, err)
+	}
+	return org, v, true, nil
+}
+
 // GetOrganization returns a version's organization; ok is false when none has
 // been submitted yet.
 func (s *Store) GetOrganization(ctx context.Context, versionID int64) (Organization, bool, error) {

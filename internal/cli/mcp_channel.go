@@ -318,7 +318,7 @@ func submitOrganizationToolSchema() map[string]any {
 func getReviewFilesToolSchema() map[string]any {
 	return map[string]any{
 		"name":        "get_review_files",
-		"description": "List the open cc-review's current version number and files with status and review state — the server truth bulk operations must act on.",
+		"description": "List the open cc-review's current version number and files with status and review state — the server truth bulk operations must act on. Includes the latest organization (overview + chapters) with basis_version, per-file delta (changed/moved/removed; absent = unchanged), and new_paths.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	}
 }

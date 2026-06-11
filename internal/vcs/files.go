@@ -37,9 +37,9 @@ func parseFiles(patch string) ([]FileChange, error) {
 }
 
 // fingerprint hashes a deterministic serialization of one parsed file's diff:
-// status, old/new names, and every fragment header + line. It is derived purely
-// from the snapshot patch, so it is identical for the git and jj backends and
-// stable across no-op recaptures.
+// status, old/new names, old/new modes, and every fragment header + line. It is
+// derived purely from the snapshot patch, so it is identical for the git and jj
+// backends and stable across no-op recaptures.
 func fingerprint(f *gitdiff.File, status string) string {
 	h := sha256.New()
 	field := func(s string) {
@@ -49,6 +49,7 @@ func fingerprint(f *gitdiff.File, status string) string {
 	field(status)
 	field(f.OldName)
 	field(f.NewName)
+	fmt.Fprintf(h, "%o\x00%o\x00", f.OldMode, f.NewMode)
 	for _, frag := range f.TextFragments {
 		fmt.Fprintf(h, "@%d,%d,%d,%d\x00", frag.OldPosition, frag.OldLines, frag.NewPosition, frag.NewLines)
 		for _, line := range frag.Lines {

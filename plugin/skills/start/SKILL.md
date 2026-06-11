@@ -24,7 +24,7 @@ setup: {"offer":<bool>,"reason":"<string>"}
 organize: {"id":"<n>","source":"system","prompt":"Organize this review into chapters and rate per-file risk.","status":"pending","summary":"","unmatched":[],"changes":[],"createdAt":"<RFC3339 UTC>","updatedAt":"<RFC3339 UTC>"}
 ```
 
-The `organize:` line appears only when a new version was created; an unchanged resume omits it — nothing to re-organize. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+The `organize:` line appears only when a new version needs organizing; an unchanged resume — or a new version identical to the last organized one, whose organization the daemon carries forward itself — omits it. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
 
 ## 2. When `organize:` is present, dispatch the organize agent
 
@@ -59,7 +59,7 @@ Each event (Monitor line or channel tag) is a JSON object with a `type`. The one
 - **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything.
 - **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking for review work. Dispatch exactly as in step 2 — the **Agent** tool, `subagent_type: "cc-review:organize"`, `run_in_background: true`, the event's `request` JSON as the prompt — **unless** `request.id` equals the id you already dispatched from start output (the same request redelivered): ignore it. Dedupe by exact id only.
 - **`submit`** — the human pressed Submit. Go to step 5.
-- Other types (`comment.resolved`, `status.changed`, `notification`, `file.states`, `ai.request.updated`, `version.created`, `channel.changed`) are informational — `file.states` and `ai.request.updated` carry the human's checkboxes, an undo, or the daemon unmarking changed files; events from your own tool calls are filtered out and never echo back. `organization.updated` never reaches you — it originates from the organize agent's `submit_organization` and only the browser renders it.
+- Other types (`comment.resolved`, `status.changed`, `notification`, `file.states`, `ai.request.updated`, `version.created`, `channel.changed`) are informational — `file.states` and `ai.request.updated` carry the human's checkboxes, an undo, the daemon unmarking changed files, or the daemon closing an organize request it carried forward (`status: "done"`); events from your own tool calls are filtered out and never echo back. `organization.updated` never reaches you — it originates from the organize agent's `submit_organization` (or the daemon carrying the organization forward onto an identical new version) and only the browser renders it.
 
 If a comment is ambiguous or you see options worth surfacing, post back — it renders under that comment in realtime:
 
@@ -100,7 +100,7 @@ cc-review reply --answer-to <replyId> --answer "<the human's answer>"
 
 ## 6. Later rounds
 
-After you make changes, the user can run `/cc-review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed.
+After you make changes, the user can run `/cc-review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed. It also carries the chapter organization forward when the new diff is identical to the last organized one.
 
 ## Reference
 

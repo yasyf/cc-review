@@ -98,6 +98,6 @@ type Response struct {
 	ChannelActive bool            `json:"channel_active,omitempty"`
 	Allow         bool            `json:"allow,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
-	ReviewFiles   json.RawMessage `json:"review_files,omitempty"` // review-files: {version_number, files: [...]}
+	ReviewFiles   json.RawMessage `json:"review_files,omitempty"` // review-files: {version_number, files: [...], organization?: {basis_version, overview, chapters, new_paths}}
 	AIRequest     json.RawMessage `json:"ai_request,omitempty"`   // start: the eager system organize request (absent on an unchanged resume)
 }
