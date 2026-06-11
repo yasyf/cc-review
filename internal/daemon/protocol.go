@@ -69,6 +69,7 @@ type Request struct {
 	Cwd       string       `json:"cwd,omitempty"`
 	Consumer  string       `json:"consumer,omitempty"` // stream consumer name on OpResolve (watch | channel)
 	New       bool         `json:"new,omitempty"`
+	Base      string       `json:"base,omitempty"` // start: explicit diff base ref for a new review (skips the trunk fallback)
 	Replies   []ReplyInput `json:"replies,omitempty"`
 
 	Files         []FileStateInput    `json:"files,omitempty"`          // file-states

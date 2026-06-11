@@ -14,6 +14,7 @@ type Review struct {
 	Slug      string // URL name: sanitized creation-time branch + first 8 hex of ID
 	SessionID string // empty when NULL
 	RepoRoot  string
+	BaseRef   string // pinned diff base, resolved at creation; every version captures against it
 	ClaudePID int    // 0 when detached (no live window owns it)
 	Status    string // open | submitted | closed
 	CreatedAt time.Time

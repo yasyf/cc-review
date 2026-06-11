@@ -19,7 +19,7 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 	}
 	defer st.Close()
 
-	r, _ := st.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := st.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 	v, _ := st.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 	cid, _ := st.CreateComment(ctx, store.Comment{
 		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm",

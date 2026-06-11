@@ -53,7 +53,7 @@ func newTestServer(t *testing.T) (*store.Store, *stubBackend, *httptest.Server) 
 
 func TestEventsRegistersNamedConsumer(t *testing.T) {
 	st, backend, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestEventsRegistersNamedConsumer(t *testing.T) {
 
 func TestEventsSlugRefAttachesUnderCanonicalID(t *testing.T) {
 	st, backend, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "feat/x")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "feat/x", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestEventsSlugRefAttachesUnderCanonicalID(t *testing.T) {
 func TestEventsChannelChangedStampsLatestVersion(t *testing.T) {
 	st, backend, srv := newTestServer(t)
 	setup := context.Background()
-	review, err := st.CreateReview(setup, "s1", 100, "/repo", "main")
+	review, err := st.CreateReview(setup, "s1", 100, "/repo", "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestEventsUnknownReviewIs404(t *testing.T) {
 
 func TestEventsBadClaudePIDIs400(t *testing.T) {
 	st, _, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestEventsBadClaudePIDIs400(t *testing.T) {
 
 func TestEventsBrowserConsumerNotRegistered(t *testing.T) {
 	st, backend, srv := newTestServer(t)
-	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main")
+	review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}

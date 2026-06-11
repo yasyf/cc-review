@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -24,10 +25,14 @@ func testServer(t *testing.T) (*Server, string) {
 	}
 	t.Cleanup(func() { st.Close() })
 
+	// One commit on main; tests write their own pending files, since
+	// handleStart fails fast on a repo with nothing to review.
 	repo := t.TempDir()
-	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
-	}
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	writeFile(t, repo, "base.go", "package p\n")
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "init")
+
 	s := &Server{
 		store:    st,
 		bus:      NewBus(),
@@ -37,6 +42,18 @@ func testServer(t *testing.T) (*Server, string) {
 	}
 	s.resolver = session.Resolver{Store: st, Held: s.held}
 	return s, repo
+}
+
+func gitRun(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 func aliveSet(pids ...int) func(int) bool {
@@ -62,7 +79,7 @@ func repoRoot(t *testing.T, cwd string) string {
 func seedComment(t *testing.T, s *Server, root string) (reviewID string, commentID int64) {
 	t.Helper()
 	ctx := context.Background()
-	r, err := s.store.CreateReview(ctx, "s1", 0, root, "main")
+	r, err := s.store.CreateReview(ctx, "s1", 0, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +241,7 @@ func TestStartTwoLiveWindowsGetSeparateReviews(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	s.alive = aliveSet(100, 200)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	a := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
 	b := s.handleStart(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: repo})
@@ -265,6 +283,7 @@ func TestSessionRecordRotationFollowsWindow(t *testing.T) {
 	s, repo := testServer(t)
 	s.alive = aliveSet(100)
 	root := repoRoot(t, repo)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
 	if !started.OK {
@@ -292,7 +311,7 @@ func TestSessionRecordAdoptsDeadWindowsReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main")
+	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +335,7 @@ func TestSessionRecordNeverStealsLiveWindow(t *testing.T) {
 	s, repo := testServer(t)
 	s.alive = aliveSet(100)
 	root := repoRoot(t, repo)
-	held, err := s.store.CreateReview(ctx, "sA", 100, root, "main")
+	held, err := s.store.CreateReview(ctx, "sA", 100, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,8 +357,8 @@ func TestSessionRecordSkipsWhenSessionAlreadyBound(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	mine, _ := s.store.CreateReview(ctx, "s2", 200, root, "main")
-	other, _ := s.store.CreateReview(ctx, "s1", 100, root, "main")
+	mine, _ := s.store.CreateReview(ctx, "s2", 200, root, "main", "base0")
+	other, _ := s.store.CreateReview(ctx, "s1", 100, root, "main", "base0")
 
 	resp := s.handleSessionRecord(ctx, Request{Session: "s2", ClaudePID: 200, Cwd: repo})
 	if !resp.OK {
@@ -370,12 +389,20 @@ func TestStartAdoptRaceLoserCreatesOwn(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main")
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+	head := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
+	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main", head)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A competing window wins the adoption between the Held check and the CAS.
+	// A competing window wins the adoption between the loser's peek and the
+	// write phase; by the write phase the winner's window is alive.
+	stole := false
 	s.resolver.Held = func(ctx context.Context, r store.Review) bool {
+		if stole {
+			return true
+		}
+		stole = true
 		if ok, err := s.store.RebindReview(ctx, r.ID, r.ClaudePID, "winner", 999); err != nil || !ok {
 			t.Fatalf("competing rebind: ok=%v err=%v", ok, err)
 		}
@@ -398,10 +425,219 @@ func TestStartAdoptRaceLoserCreatesOwn(t *testing.T) {
 	}
 }
 
+func TestHandleStartNoChanges(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+
+	// A clean tree sitting on trunk has nothing to review, even via the
+	// fallback; nothing may be created.
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	writeFile(t, repo, "a.go", "package a\n")
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "init")
+
+	resp := s.handleStart(ctx, Request{Session: "sN", ClaudePID: 100, Cwd: repo})
+	if resp.OK {
+		t.Fatal("start on a clean trunk must fail")
+	}
+	if !strings.Contains(resp.Error, "no changes to review") {
+		t.Fatalf("error = %q, want it to name no changes to review", resp.Error)
+	}
+	if _, ok, err := s.store.FindReviewBySessionRepo(ctx, "sN", repoRoot(t, repo)); err != nil || ok {
+		t.Fatalf("a failed start created a review (ok=%v err=%v)", ok, err)
+	}
+}
+
+func TestHandleStartTrunkFallbackAndExplicitBase(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+	s.alive = aliveSet(100, 200)
+
+	// Commit A on main, commit B on feature, clean tree.
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	writeFile(t, repo, "trunk.go", "package a\n")
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "A")
+	shaA := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
+	gitRun(t, repo, "checkout", "-qb", "feature")
+	writeFile(t, repo, "branch.go", "package a\nvar B int\n")
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "B")
+
+	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo, Base: "main"})
+	if !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+	review, err := s.store.GetReview(ctx, started.ReviewID)
+	if err != nil || review.BaseRef != shaA {
+		t.Fatalf("pinned base = %q (err %v), want %q", review.BaseRef, err, shaA)
+	}
+	v, ok, err := s.store.LatestVersion(ctx, started.ReviewID)
+	if err != nil || !ok || v.BaseRef != shaA {
+		t.Fatalf("version base = %q (ok=%v err=%v), want %q", v.BaseRef, ok, err, shaA)
+	}
+
+	// --base against an existing review is rejected; --new re-pins.
+	if resp := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo, Base: "main"}); resp.OK || !strings.Contains(resp.Error, "--new") {
+		t.Fatalf("ok=%v err=%q, want a rejection pointing at --new", resp.OK, resp.Error)
+	}
+
+	// The trunk fallback pins the same fork point without --base.
+	fallback := s.handleStart(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: repo, New: true})
+	if !fallback.OK {
+		t.Fatalf("fallback start: %s", fallback.Error)
+	}
+	review, err = s.store.GetReview(ctx, fallback.ReviewID)
+	if err != nil || review.BaseRef != shaA {
+		t.Fatalf("fallback pinned base = %q (err %v), want trunk fork point %q", review.BaseRef, err, shaA)
+	}
+}
+
+func TestHandleStartPinnedBaseAndDedupAcrossCommits(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	s.alive = aliveSet(100)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+
+	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+	review, err := s.store.GetReview(ctx, started.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Committing the pending work moves HEAD but not the pinned base, so the
+	// recaptured patch is byte-identical and the version is reused.
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "pending landed")
+	resumed := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !resumed.OK || !resumed.Resumed {
+		t.Fatalf("resume: ok=%v resumed=%v err=%q", resumed.OK, resumed.Resumed, resumed.Error)
+	}
+	if resumed.Version != started.Version {
+		t.Fatalf("identical snapshot made version %d, want reuse of %d", resumed.Version, started.Version)
+	}
+	if got := countEvents(t, s, started.ReviewID, store.EventVersionCreated); got != 1 {
+		t.Fatalf("version.created events = %d, want 1", got)
+	}
+	if got := countEvents(t, s, started.ReviewID, store.EventAIRequestCreated); got != 1 {
+		t.Fatalf("ai.request.created events = %d, want 1 (dedup must not re-organize)", got)
+	}
+
+	// New work lands a new version that still diffs from the pinned base, so
+	// the committed file stays in the review.
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\nvar More int\n")
+	again := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !again.OK || again.Version != started.Version+1 {
+		t.Fatalf("second version: ok=%v version=%d err=%q, want %d", again.OK, again.Version, again.Error, started.Version+1)
+	}
+	v, ok, err := s.store.LatestVersion(ctx, started.ReviewID)
+	if err != nil || !ok {
+		t.Fatalf("latest version: ok=%v err=%v", ok, err)
+	}
+	if v.BaseRef != review.BaseRef {
+		t.Fatalf("v2 base = %q, want pinned %q", v.BaseRef, review.BaseRef)
+	}
+	patch, err := os.ReadFile(v.PatchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"var Pending int", "var More int"} {
+		if !strings.Contains(string(patch), want) {
+			t.Fatalf("v2 patch missing %q:\n%s", want, patch)
+		}
+	}
+}
+
+func TestHandleStartDedupReopensSubmittedReview(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	s.alive = aliveSet(100)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+
+	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+	if err := s.store.SetReviewStatus(ctx, started.ReviewID, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !resumed.OK || !resumed.Resumed || resumed.Version != started.Version {
+		t.Fatalf("resume: ok=%v resumed=%v version=%d err=%q, want dedup of version %d", resumed.OK, resumed.Resumed, resumed.Version, resumed.Error, started.Version)
+	}
+	if status, _ := s.store.ReviewStatus(ctx, started.ReviewID); status != "open" {
+		t.Fatalf("status = %q, want open: a successful start must reopen the round", status)
+	}
+	if guard := s.handleGuardEdit(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo}); guard.Allow {
+		t.Fatal("edit guard must block after a dedup resume of a submitted review")
+	}
+}
+
+func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	// Orphan pinned to the current HEAD, then HEAD advances past it.
+	headA := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
+	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main", headA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "landed.go", "package p\nvar Landed int\n")
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "landed")
+	headB := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+
+	// The orphan is stolen between the loser's peek and the write phase.
+	stole := false
+	s.resolver.Held = func(ctx context.Context, r store.Review) bool {
+		if stole {
+			return true
+		}
+		stole = true
+		if ok, err := s.store.RebindReview(ctx, r.ID, r.ClaudePID, "winner", 999); err != nil || !ok {
+			t.Fatalf("competing rebind: ok=%v err=%v", ok, err)
+		}
+		return false
+	}
+
+	resp := s.handleStart(ctx, Request{Session: "loser", ClaudePID: 300, Cwd: repo})
+	if !resp.OK || resp.Resumed || resp.ReviewID == orphan.ID {
+		t.Fatalf("loser must create its own: ok=%v resumed=%v id=%q err=%q", resp.OK, resp.Resumed, resp.ReviewID, resp.Error)
+	}
+	review, err := s.store.GetReview(ctx, resp.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.BaseRef != headB {
+		t.Fatalf("created review pinned to %q, want create-semantics HEAD %q (not the stolen orphan's %q)", review.BaseRef, headB, headA)
+	}
+	v, ok, err := s.store.LatestVersion(ctx, resp.ReviewID)
+	if err != nil || !ok {
+		t.Fatalf("latest version: ok=%v err=%v", ok, err)
+	}
+	patch, err := os.ReadFile(v.PatchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(patch), "pending.go") || strings.Contains(string(patch), "landed.go") {
+		t.Fatalf("patch must be the session diff (pending.go only):\n%s", patch)
+	}
+}
+
 func TestGuardEditPerWindow(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	s.alive = aliveSet(100, 200)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
 	if !started.OK {
@@ -420,8 +656,8 @@ func TestResolveStaleSessionFindsOwnWindowReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	a, _ := s.store.CreateReview(ctx, "sA", 100, root, "main")
-	if _, err := s.store.CreateReview(ctx, "sB", 200, root, "main"); err != nil {
+	a, _ := s.store.CreateReview(ctx, "sA", 100, root, "main", "base0")
+	if _, err := s.store.CreateReview(ctx, "sB", 200, root, "main", "base0"); err != nil {
 		t.Fatal(err)
 	}
 

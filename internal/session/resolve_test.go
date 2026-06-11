@@ -25,7 +25,7 @@ func newResolver(t *testing.T, alive map[int]bool) Resolver {
 
 func seedReview(t *testing.T, ctx context.Context, st *store.Store, sessionID string, pid int, status string) store.Review {
 	t.Helper()
-	r, err := st.CreateReview(ctx, sessionID, pid, repo, "main")
+	r, err := st.CreateReview(ctx, sessionID, pid, repo, "main", "base0")
 	if err != nil {
 		t.Fatalf("seed review: %v", err)
 	}
@@ -65,12 +65,15 @@ func TestStart(t *testing.T) {
 				if got.SessionID != "s1" || got.ClaudePID != 100 || got.Status != "open" {
 					t.Fatalf("created session=%q pid=%d status=%q, want s1/100/open", got.SessionID, got.ClaudePID, got.Status)
 				}
+				if r, err := st.GetReview(ctx, got.ID); err != nil || r.BaseRef != "base0" {
+					t.Fatalf("persisted base = %q (err %v), want base0", r.BaseRef, err)
+				}
 			},
 		},
 		{
 			name: "same window resumes its review",
 			seed: func(t *testing.T, ctx context.Context, rs Resolver) store.Review {
-				r, resumed, err := rs.Start(ctx, Window{SessionID: "s1", ClaudePID: 100}, repo, "main", false)
+				r, resumed, err := rs.Start(ctx, Window{SessionID: "s1", ClaudePID: 100}, repo, "main", "base0", false)
 				if err != nil || resumed {
 					t.Fatalf("seed start: resumed=%v err=%v", resumed, err)
 				}
@@ -197,7 +200,7 @@ func TestStart(t *testing.T) {
 		{
 			name: "fresh closes and detaches own review then creates",
 			seed: func(t *testing.T, ctx context.Context, rs Resolver) store.Review {
-				r, _, err := rs.Start(ctx, Window{SessionID: "s1", ClaudePID: 100}, repo, "main", false)
+				r, _, err := rs.Start(ctx, Window{SessionID: "s1", ClaudePID: 100}, repo, "main", "base0", false)
 				if err != nil {
 					t.Fatalf("seed start: %v", err)
 				}
@@ -245,7 +248,7 @@ func TestStart(t *testing.T) {
 				seeded = tc.seed(t, ctx, rs)
 			}
 
-			got, resumed, err := rs.Start(ctx, tc.w, repo, "main", tc.fresh)
+			got, resumed, err := rs.Start(ctx, tc.w, repo, "main", "base0", tc.fresh)
 			if err != nil {
 				t.Fatalf("start: %v", err)
 			}
@@ -296,6 +299,46 @@ func TestFind(t *testing.T) {
 			}
 			if sess, pid := bindingOf(t, ctx, rs.Store, seeded.ID); sess != tc.seedSess || pid != tc.seedPID {
 				t.Fatalf("find wrote: binding now %s/%d", sess, pid)
+			}
+		})
+	}
+}
+
+func TestPeek(t *testing.T) {
+	cases := []struct {
+		name       string
+		alive      map[int]bool
+		seedSess   string
+		seedPID    int
+		seedStatus string
+		w          Window
+		wantOK     bool
+	}{
+		{"exact session binding", nil, "s1", 100, "open", Window{SessionID: "s1", ClaudePID: 100}, true},
+		{"rotated session id falls through to pid", nil, "sA", 100, "open", Window{SessionID: "sB", ClaudePID: 100}, true},
+		{"dead window's open review is the adoption candidate", map[int]bool{100: false}, "sA", 100, "open", Window{SessionID: "sB", ClaudePID: 200}, true},
+		{"live foreign window's review is not peeked", map[int]bool{100: true}, "sA", 100, "open", Window{SessionID: "sB", ClaudePID: 200}, false},
+		{"dead window's submitted review is not adopted", nil, "sA", 100, "submitted", Window{SessionID: "sB", ClaudePID: 200}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rs := newResolver(t, tc.alive)
+			seeded := seedReview(t, ctx, rs.Store, tc.seedSess, tc.seedPID, tc.seedStatus)
+
+			got, ok, err := rs.Peek(ctx, tc.w, repo)
+			if err != nil {
+				t.Fatalf("peek: %v", err)
+			}
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && got.ID != seeded.ID {
+				t.Fatalf("peeked id %q, want %q", got.ID, seeded.ID)
+			}
+			if sess, pid := bindingOf(t, ctx, rs.Store, seeded.ID); sess != tc.seedSess || pid != tc.seedPID {
+				t.Fatalf("peek wrote: binding now %s/%d", sess, pid)
 			}
 		})
 	}
@@ -385,7 +428,7 @@ func TestAdoptRace(t *testing.T) {
 		orphan := seedReview(t, ctx, rs.Store, "sA", 100, "open")
 		rs.Held = steal(t, rs.Store)
 
-		got, resumed, err := rs.Start(ctx, Window{SessionID: "loser", ClaudePID: 300}, repo, "main", false)
+		got, resumed, err := rs.Start(ctx, Window{SessionID: "loser", ClaudePID: 300}, repo, "main", "base0", false)
 		if err != nil {
 			t.Fatalf("start: %v", err)
 		}
