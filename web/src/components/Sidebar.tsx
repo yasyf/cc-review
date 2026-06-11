@@ -5,6 +5,7 @@ import { useViewPrefs } from '../lib/view-prefs';
 import { ChapterPanel } from './ChapterPanel';
 import { CommentsPanel } from './CommentsPanel';
 import { FileTreePanel } from './FileTreePanel';
+import { TodoPanel } from './TodoPanel';
 
 function TreeIcon() {
   return (
@@ -81,7 +82,15 @@ export function Sidebar({
       </div>
       {tab === 'files' ? (
         organization ? (
-          <ChapterPanel session={session} organization={organization} onSelectFile={onSelectFile} />
+          viewMode === 'todo' ? (
+            <TodoPanel session={session} organization={organization} onSelectFile={onSelectFile} />
+          ) : (
+            <ChapterPanel
+              session={session}
+              organization={organization}
+              onSelectFile={onSelectFile}
+            />
+          )
         ) : (
           <FileTreePanel
             files={session.files}

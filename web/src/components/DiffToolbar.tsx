@@ -5,7 +5,7 @@ import type { ViewMode } from '../lib/view-prefs';
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'default', label: 'Default' },
   { id: 'story', label: 'Story' },
-  { id: 'risk', label: 'Risk' },
+  { id: 'todo', label: 'Todo' },
 ];
 
 export function DiffToolbar({ session }: { session: SessionResponse }) {

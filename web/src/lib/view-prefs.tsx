@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
-export type ViewMode = 'default' | 'story' | 'risk';
+export type ViewMode = 'default' | 'story' | 'todo';
 
 interface StoredPrefs {
   viewMode: ViewMode;
@@ -10,9 +10,15 @@ interface StoredPrefs {
 
 const storageKey = (reviewId: string) => `cc-review:view:${reviewId}`;
 
+function sanitizeViewMode(stored: unknown): ViewMode {
+  return stored === 'story' || stored === 'todo' ? stored : 'default';
+}
+
 function readPrefs(reviewId: string): StoredPrefs {
   const raw = localStorage.getItem(storageKey(reviewId));
-  return raw ? (JSON.parse(raw) as StoredPrefs) : { viewMode: 'default', hideReviewed: false };
+  if (!raw) return { viewMode: 'default', hideReviewed: false };
+  const stored = JSON.parse(raw) as { viewMode?: unknown; hideReviewed?: unknown };
+  return { viewMode: sanitizeViewMode(stored.viewMode), hideReviewed: stored.hideReviewed === true };
 }
 
 interface ViewPrefsValue extends StoredPrefs {
