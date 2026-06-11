@@ -6,6 +6,8 @@
 package paths
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,6 +71,16 @@ func ConsumerCursorPath(reviewID, consumer string) string {
 	return filepath.Join(ReviewDir(reviewID), consumer+".cursor")
 }
 
+// TurnsDir is the parent of all per-repo turn-snapshot scratch dirs.
+func TurnsDir() string { return filepath.Join(StateDir(), "turns") }
+
+// RepoTurnsDir is the turn-snapshot scratch dir for a single repo, keyed by a
+// hash of its root so absolute paths never leak into directory names.
+func RepoTurnsDir(repoRoot string) string {
+	sum := sha256.Sum256([]byte(repoRoot))
+	return filepath.Join(TurnsDir(), hex.EncodeToString(sum[:8]))
+}
+
 // EnsureStateDir creates ~/.cc-review (0700) if missing.
 func EnsureStateDir() error {
 	return os.MkdirAll(StateDir(), 0o700)
@@ -82,4 +94,14 @@ func EnsureLockDir() error {
 // EnsureReviewDir creates a review's artifact dir (0700) if missing.
 func EnsureReviewDir(reviewID string) error {
 	return os.MkdirAll(ReviewDir(reviewID), 0o700)
+}
+
+// EnsureRepoTurnsDir creates a repo's turn-snapshot scratch dir (0700) if
+// missing and returns it.
+func EnsureRepoTurnsDir(repoRoot string) (string, error) {
+	dir := RepoTurnsDir(repoRoot)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create turns dir: %w", err)
+	}
+	return dir, nil
 }
