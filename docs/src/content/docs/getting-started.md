@@ -15,7 +15,7 @@ Inside Claude Code, add the marketplace and install the plugin:
 
 ```
 /plugin marketplace add yasyf/cc-review
-/plugin install review@cc-review
+/plugin install cc-review@cc-review
 ```
 
 The plugin is self-contained. On your next session start, a SessionStart hook downloads the prebuilt `cc-review` binary from the GitHub release matching the plugin version. There is no Go toolchain or build step on your machine. When the plugin updates, the hook replaces the binary so the two stay in lockstep.
@@ -27,7 +27,7 @@ Have Claude make some changes. Ask it to fix a bug or add a small feature, and s
 Start the review:
 
 ```
-/review:start
+/cc-review:start
 ```
 
 Claude prints a URL of the form `http://127.0.0.1:<port>/s/<slug>` and tells you it is watching for comments. Open the URL in your browser. You get a familiar PR layout with a file tree on the left, syntax-highlighted diffs of the uncommitted working tree, and a header with the version, file count, review progress, and a Submit button.
@@ -42,7 +42,7 @@ While the review is open, Claude cannot edit files. A PreToolUse hook denies eve
 
 When you have said everything you want to say, press **Submit**. This freezes the feedback. Claude reads the full set of threads, asks you about any questions you left unanswered in the UI, and then applies the feedback to the code.
 
-After Claude makes the changes, run `/review:start` again. It resumes the same review as a new version against the new diff, with all prior history retained.
+After Claude makes the changes, run `/cc-review:start` again. It resumes the same review as a new version against the new diff, with all prior history retained.
 
 ## Nothing to review?
 

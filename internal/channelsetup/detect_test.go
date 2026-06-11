@@ -8,7 +8,7 @@ func TestHasDevChannelFlag(t *testing.T) {
 		argv []string
 		want bool
 	}{
-		{name: "claude with flag", argv: []string{"claude", "--dangerously-load-development-channels", "plugin:review@cc-review"}, want: true},
+		{name: "claude with flag", argv: []string{"claude", "--dangerously-load-development-channels", "plugin:cc-review@cc-review"}, want: true},
 		{name: "flag absent", argv: []string{"claude", "--channels-approved-only"}, want: false},
 		{name: "shell", argv: []string{"/bin/fish"}, want: false},
 		{name: "empty argv", argv: nil, want: false},

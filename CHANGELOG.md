@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Plugin renamed from `review` to `cc-review`: the skill is now `/cc-review:start`,
+  the channel id is `plugin:cc-review@cc-review`, and the MCP tool prefix is
+  `mcp__plugin_cc-review_cc-review__*`. No more collision with the builtin
+  `/review` skill.
+- `cc-review start` eagerly prints `setup:` and `organize:` lines, so the skill
+  no longer spends a second turn on `setup-channels --check`.
+- Organize work moved out of the `/review:organize` skill into a
+  `cc-review:organize` plugin agent dispatched in the background, keeping the
+  main session free of chapter-building context.
+
+Migration: `/plugin uninstall review@cc-review`, then
+`/plugin install cc-review@cc-review`, relaunch with
+`plugin:cc-review@cc-review`, and `rm -rf ~/.cc-review` — the stale
+managed-settings entry and marker would otherwise suppress the setup re-offer.
+
 ## [0.2.0] - 2026-06-10
 
 ### Added

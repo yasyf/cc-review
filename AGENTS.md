@@ -20,7 +20,7 @@ cc-review/
 ├── web/                # Frontend source: Vite + React + @pierre/diffs (TanStack Router/Query)
 ├── plugin/             # The self-contained plugin payload — the only directory that installs
 │   ├── .claude-plugin/ #   plugin.json: manifest with mcpServers (channel server) + channels
-│   ├── skills/start/   #   the /review:start skill (thin CLI wrapper) + reference docs
+│   ├── skills/start/   #   the /cc-review:start skill (thin CLI wrapper) + reference docs
 │   ├── hooks/          #   SessionStart, PreToolUse edit-guard
 │   ├── scripts/        #   install-binary.sh (downloads release asset), mcp-channel.sh
 │   └── bin/            #   cc-review binary (downloaded or built; gitignored)

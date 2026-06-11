@@ -145,7 +145,7 @@ export function AiBar({ session }: { session: SessionResponse }) {
       </div>
       {!connected ? (
         <div className="ai-hint">
-          Claude is not connected — run /review:start in the Claude session to enable AI actions.
+          Claude is not connected — run /cc-review:start in the Claude session to enable AI actions.
         </div>
       ) : null}
     </footer>

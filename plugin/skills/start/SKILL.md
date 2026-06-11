@@ -1,9 +1,9 @@
 ---
 name: start
-description: Start or resume a cc-review review of the code Claude just wrote. Opens a PR-like web UI at a localhost URL, streams the human's inline comments back into this session in realtime so Claude can ask clarifying questions under each comment, and blocks edits until the human presses Submit. Use when the user asks to review changes, says "/review:start", "review this", "let me review before you change anything", or wants to give feedback on a diff before Claude proceeds.
+description: Start or resume a cc-review review of the code Claude just wrote. Opens a PR-like web UI at a localhost URL, streams the human's inline comments back into this session in realtime so Claude can ask clarifying questions under each comment, and blocks edits until the human presses Submit. Use when the user asks to review changes, says "/cc-review:start", "review this", "let me review before you change anything", or wants to give feedback on a diff before Claude proceeds.
 ---
 
-# /review:start
+# /cc-review:start
 
 You are running a code review. The human reviews your uncommitted changes in a browser; their comments stream to you here; you ask clarifying questions that render under each comment; you make **no edits** until they press **Submit**. Everything is CLI calls to `cc-review` — you are a thin wrapper around it.
 
@@ -15,9 +15,22 @@ You are running a code review. The human reviews your uncommitted changes in a b
 cc-review start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
-It prints two lines: a `http://127.0.0.1:<port>/s/<branch-slug>--<hash>` URL, then `channel: active` or `channel: inactive`. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+It prints, in order:
 
-## 2. Wire up event delivery — then keep working
+```
+http://127.0.0.1:<port>/s/<branch-slug>--<hash>
+channel: active|inactive
+setup: {"offer":<bool>,"reason":"<string>"}
+organize: {"id":"<n>","source":"system","prompt":"Organize this review into chapters and rate per-file risk.","status":"pending","summary":"","unmatched":[],"changes":[],"createdAt":"<RFC3339 UTC>","updatedAt":"<RFC3339 UTC>"}
+```
+
+The `organize:` line appears only when a new version was created; an unchanged resume omits it — nothing to re-organize. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+
+## 2. When `organize:` is present, dispatch the organize agent
+
+Use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_background: true`, and the `organize:` line's JSON, verbatim, as the prompt. Don't wait for it — show the user the URL and move on. The agent builds the chapters and closes the request itself. Remember the request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4).
+
+## 3. Wire up event delivery — then keep working
 
 - **`channel: active`** — this session's MCP channel is streaming the review. Do **not** arm a Monitor (you would receive every event twice). Comments arrive as `<channel source="cc-review">` tags carrying the same JSON event payloads.
 - **`channel: inactive`** — launch a **Monitor** (persistent) wrapping:
@@ -32,27 +45,21 @@ Either way: **do not block waiting.** Tell the user you're watching and let thei
 
 ## First run only: offer to silence the dev-channels warning
 
-Once event delivery is wired up and you're idle, run this — **don't block the review on it**:
+The `setup:` line from step 1 is the offer check. If it printed `"offer":true`, once event delivery is wired up and you're idle — **don't block the review on it** — ask the user via **AskUserQuestion**: stop the *"Loading development channels"* confirmation that appears on every launch? cc-review gets added to Claude's approved channels (one macOS admin-password prompt).
 
-```bash
-cc-review setup-channels --check
-```
-
-If it prints `{"offer":true,…}`, ask the user via **AskUserQuestion**: stop the *"Loading development channels"* confirmation that appears on every launch? cc-review gets added to Claude's approved channels (one macOS admin-password prompt).
-
-- **Yes** — run `cc-review setup-channels --apply` (a password dialog appears). Then tell them: relaunch with `--channels plugin:review@cc-review` in place of `--dangerously-load-development-channels plugin:review@cc-review` — same channel, no warning.
+- **Yes** — run `cc-review setup-channels --apply` (a password dialog appears). Then tell them: relaunch with `--channels plugin:cc-review@cc-review` in place of `--dangerously-load-development-channels plugin:cc-review@cc-review` — same channel, no warning.
 - **No** — run `cc-review setup-channels --decline`.
 
-Asked once either way. If `offer` is false or the command errors, skip silently. See `reference/channels-setup.md`.
+Asked once either way. If `offer` is false, skip silently — `reason` says why. See `reference/channels-setup.md`.
 
-## 3. React to each event — READ ONLY, make NO code changes
+## 4. React to each event — READ ONLY, make NO code changes
 
 Each event (Monitor line or channel tag) is a JSON object with a `type`. The ones you act on:
 
 - **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything.
-- **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking you to act on the review. The payload's `request` has `id`, `source`, and `prompt`. Follow `${CLAUDE_PLUGIN_ROOT}/skills/organize/SKILL.md` — it covers both kinds. The no-edits rule covers file edits (the hook blocks those); the cc-review MCP tools (`set_file_states`, `submit_organization`, `update_ai_request`, `reply`) change review state, not files, and are always allowed.
-- **`submit`** — the human pressed Submit. Go to step 4.
-- Other types (`comment.resolved`, `status.changed`, `notification`, `file.states`, `ai.request.updated`, `version.created`, `channel.changed`) are informational — `file.states` and `ai.request.updated` carry the human's checkboxes, an undo, or the daemon unmarking changed files; events from your own tool calls are filtered out and never echo back. `organization.updated` never reaches you — it originates from your own `submit_organization` and only the browser renders it.
+- **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking for review work. Dispatch exactly as in step 2 — the **Agent** tool, `subagent_type: "cc-review:organize"`, `run_in_background: true`, the event's `request` JSON as the prompt — **unless** `request.id` equals the id you already dispatched from start output (the same request redelivered): ignore it. Dedupe by exact id only.
+- **`submit`** — the human pressed Submit. Go to step 5.
+- Other types (`comment.resolved`, `status.changed`, `notification`, `file.states`, `ai.request.updated`, `version.created`, `channel.changed`) are informational — `file.states` and `ai.request.updated` carry the human's checkboxes, an undo, or the daemon unmarking changed files; events from your own tool calls are filtered out and never echo back. `organization.updated` never reaches you — it originates from the organize agent's `submit_organization` and only the browser renders it.
 
 If a comment is ambiguous or you see options worth surfacing, post back — it renders under that comment in realtime:
 
@@ -69,7 +76,7 @@ cc-review reply --comment <commentId> --kind clarification --body "Note: this al
 
 `reply` returns immediately. Then go back to waiting for the next notification. **Never edit code in this phase.** A hook blocks edits until Submit anyway.
 
-## 4. On the `submit` event — drain open questions, then proceed
+## 5. On the `submit` event — drain open questions, then proceed
 
 The submit signal is the Monitor's final line (it exits) on the Monitor path, or a channel tag whose JSON `type` is `submit` on the channel path. Now:
 
@@ -91,9 +98,9 @@ cc-review reply --answer-to <replyId> --answer "<the human's answer>"
 
 **Only after the open questions are drained do you make code changes.** Apply the feedback from `threads` (and the answers) to the code.
 
-## 5. Later rounds
+## 6. Later rounds
 
-After you make changes, the user can run `/review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed.
+After you make changes, the user can run `/cc-review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed.
 
 ## Reference
 

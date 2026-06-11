@@ -14,7 +14,7 @@ import (
 	"github.com/yasyf/cc-review/internal/version"
 )
 
-// newSetupChannelsCmd is the hidden command behind /review:start's one-time
+// newSetupChannelsCmd is the hidden command behind /cc-review:start's one-time
 // offer to silence the "Loading development channels" confirmation. --check
 // reports whether to offer (dev-channels session, not yet approved, not yet
 // asked); --apply writes the approved-channels config through an admin prompt;
@@ -97,7 +97,7 @@ func runChannelsApply(out io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(out, "cc-review is now an approved channel.")
-	fmt.Fprintln(out, "Relaunch with `--channels plugin:review@cc-review` in place of `--dangerously-load-development-channels plugin:review@cc-review` — same channel, no warning.")
+	fmt.Fprintf(out, "Relaunch with `--channels %s` in place of `--dangerously-load-development-channels %s` — same channel, no warning.\n", channelsetup.ChannelID, channelsetup.ChannelID)
 	return nil
 }
 
