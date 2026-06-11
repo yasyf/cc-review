@@ -31,6 +31,8 @@ func NewRootCmd() *cobra.Command {
 		newDaemonCmd(),
 		newSessionRecordCmd(),
 		newGuardEditCmd(),
+		newTurnStartCmd(),
+		newTurnEndCmd(),
 		newMCPChannelCmd(),
 		newSetupChannelsCmd(),
 	)

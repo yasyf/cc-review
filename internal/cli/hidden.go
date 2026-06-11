@@ -3,10 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-review/internal/daemon"
+	"github.com/yasyf/cc-review/internal/procs"
+	"github.com/yasyf/cc-review/internal/vcs"
 )
 
 // devHTTPPort is the fixed port the daemon binds under --dev so the Vite dev
@@ -54,6 +57,53 @@ func newSessionRecordCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// newTurnStartCmd is the hidden UserPromptSubmit hook handler: it opens a turn
+// with the pre-edit working-tree snapshot.
+func newTurnStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "turn-start",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runTurnHook(cmd, daemon.NewClient().TurnStart)
+			return nil
+		},
+	}
+}
+
+// newTurnEndCmd is the hidden Stop hook handler: it closes the open turn with
+// the post-edit working-tree snapshot.
+func newTurnEndCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "turn-end",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runTurnHook(cmd, daemon.NewClient().TurnEnd)
+			return nil
+		},
+	}
+}
+
+// runTurnHook drives both turn hooks: skip outside a repo, then send the turn
+// request, swallowing every failure — UserPromptSubmit stdout is injected into
+// Claude's context, so nothing may be printed.
+func runTurnHook(cmd *cobra.Command, send func(daemon.Request) error) {
+	in := readHookInput(cmd.InOrStdin())
+	if _, err := vcs.Root(cmd.Context(), in.Cwd); err != nil {
+		return
+	}
+	// Deliberate exception to hooks using EnsureCurrentIfRunning: always-on
+	// turn recording must boot the daemon.
+	if err := daemon.EnsureCurrent(15 * time.Second); err != nil {
+		return
+	}
+	_ = send(daemon.Request{
+		Session: in.SessionID, ClaudePID: procs.ClaudePID(), Cwd: in.Cwd,
+		Prompt: in.Prompt, TranscriptPath: in.TranscriptPath,
+	})
 }
 
 // newGuardEditCmd is the hidden PreToolUse(Edit|Write|NotebookEdit) hook handler.
