@@ -41,7 +41,7 @@ Claude reads that document with `cc-review feedback`, asks you each open questio
 
 ## Resume and versions
 
-After Claude applies your feedback, run `/review:start` again. It resumes the same review as a new version, with a fresh snapshot, a clean comment slate against the new diff, and all prior versions and threads retained underneath. Resume follows the Claude window. It survives `/clear` and session resume in the same window, and it doesn't key on the branch, so a mid-review checkout won't fork it.
+After Claude applies your feedback, run `/cc-review:start` again. It resumes the same review as a new version, with a fresh snapshot, a clean comment slate against the new diff, and all prior versions and threads retained underneath. Resume follows the Claude window. It survives `/clear` and session resume in the same window, and it doesn't key on the branch, so a mid-review checkout won't fork it.
 
 Reviewed state carries forward between versions. Files you already marked reviewed stay marked; the daemon unmarks only the files whose diff actually changed since the last version, so a second round means re-reading the delta, not the whole change.
 
@@ -55,4 +55,4 @@ The guard fails open. If the cc-review binary or daemon is unavailable, edits ar
 
 ## Claude's side of the protocol
 
-Everything Claude does during a review, from wiring up event delivery to the event schema and the reply commands, is specified in the `/review:start` skill that ships with the plugin. The [skill source](https://github.com/yasyf/cc-review/tree/main/plugin/skills/start) is the operator's source of truth for that protocol. For the human-facing commands, see the [CLI reference](/cc-review/cli-reference/).
+Everything Claude does during a review, from wiring up event delivery to the event schema and the reply commands, is specified in the `/cc-review:start` skill that ships with the plugin. The [skill source](https://github.com/yasyf/cc-review/tree/main/plugin/skills/start) is the operator's source of truth for that protocol. For the human-facing commands, see the [CLI reference](/cc-review/cli-reference/).

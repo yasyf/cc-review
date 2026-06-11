@@ -21,7 +21,7 @@ import (
 // `plugin:<name>@<marketplace>` form Claude uses for --channels.
 const (
 	Marketplace = "cc-review"
-	Plugin      = "review"
+	Plugin      = "cc-review"
 	ChannelID   = "plugin:" + Plugin + "@" + Marketplace
 )
 

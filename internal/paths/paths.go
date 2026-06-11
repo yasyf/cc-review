@@ -42,7 +42,7 @@ func LockDir() string { return filepath.Join(StateDir(), "locks") }
 func StartLockPath() string { return filepath.Join(LockDir(), "start.lock") }
 
 // ChannelSetupMarker records that the one-time approved-channels offer was made,
-// so /review:start asks at most once. Its presence is the gate; the JSON body
+// so /cc-review:start asks at most once. Its presence is the gate; the JSON body
 // (status done|declined) is provenance only.
 func ChannelSetupMarker() string { return filepath.Join(StateDir(), "channels-setup.json") }
 

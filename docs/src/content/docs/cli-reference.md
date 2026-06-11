@@ -8,16 +8,17 @@ The plugin's SessionStart hook downloads the `cc-review` binary into `plugin/bin
 ## start
 
 ```
-cc-review start [--session <id>] [--cwd <dir>] [--new]
+cc-review start [--session <id>] [--cwd <dir>] [--new] [--base <ref>]
 ```
 
-Start or resume a review of the working tree and print its URL. Also prints `channel: active` or `channel: inactive` depending on whether the MCP channel is connected.
+Start or resume a review of the working tree. Prints, in order: the review URL; `channel: active` or `channel: inactive` depending on whether the MCP channel is connected; `setup: {"offer":…,"reason":…}` — the first-run channel-approval offer (always printed; an offer-check error degrades to `offer: false` with the error as the reason); and, only when a new version was created, `organize: <AI request JSON>` — the daemon's eager organize request, omitted on an unchanged resume.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--session` | string | `""` | Claude session id (keys the review with the repo root) |
 | `--cwd` | string | `""` | working directory (defaults to the current directory) |
 | `--new` | bool | `false` | force a fresh review, detaching any existing one for this session |
+| `--base` | string | `""` | pin a new review's diff base: the fork point of this ref and the working copy (default: HEAD, falling back to trunk when the working tree is clean) |
 
 ```sh
 cc-review start --session "$CLAUDE_SESSION_ID"
@@ -129,11 +130,11 @@ cc-review stop
 cc-review setup-channels [--check | --apply | --decline]
 ```
 
-Make cc-review an approved Claude channel, silencing the dev-channels warning. Hidden from `--help`; `/review:start` runs it as a one-time offer. With no flag it behaves as `--check`.
+Make cc-review an approved Claude channel, silencing the dev-channels warning. Hidden from `--help`. `cc-review start` already prints the offer check as its `setup:` line; `/cc-review:start` reads that line and runs `--apply` or `--decline` once based on the user's answer. With no flag it behaves as `--check`.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--check` | bool | `false` | print `{offer,reason}` JSON for the first-run offer (default) |
+| `--check` | bool | `false` | print `{offer,reason}` JSON for the first-run offer (default; the same JSON `start` prints as `setup:`) |
 | `--apply` | bool | `false` | write the approved-channels config (prompts for admin) |
 | `--decline` | bool | `false` | record that the offer was declined |
 

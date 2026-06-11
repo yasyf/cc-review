@@ -12,7 +12,7 @@ func TestMergeManaged(t *testing.T) {
 	}{
 		{name: "empty file", existing: ""},
 		{name: "preserves unrelated keys", existing: `{"otherKey":"keep","permissions":{"allow":["Bash"]}}`},
-		{name: "idempotent on already approved", existing: `{"channelsEnabled":true,"allowedChannelPlugins":[{"marketplace":"cc-review","plugin":"review"}]}`},
+		{name: "idempotent on already approved", existing: `{"channelsEnabled":true,"allowedChannelPlugins":[{"marketplace":"cc-review","plugin":"cc-review"}]}`},
 		{name: "appends alongside another channel", existing: `{"allowedChannelPlugins":[{"marketplace":"claude-plugins-official","plugin":"discord"}]}`},
 	}
 	for _, tc := range cases {
@@ -86,7 +86,7 @@ func TestMergeUserSettings(t *testing.T) {
 	}{
 		{name: "empty file", existing: "", wantCount: 1},
 		{name: "preserves other keys", existing: `{"theme":"dark"}`, wantCount: 1},
-		{name: "dedupes existing channel", existing: `{"channels":["plugin:review@cc-review"]}`, wantCount: 1},
+		{name: "dedupes existing channel", existing: `{"channels":["plugin:cc-review@cc-review"]}`, wantCount: 1},
 		{name: "appends alongside another channel", existing: `{"channels":["plugin:discord@claude-plugins-official"]}`, wantCount: 2},
 	}
 	for _, tc := range cases {
