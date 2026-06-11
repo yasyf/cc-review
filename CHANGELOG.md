@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-11
+
+### Added
+- Per-turn change attribution: `UserPromptSubmit`/`Stop` plugin hooks record
+  every Claude turn as a pair of working-tree snapshots, using a persistent
+  scratch index and private object dir for git and native working-copy
+  snapshotting for jj. Each review version maps its added lines to the turn
+  that wrote them; manual edits between turns stay untagged.
+- The diff UI draws a colored attribution strip per turn, with a toolbar
+  legend and a hover popover showing the turn's prompt excerpt and timestamp.
+  Clicking a legend chip focuses that turn and dims the rest.
+- The session payload gains `turns` and `attributions`. Turn rows store light
+  pointers (tree OIDs and a transcript path plus byte offset) with a capped
+  inline prompt excerpt; per-repo snapshot scratch state sweeps itself once no
+  turn remains inside the 14-day attribution window.
+- Stack-ranked living todo view replaces the risk mode: chapters rank by
+  remaining work, with rank semantics and re-rank dispatch for the organize
+  agent.
+
+The new `turns` and `turn_attributions` tables are additive; restarting the
+daemon (`cc-review stop`) applies them to an existing `~/.cc-review`.
+
 ## [0.6.0] - 2026-06-11
 
 ### Added
