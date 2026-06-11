@@ -200,10 +200,17 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 		return errResp(err.Error())
 	}
 	s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
+	// Byte-identical to the "request" object in the ai.request.created payload,
+	// so the skill can dedupe the redelivered event by id.
+	organizeJSON, err := json.Marshal(wire.ToAIRequest(organize))
+	if err != nil {
+		return errResp(err.Error())
+	}
 	return Response{
 		OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
 		HTTPPort:      s.httpPort,
 		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
+		AIRequest:     organizeJSON,
 	}
 }
 

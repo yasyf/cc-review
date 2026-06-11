@@ -99,4 +99,5 @@ type Response struct {
 	Allow         bool            `json:"allow,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
 	ReviewFiles   json.RawMessage `json:"review_files,omitempty"` // review-files: {version_number, files: [...]}
+	AIRequest     json.RawMessage `json:"ai_request,omitempty"`   // start: the eager system organize request (absent on an unchanged resume)
 }
