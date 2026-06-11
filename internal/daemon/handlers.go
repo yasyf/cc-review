@@ -33,6 +33,12 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	if err != nil {
 		return errResp(err.Error())
 	}
+	// The repo lock spans both the patch capture and attributeVersion's tree
+	// snapshot, so they describe the same working tree; turn-start/turn-end
+	// snapshot under the same lock.
+	mu := s.repoLock(root)
+	mu.Lock()
+	defer mu.Unlock()
 	// Capture before any resolver write: a failed (e.g. empty) snapshot must
 	// create nothing — and must not let --new close the prior review. A resumed
 	// review captures against its pinned base, so the peek comes first.
@@ -159,6 +165,7 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	if err := s.store.UpdateVersionPatchPath(ctx, v.ID, patchPath); err != nil {
 		return errResp(err.Error())
 	}
+	s.attributeVersion(ctx, root, v.ID, snap.PatchText)
 	// A new version reopens the review (a prior round may have been submitted), so
 	// the edit guard blocks edits again until this round is submitted.
 	if review.Status != "open" {

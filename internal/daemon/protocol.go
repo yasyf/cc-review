@@ -33,6 +33,9 @@ const (
 	OpUpdateAIRequest    Op = "update-ai-request"   // Claude moves an AI request through its lifecycle
 	OpSubmitOrganization Op = "submit-organization" // Claude submits the version's chapter organization
 	OpReviewFiles        Op = "review-files"        // Claude reads the current files + states
+
+	OpTurnStart Op = "turn-start" // UserPromptSubmit hook: open a turn with a working-tree snapshot
+	OpTurnEnd   Op = "turn-end"   // Stop hook: close the open turn with a second snapshot
 )
 
 // ReplyInput is one reply Claude posts. A non-zero AnswerTo answers an existing
@@ -79,6 +82,9 @@ type Request struct {
 	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
 	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization: required, must match the current version
+
+	Prompt         string `json:"prompt,omitempty"`          // turn-start: the submitted user prompt (stored as a capped excerpt)
+	TranscriptPath string `json:"transcript_path,omitempty"` // turn-start: the session transcript file at prompt time
 }
 
 // Response is one control-plane reply.

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,11 +35,12 @@ func testServer(t *testing.T) (*Server, string) {
 	gitRun(t, repo, "commit", "-qm", "init")
 
 	s := &Server{
-		store:    st,
-		bus:      NewBus(),
-		activity: NewActivity(),
-		alive:    func(int) bool { return false },
-		log:      log.New(io.Discard, "", 0),
+		store:     st,
+		bus:       NewBus(),
+		activity:  NewActivity(),
+		alive:     func(int) bool { return false },
+		log:       log.New(io.Discard, "", 0),
+		repoLocks: make(map[string]*sync.Mutex),
 	}
 	s.resolver = session.Resolver{Store: st, Held: s.held}
 	return s, repo

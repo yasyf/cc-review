@@ -146,3 +146,29 @@ func (c *Client) SubmitOrganization(session, cwd string, org store.Organization,
 func (c *Client) ReviewFiles(session, cwd string) (*Response, error) {
 	return c.do(Request{Op: OpReviewFiles, Session: session, Cwd: cwd}, 10*time.Second)
 }
+
+// TurnStart opens a turn with the pre-edit working-tree snapshot.
+func (c *Client) TurnStart(req Request) error {
+	req.Op = OpTurnStart
+	resp, err := c.do(req, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	return nil
+}
+
+// TurnEnd closes the open turn with the post-edit working-tree snapshot.
+func (c *Client) TurnEnd(req Request) error {
+	req.Op = OpTurnEnd
+	resp, err := c.do(req, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	return nil
+}

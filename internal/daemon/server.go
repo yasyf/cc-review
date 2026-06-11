@@ -52,6 +52,9 @@ type Server struct {
 	httpPort     int
 	evictTimeout time.Duration
 
+	repoMu    sync.Mutex
+	repoLocks map[string]*sync.Mutex
+
 	triggerShutdown context.CancelFunc
 	wg              sync.WaitGroup
 }
@@ -79,6 +82,7 @@ func Run(ctx context.Context, fixedPort int) error {
 		startedAt:    time.Now(),
 		fixedPort:    fixedPort,
 		evictTimeout: defaultEvictTimeout,
+		repoLocks:    make(map[string]*sync.Mutex),
 	}
 	s.resolver = session.Resolver{Store: st, Held: s.held}
 	return s.serve(ctx)
@@ -265,6 +269,19 @@ func (s *Server) held(_ context.Context, r store.Review) bool {
 	return s.activity.AttachedWithin(r.ID, attachGrace)
 }
 
+// repoLock returns the mutex serializing working-tree snapshots for one repo,
+// so a turn boundary and a review capture never describe interleaved trees.
+func (s *Server) repoLock(repoRoot string) *sync.Mutex {
+	s.repoMu.Lock()
+	defer s.repoMu.Unlock()
+	mu, ok := s.repoLocks[repoRoot]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.repoLocks[repoRoot] = mu
+	}
+	return mu
+}
+
 func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	// Health and shutdown answer regardless of protocol version: cross-version
 	// eviction probes (evictHolder) depend on both.
@@ -303,6 +320,10 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		return s.handleSubmitOrganization(ctx, req)
 	case OpReviewFiles:
 		return s.handleReviewFiles(ctx, req)
+	case OpTurnStart:
+		return s.handleTurnStart(ctx, req)
+	case OpTurnEnd:
+		return s.handleTurnEnd(ctx, req)
 	default:
 		return Response{OK: false, Error: "unknown op: " + string(req.Op)}
 	}
