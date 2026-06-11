@@ -37,17 +37,33 @@ func (rs Resolver) Find(ctx context.Context, w Window, repoRoot string) (store.R
 	return rs.Store.FindLatestReviewByWindowRepo(ctx, w.ClaudePID, repoRoot)
 }
 
+// Peek is the read-only twin of Start: it returns the review a non-fresh
+// start would resume — the exact binding, the window's pid-latest review, or
+// the adoptable latest open repo review — without writing, so the caller can
+// capture against the review's pinned base before any state changes.
+func (rs Resolver) Peek(ctx context.Context, w Window, repoRoot string) (store.Review, bool, error) {
+	if r, ok, err := rs.Find(ctx, w, repoRoot); err != nil || ok {
+		return r, ok, err
+	}
+	if r, ok, err := rs.Store.FindLatestOpenReviewByRepo(ctx, repoRoot); err != nil {
+		return store.Review{}, false, err
+	} else if ok && !rs.Held(ctx, r) {
+		return r, true, nil
+	}
+	return store.Review{}, false, nil
+}
+
 // Start returns the review a start attaches to and whether that is a resume
 // (an existing review gaining a new version) versus a fresh create:
 //
 //  1. exact (session id, repo root) binding        → resume
 //  2. the window's pid-latest review               → rebind to the new session id, resume
 //  3. latest open repo review with no live window  → adopt, resume
-//  4. otherwise                                    → create
+//  4. otherwise                                    → create, pinning baseRef
 //
 // fresh=true skips adoption: it closes and detaches the window's own review
 // (rows 1–2 only), then creates.
-func (rs Resolver) Start(ctx context.Context, w Window, repoRoot, branch string, fresh bool) (store.Review, bool, error) {
+func (rs Resolver) Start(ctx context.Context, w Window, repoRoot, branch, baseRef string, fresh bool) (store.Review, bool, error) {
 	if fresh {
 		if r, ok, err := rs.Find(ctx, w, repoRoot); err != nil {
 			return store.Review{}, false, err
@@ -59,7 +75,7 @@ func (rs Resolver) Start(ctx context.Context, w Window, repoRoot, branch string,
 				return store.Review{}, false, err
 			}
 		}
-		return rs.create(ctx, w, repoRoot, branch)
+		return rs.create(ctx, w, repoRoot, branch, baseRef)
 	}
 
 	if r, ok, err := rs.Store.FindReviewBySessionRepo(ctx, w.SessionID, repoRoot); err != nil {
@@ -110,7 +126,7 @@ func (rs Resolver) Start(ctx context.Context, w Window, repoRoot, branch string,
 		}
 	}
 
-	return rs.create(ctx, w, repoRoot, branch)
+	return rs.create(ctx, w, repoRoot, branch, baseRef)
 }
 
 // Rebind follows session rotation at window start (the SessionStart hook): it
@@ -144,7 +160,7 @@ func (rs Resolver) Rebind(ctx context.Context, w Window, repoRoot string) error 
 	return nil
 }
 
-func (rs Resolver) create(ctx context.Context, w Window, repoRoot, branch string) (store.Review, bool, error) {
-	r, err := rs.Store.CreateReview(ctx, w.SessionID, w.ClaudePID, repoRoot, branch)
+func (rs Resolver) create(ctx context.Context, w Window, repoRoot, branch, baseRef string) (store.Review, bool, error) {
+	r, err := rs.Store.CreateReview(ctx, w.SessionID, w.ClaudePID, repoRoot, branch, baseRef)
 	return r, false, err
 }

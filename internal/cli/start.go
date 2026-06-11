@@ -14,6 +14,7 @@ func newStartCmd() *cobra.Command {
 		session string
 		cwd     string
 		fresh   bool
+		base    string
 	)
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -24,7 +25,7 @@ func newStartCmd() *cobra.Command {
 				return err
 			}
 			resp, err := daemon.NewClient().Start(daemon.Request{
-				Session: session, Cwd: mustCwd(cwd), New: fresh,
+				Session: session, Cwd: mustCwd(cwd), New: fresh, Base: base,
 			})
 			if err != nil {
 				return err
@@ -44,5 +45,6 @@ func newStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "Claude session id (keys the review with the repo root)")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory)")
 	cmd.Flags().BoolVar(&fresh, "new", false, "force a fresh review, detaching any existing one for this session")
+	cmd.Flags().StringVar(&base, "base", "", "pin a new review's diff base: the fork point of this ref and the working copy (default: HEAD, falling back to trunk when the working tree is clean)")
 	return cmd
 }

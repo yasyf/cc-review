@@ -23,7 +23,7 @@ func stateByPath(t *testing.T, s *Store, reviewID string) map[string]FileState {
 func TestApplyFileStatesPartialFlags(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 	fps := map[string]string{"a.go": "fp-a", "b.go": "fp-b"}
 
 	for _, tc := range []struct {
@@ -60,7 +60,7 @@ func TestApplyFileStatesPartialFlags(t *testing.T) {
 func TestApplyFileStatesReturnsPrior(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 	fps := map[string]string{"a.go": "fp-a"}
 
 	if _, err := s.ApplyFileStates(ctx, r.ID, []FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, fps); err != nil {
@@ -79,7 +79,7 @@ func TestApplyFileStatesReturnsPrior(t *testing.T) {
 func TestApplyFileStatesKeepsStampWhenAlreadyReviewed(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 
 	if _, err := s.ApplyFileStates(ctx, r.ID, []FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}},
 		map[string]string{"a.go": "fp-v1"}); err != nil {
@@ -99,7 +99,7 @@ func TestApplyFileStatesKeepsStampWhenAlreadyReviewed(t *testing.T) {
 func TestUnreviewChangedFiles(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 	v1 := map[string]string{"changed.go": "old", "kept.go": "same", "gone.go": "was", "hiddenchanged.go": "old"}
 
 	if _, err := s.ApplyFileStates(ctx, r.ID, []FileStateInput{
@@ -151,7 +151,7 @@ func TestUnreviewChangedFiles(t *testing.T) {
 func TestRestoreFileStates(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 	fps := map[string]string{"a.go": "fp-a", "b.go": "fp-b"}
 
 	if _, err := s.ApplyFileStates(ctx, r.ID, []FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, fps); err != nil {

@@ -131,7 +131,7 @@ func TestHandleFileStatesGuardsAIRequest(t *testing.T) {
 	req, started := startedReview(t, s, repo)
 
 	t.Run("foreign review", func(t *testing.T) {
-		other, err := s.store.CreateReview(ctx, "sX", 0, "/elsewhere", "main")
+		other, err := s.store.CreateReview(ctx, "sX", 0, "/elsewhere", "main", "base0")
 		if err != nil {
 			t.Fatal(err)
 		}

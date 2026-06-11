@@ -11,6 +11,10 @@ import (
 	"path/filepath"
 )
 
+// ErrNoChanges reports that capture found nothing to review: the diff against
+// the chosen base (after the trunk fallback, when applicable) is empty.
+var ErrNoChanges = errors.New("no changes to review")
+
 type backend int
 
 const (
@@ -32,7 +36,7 @@ type FileChange struct {
 type Snapshot struct {
 	RepoRoot  string
 	Branch    string // git: branch name, empty on detached HEAD; jj: nearest bookmark or change-id prefix
-	BaseRef   string // git: "HEAD" or the empty-tree hash; jj: parent commit id
+	BaseRef   string // resolved diff base: git full sha (or the empty-tree hash); jj 12-char commit id
 	PatchText string
 	Files     []FileChange
 }
@@ -50,18 +54,36 @@ func Root(ctx context.Context, cwd string) (string, error) {
 	return gitRoot(ctx, cwd)
 }
 
-// Capture snapshots cwd's pending changes as a patch against the backend's
-// base revision: HEAD (or the empty tree) for git, the working-copy parent
-// for jj.
-func Capture(ctx context.Context, cwd string) (Snapshot, error) {
+// Capture snapshots cwd's pending changes for a new review. With base == ""
+// the diff is session-scoped (git: working tree vs HEAD; jj: @ vs @-), falling
+// back to a full-branch diff against the trunk's fork point when the session
+// diff is empty. A non-empty base diffs the working copy against the fork
+// point of base and the working copy instead. Snapshot.BaseRef is always a
+// resolved commit id; an empty final diff is ErrNoChanges.
+func Capture(ctx context.Context, cwd, base string) (Snapshot, error) {
 	kind, dir, err := detect(cwd)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	if kind == backendJJ {
-		return jjCapture(ctx, cwd, dir)
+		return jjCapture(ctx, cwd, dir, base)
 	}
-	return gitCapture(ctx, cwd)
+	return gitCapture(ctx, cwd, base)
+}
+
+// CaptureAt snapshots cwd's pending changes against a review's pinned base
+// commit, verbatim — no fork-point re-resolution (which would silently move
+// the base after a rebase) and no trunk fallback. An empty diff is
+// ErrNoChanges.
+func CaptureAt(ctx context.Context, cwd, base string) (Snapshot, error) {
+	kind, dir, err := detect(cwd)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if kind == backendJJ {
+		return jjCaptureAt(ctx, cwd, dir, base)
+	}
+	return gitCaptureAt(ctx, cwd, base)
 }
 
 // detect walks upward from cwd without spawning a subprocess: Root sits on

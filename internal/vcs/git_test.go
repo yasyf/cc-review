@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,12 +49,12 @@ func TestCaptureTrackedAndUntracked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := Capture(context.Background(), dir)
+	snap, err := Capture(context.Background(), dir, "")
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
-	if snap.BaseRef != "HEAD" {
-		t.Fatalf("base = %q, want HEAD", snap.BaseRef)
+	if head := strings.TrimSpace(gitInit(t, dir, "rev-parse", "HEAD")); snap.BaseRef != head {
+		t.Fatalf("base = %q, want HEAD sha %q", snap.BaseRef, head)
 	}
 	if snap.Branch != "main" {
 		t.Fatalf("branch = %q, want main", snap.Branch)
@@ -83,7 +84,7 @@ func TestCaptureCommitlessUsesEmptyTree(t *testing.T) {
 	dir := newRepo(t)
 	write(t, dir, "a.txt", "hello\n")
 
-	snap, err := Capture(context.Background(), dir)
+	snap, err := Capture(context.Background(), dir, "")
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -107,15 +108,15 @@ func TestCaptureDetachedHeadHasNoBranch(t *testing.T) {
 	gitInit(t, dir, "checkout", "-q", sha) // detach
 
 	write(t, dir, "a.txt", "1\n2\n")
-	snap, err := Capture(context.Background(), dir)
+	snap, err := Capture(context.Background(), dir, "")
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 	if snap.Branch != "" {
 		t.Fatalf("branch = %q, want empty on detached HEAD", snap.Branch)
 	}
-	if snap.BaseRef != "HEAD" {
-		t.Fatalf("base = %q, want HEAD", snap.BaseRef)
+	if snap.BaseRef != sha {
+		t.Fatalf("base = %q, want HEAD sha %q", snap.BaseRef, sha)
 	}
 }
 
@@ -152,7 +153,7 @@ func TestCaptureFingerprints(t *testing.T) {
 
 func captureFingerprints(t *testing.T, dir string) map[string]string {
 	t.Helper()
-	snap, err := Capture(context.Background(), dir)
+	snap, err := Capture(context.Background(), dir, "")
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestCaptureRename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := Capture(context.Background(), dir)
+	snap, err := Capture(context.Background(), dir, "")
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -183,5 +184,176 @@ func TestCaptureRename(t *testing.T) {
 	f := snap.Files[0]
 	if f.Status != "R" || f.Path != "new.go" || f.OldPath != "old.go" {
 		t.Fatalf("file = %+v, want R old.go -> new.go", f)
+	}
+}
+
+// diffBaseRepo builds commit A on main (trunk.go), then commit B (branch.go)
+// on a feature branch, leaving the worktree clean on feature.
+func diffBaseRepo(t *testing.T) (dir, shaA string) {
+	t.Helper()
+	dir = newRepo(t)
+	write(t, dir, "trunk.go", "package a\n")
+	gitInit(t, dir, "add", "-A")
+	gitInit(t, dir, "commit", "-qm", "A")
+	shaA = strings.TrimSpace(gitInit(t, dir, "rev-parse", "HEAD"))
+	gitInit(t, dir, "checkout", "-qb", "feature")
+	write(t, dir, "branch.go", "package a\nvar B int\n")
+	gitInit(t, dir, "add", "-A")
+	gitInit(t, dir, "commit", "-qm", "B")
+	return dir, shaA
+}
+
+func TestCaptureDiffBase(t *testing.T) {
+	cases := []struct {
+		name            string
+		setup           func(t *testing.T) (dir, wantBase string)
+		base            string
+		wantInPatch     []string
+		wantNotInPatch  []string
+		wantNoChanges   bool
+		wantErrContains string
+	}{
+		{
+			name: "dirty worktree uses session diff",
+			setup: func(t *testing.T) (string, string) {
+				dir, _ := diffBaseRepo(t)
+				write(t, dir, "dirty.go", "package a\nvar D int\n")
+				return dir, strings.TrimSpace(gitInit(t, dir, "rev-parse", "HEAD"))
+			},
+			wantInPatch:    []string{"dirty.go"},
+			wantNotInPatch: []string{"branch.go"},
+		},
+		{
+			name: "clean feature branch falls back to trunk fork point",
+			setup: func(t *testing.T) (string, string) {
+				dir, shaA := diffBaseRepo(t)
+				return dir, shaA
+			},
+			wantInPatch:    []string{"branch.go"},
+			wantNotInPatch: []string{"trunk.go"},
+		},
+		{
+			name: "fallback finds origin/main when local main is gone",
+			setup: func(t *testing.T) (string, string) {
+				dir, shaA := diffBaseRepo(t)
+				gitInit(t, dir, "update-ref", "refs/remotes/origin/main", shaA)
+				gitInit(t, dir, "branch", "-qD", "main")
+				return dir, shaA
+			},
+			wantInPatch: []string{"branch.go"},
+		},
+		{
+			name: "clean tree on trunk is no changes",
+			setup: func(t *testing.T) (string, string) {
+				dir, _ := diffBaseRepo(t)
+				gitInit(t, dir, "checkout", "-q", "main")
+				return dir, ""
+			},
+			wantNoChanges: true,
+		},
+		{
+			name: "clean tree with no trunk candidates points at --base",
+			setup: func(t *testing.T) (string, string) {
+				dir, _ := diffBaseRepo(t)
+				gitInit(t, dir, "branch", "-qm", "main", "work")
+				return dir, ""
+			},
+			wantErrContains: "pass --base",
+		},
+		{
+			name: "explicit base diffs branch and dirty files from the fork point",
+			setup: func(t *testing.T) (string, string) {
+				dir, shaA := diffBaseRepo(t)
+				write(t, dir, "dirty.go", "package a\nvar D int\n")
+				return dir, shaA
+			},
+			base:        "main",
+			wantInPatch: []string{"branch.go", "dirty.go"},
+		},
+		{
+			name: "explicit base with no diff is no changes",
+			setup: func(t *testing.T) (string, string) {
+				dir, _ := diffBaseRepo(t)
+				gitInit(t, dir, "checkout", "-q", "main")
+				return dir, ""
+			},
+			base:          "main",
+			wantNoChanges: true,
+		},
+		{
+			name: "unknown explicit base fails resolving the fork point",
+			setup: func(t *testing.T) (string, string) {
+				dir, _ := diffBaseRepo(t)
+				return dir, ""
+			},
+			base:            "nope",
+			wantErrContains: "merge-base",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, wantBase := tc.setup(t)
+			snap, err := Capture(context.Background(), dir, tc.base)
+			if tc.wantNoChanges {
+				if !errors.Is(err, ErrNoChanges) {
+					t.Fatalf("err = %v, want ErrNoChanges", err)
+				}
+				return
+			}
+			if tc.wantErrContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Fatalf("err = %v, want it to contain %q", err, tc.wantErrContains)
+				}
+				if errors.Is(err, ErrNoChanges) {
+					t.Fatalf("err = %v, must not be ErrNoChanges", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("capture: %v", err)
+			}
+			if wantBase != "" && snap.BaseRef != wantBase {
+				t.Fatalf("base = %q, want %q", snap.BaseRef, wantBase)
+			}
+			for _, want := range tc.wantInPatch {
+				if !strings.Contains(snap.PatchText, want) {
+					t.Fatalf("patch missing %q:\n%s", want, snap.PatchText)
+				}
+			}
+			for _, not := range tc.wantNotInPatch {
+				if strings.Contains(snap.PatchText, not) {
+					t.Fatalf("patch unexpectedly contains %q:\n%s", not, snap.PatchText)
+				}
+			}
+			if len(snap.Files) == 0 {
+				t.Fatal("files summary is empty")
+			}
+		})
+	}
+}
+
+func TestCaptureAt(t *testing.T) {
+	dir, shaA := diffBaseRepo(t)
+	// A commit on top moves HEAD; the pinned base keeps the diff cumulative.
+	write(t, dir, "later.go", "package a\nvar L int\n")
+	gitInit(t, dir, "add", "-A")
+	gitInit(t, dir, "commit", "-qm", "C")
+
+	snap, err := CaptureAt(context.Background(), dir, shaA)
+	if err != nil {
+		t.Fatalf("capture at %s: %v", shaA, err)
+	}
+	if snap.BaseRef != shaA {
+		t.Fatalf("base = %q, want pinned %q", snap.BaseRef, shaA)
+	}
+	for _, want := range []string{"branch.go", "later.go"} {
+		if !strings.Contains(snap.PatchText, want) {
+			t.Fatalf("patch missing %q:\n%s", want, snap.PatchText)
+		}
+	}
+
+	gitInit(t, dir, "checkout", "-q", "main")
+	if _, err := CaptureAt(context.Background(), dir, shaA); !errors.Is(err, ErrNoChanges) {
+		t.Fatalf("err = %v, want ErrNoChanges when the worktree matches the pin", err)
 	}
 }

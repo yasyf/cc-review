@@ -10,7 +10,7 @@ import (
 func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
 	t.Helper()
 	ctx := context.Background()
-	r, err := s.CreateReview(ctx, "", 0, "/repo/"+status+t.Name(), "main")
+	r, err := s.CreateReview(ctx, "", 0, "/repo/"+status+t.Name(), "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
 func TestCreateAIRequestDefaults(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 
 	ar, err := s.CreateAIRequest(ctx, r.ID, 2, "system", "Organize this review into chapters and rate per-file risk.")
 	if err != nil {
@@ -172,7 +172,7 @@ func TestAppendAIRequestChangesKeepsFirstPrior(t *testing.T) {
 func TestListAIRequestsNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 
 	older, _ := s.CreateAIRequest(ctx, r.ID, 1, "system", "organize")
 	newer, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "mark renames")

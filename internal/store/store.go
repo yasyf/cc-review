@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   slug       TEXT NOT NULL DEFAULT '',
   session_id TEXT,
   repo_root  TEXT NOT NULL,
+  base_ref   TEXT NOT NULL DEFAULT '',
   claude_pid INTEGER NOT NULL DEFAULT 0,
   status     TEXT NOT NULL DEFAULT 'open',
   created_at INTEGER NOT NULL,

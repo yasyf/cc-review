@@ -15,7 +15,7 @@ func parseFiles(patch string) ([]FileChange, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse patch: %w", err)
 	}
-	var out []FileChange
+	out := make([]FileChange, 0, len(parsed))
 	for _, f := range parsed {
 		var fc FileChange
 		switch {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -28,13 +29,98 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	if req.Cwd == "" {
 		return errResp("start requires --cwd")
 	}
-	snap, err := vcs.Capture(ctx, req.Cwd)
+	root, err := vcs.Root(ctx, req.Cwd)
 	if err != nil {
 		return errResp(err.Error())
 	}
-	review, resumed, err := s.resolver.Start(ctx, win(req), snap.RepoRoot, snap.Branch, req.New)
+	// Capture before any resolver write: a failed (e.g. empty) snapshot must
+	// create nothing — and must not let --new close the prior review. A resumed
+	// review captures against its pinned base, so the peek comes first.
+	var snap vcs.Snapshot
+	fromPin := false
+	if peeked, ok, err := s.resolver.Peek(ctx, win(req), root); err != nil {
+		return errResp(err.Error())
+	} else if ok && !req.New {
+		if peeked.BaseRef == "" {
+			return errResp(fmt.Sprintf("review %s predates pinned diff bases; pass --new to start a fresh review", peeked.Slug))
+		}
+		if req.Base != "" {
+			return errResp(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", peeked.Slug, peeked.BaseRef))
+		}
+		fromPin = true
+		if snap, err = vcs.CaptureAt(ctx, req.Cwd, peeked.BaseRef); err != nil {
+			if !errors.Is(err, vcs.ErrNoChanges) {
+				return errResp(err.Error() + " (pass --new to start a fresh review)")
+			}
+			return errResp(err.Error())
+		}
+	} else {
+		if snap, err = vcs.Capture(ctx, req.Cwd, req.Base); err != nil {
+			return errResp(err.Error())
+		}
+	}
+	review, resumed, err := s.resolver.Start(ctx, win(req), snap.RepoRoot, snap.Branch, snap.BaseRef, req.New)
 	if err != nil {
 		return errResp(err.Error())
+	}
+	// The peek's verdict can flip under a concurrent rebind, adopt, or submit
+	// between the read and the write phase; re-align the snapshot with the
+	// review Start actually returned.
+	if resumed {
+		// Peek said create (so --base passed the gate above) but Start resumed
+		// an existing pinned review: the explicit base cannot apply.
+		if req.Base != "" {
+			return errResp(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", review.Slug, review.BaseRef))
+		}
+		if review.BaseRef != snap.BaseRef {
+			if snap, err = vcs.CaptureAt(ctx, req.Cwd, review.BaseRef); err != nil {
+				return errResp(err.Error())
+			}
+		}
+	} else if fromPin {
+		// Peek said resume but Start created: the snapshot was taken against
+		// the vanished review's pin; recapture with create semantics and re-pin
+		// the just-created (still version-less) review.
+		if snap, err = vcs.Capture(ctx, req.Cwd, ""); err != nil {
+			// Leave nothing adoptable behind: the empty review would otherwise
+			// be resumed against its stale foreign pin on the next start.
+			if cerr := s.store.SetReviewStatus(ctx, review.ID, "closed"); cerr != nil {
+				return errResp(cerr.Error())
+			}
+			if derr := s.store.DetachReviewSession(ctx, review.ID); derr != nil {
+				return errResp(derr.Error())
+			}
+			return errResp(err.Error())
+		}
+		if err := s.store.SetReviewBaseRef(ctx, review.ID, snap.BaseRef); err != nil {
+			return errResp(err.Error())
+		}
+		review.BaseRef = snap.BaseRef
+	}
+	// An unchanged worktree on resume reuses the latest version instead of
+	// stacking an identical one and re-queueing an organize request. A version
+	// whose patch file is unreadable (crash between insert and rename) just
+	// misses the dedup and gets a fresh version.
+	if resumed {
+		if latest, ok, err := s.store.LatestVersion(ctx, review.ID); err != nil {
+			return errResp(err.Error())
+		} else if ok {
+			if prev, err := os.ReadFile(latest.PatchPath); err == nil && string(prev) == snap.PatchText {
+				// A successful start always leaves the round open: resuming a
+				// submitted review must re-block edits even when the snapshot
+				// is unchanged.
+				if review.Status != "open" {
+					if err := s.store.SetReviewStatus(ctx, review.ID, "open"); err != nil {
+						return errResp(err.Error())
+					}
+				}
+				return Response{
+					OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: latest.VersionNumber, Resumed: true,
+					HTTPPort:      s.httpPort,
+					ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
+				}
+			}
+		}
 	}
 	if err := paths.EnsureReviewDir(review.ID); err != nil {
 		return errResp(err.Error())
@@ -114,12 +200,15 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 		return errResp(err.Error())
 	}
 	s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
-	url := fmt.Sprintf("http://127.0.0.1:%d/s/%s", s.httpPort, review.Slug)
 	return Response{
-		OK: true, URL: url, ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
+		OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
 		HTTPPort:      s.httpPort,
 		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
 	}
+}
+
+func (s *Server) reviewURL(slug string) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/s/%s", s.httpPort, slug)
 }
 
 const channelConsumer = "channel"

@@ -57,7 +57,7 @@ func TestOrganizationValidate(t *testing.T) {
 func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main")
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
 
 	if _, ok, err := s.GetOrganization(ctx, v.ID); err != nil || ok {

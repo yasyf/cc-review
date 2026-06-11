@@ -19,7 +19,7 @@ import (
 func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store.Review, store.Version) {
 	t.Helper()
 	ctx := context.Background()
-	review, err := st.CreateReview(ctx, "s1", 100, "/repo", "main")
+	review, err := st.CreateReview(ctx, "s1", 100, "/repo", "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}

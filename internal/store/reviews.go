@@ -19,7 +19,7 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 		created int64
 		updated int64
 	)
-	if err := row.Scan(&r.ID, &r.Slug, &session, &r.RepoRoot, &r.ClaudePID, &r.Status, &created, &updated); err != nil {
+	if err := row.Scan(&r.ID, &r.Slug, &session, &r.RepoRoot, &r.BaseRef, &r.ClaudePID, &r.Status, &created, &updated); err != nil {
 		return Review{}, err
 	}
 	r.SessionID = session.String
@@ -28,7 +28,7 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 	return r, nil
 }
 
-const reviewCols = `id, slug, session_id, repo_root, claude_pid, status, created_at, updated_at`
+const reviewCols = `id, slug, session_id, repo_root, base_ref, claude_pid, status, created_at, updated_at`
 
 // ReviewSlug derives a review's URL name from its creation-time branch and id:
 // the sanitized branch, `--`, and the first 8 hex chars of the id. An empty
@@ -63,13 +63,15 @@ func sanitizeBranch(branch string) string {
 // in a repo. A blank sessionID is stored as NULL so the partial unique index
 // does not collapse all session-less reviews together. branch names the slug;
 // it is fixed at creation even if later versions land on another branch.
-func (s *Store) CreateReview(ctx context.Context, sessionID string, claudePID int, repoRoot, branch string) (Review, error) {
+// baseRef pins the resolved diff base every version of the review captures
+// against.
+func (s *Store) CreateReview(ctx context.Context, sessionID string, claudePID int, repoRoot, branch, baseRef string) (Review, error) {
 	now := time.Now()
-	r := Review{ID: newID(), SessionID: sessionID, RepoRoot: repoRoot, ClaudePID: claudePID, Status: "open", CreatedAt: now, UpdatedAt: now}
+	r := Review{ID: newID(), SessionID: sessionID, RepoRoot: repoRoot, BaseRef: baseRef, ClaudePID: claudePID, Status: "open", CreatedAt: now, UpdatedAt: now}
 	r.Slug = ReviewSlug(branch, r.ID)
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO reviews(id, slug, session_id, repo_root, claude_pid, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)`,
-		r.ID, r.Slug, nullString(sessionID), repoRoot, claudePID, r.Status, unix(now), unix(now)); err != nil {
+		`INSERT INTO reviews(id, slug, session_id, repo_root, base_ref, claude_pid, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		r.ID, r.Slug, nullString(sessionID), repoRoot, baseRef, claudePID, r.Status, unix(now), unix(now)); err != nil {
 		return Review{}, fmt.Errorf("create review: %w", err)
 	}
 	return r, nil
@@ -160,6 +162,18 @@ func (s *Store) RebindReview(ctx context.Context, reviewID string, fromPID int, 
 		return false, fmt.Errorf("rebind review: %w", err)
 	}
 	return n == 1, nil
+}
+
+// SetReviewBaseRef re-pins a review's diff base. Only legitimate on a review
+// that has no versions yet (the peek-said-resume-but-Start-created race);
+// versions already captured against the old pin would silently change meaning.
+func (s *Store) SetReviewBaseRef(ctx context.Context, reviewID, baseRef string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE reviews SET base_ref=?, updated_at=? WHERE id=?`, baseRef, unix(time.Now()), reviewID)
+	if err != nil {
+		return fmt.Errorf("set review base ref: %w", err)
+	}
+	return nil
 }
 
 // SetReviewStatus updates a review's status and bumps updated_at.
