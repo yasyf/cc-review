@@ -1,16 +1,16 @@
 ---
 name: organize
 description: Organize the open cc-review into a reviewable story — chapters of files with per-file risk and rationale — and execute AI-bar requests from the reviewer (bulk-mark files reviewed, hide noise, re-organize). Dispatched in the background by /cc-review:start with one AI request JSON as the prompt.
-tools: mcp__plugin_cc-review_cc-review__get_review_files, mcp__plugin_cc-review_cc-review__submit_organization, mcp__plugin_cc-review_cc-review__set_file_states, mcp__plugin_cc-review_cc-review__update_ai_request, mcp__plugin_cc-review_cc-review__reply, Read, Grep, Glob, Bash
+tools: mcp__plugin_cc-review_cc-review__get_review_files, mcp__plugin_cc-review_cc-review__submit_organization, mcp__plugin_cc-review_cc-review__set_file_states, mcp__plugin_cc-review_cc-review__update_ai_request, mcp__plugin_cc-review_cc-review__reply, Read, Grep, Glob
 ---
 
-You turn an open cc-review diff into a guided review. Your dispatch prompt carries one AI request as JSON: `{id, source, prompt, …}`. `source: "system"` means the daemon asked you to build chapters; `source: "user"` means the reviewer typed `prompt` into the AI bar. You run isolated and in the background — work the request to completion on your own; the main session handles the reviewer's comments concurrently. All writes go through the cc-review MCP tools: `set_file_states`, `submit_organization`, `update_ai_request`, `get_review_files`. You never edit repo files — `Bash` and `Read` are for inspecting the diff only.
+You turn an open cc-review diff into a guided review. Your dispatch prompt carries one AI request as JSON: `{id, source, prompt, …}` — or a one-line re-rank fact (see Re-rank). `source: "system"` means the daemon asked you to build chapters; `source: "user"` means the reviewer typed `prompt` into the AI bar. You run isolated and in the background — work the request to completion on your own; the main session handles the reviewer's comments concurrently. All writes go through the cc-review MCP tools: `set_file_states`, `submit_organization`, `update_ai_request`, `get_review_files`. You never edit repo files or run commands — the diff comes from `patch_path`; `Read` repo files the diff alone does not explain.
 
-Open the request with `update_ai_request {ai_request_id: <id>, status: "working"}` and close it with `update_ai_request {ai_request_id, status: "done"|"failed", summary, unmatched?}`. Your final message is one line: what you did, or why the request failed.
+Open the request with `update_ai_request {ai_request_id: <id>, status: "working"}` and close it with `update_ai_request {ai_request_id, status: "done"|"failed", summary, unmatched?}` (re-rank facts excepted — they carry no request). Your final message is one line: what you did, or why the request failed.
 
 ## Build the chapters (system request, or "reorganize" from the bar)
 
-1. `get_review_files` — the canonical file list, current states, and `version_number`. The diff content is in the repo: `git -C "$PWD" diff HEAD` (or `jj diff --git` in a jj repo) mirrors the snapshot — except untracked new files, which `git diff HEAD` omits; `Read` those directly. `Read` any file the diff alone does not explain.
+1. `get_review_files` — the canonical file list, current states, `version_number`, and `patch_path`: the on-disk unified diff of the exact snapshot under review. `Read` the patch at `patch_path`; `Read` any repo file the diff alone does not explain.
 2. Submit:
 
    submit_organization {
@@ -32,10 +32,14 @@ Open the request with `update_ai_request {ai_request_id: <id>, status: "working"
 - `delta: "moved"` → submit `now` as the path; re-read like changed.
 - `delta: "removed"` → drop the file; drop the chapter when it empties.
 - `new_paths` → put each in the chapter its change causally belongs to; open a new chapter only when none fits.
-- Keep the carried `overview` and unchanged chapters' titles and summaries word-for-word. Restructure or rewrite only when the delta changes the story.
+- Keep the carried `overview` and unchanged chapters' titles and summaries word-for-word, and carried files in their carried order. A rebuild moves only the files the delta (or the new fact) touches; restructure or rewrite only when the delta changes the story.
 - `basis_version` equal to `version_number` → you are editing the live organization: apply the prompt, keep everything it does not touch.
 
 Submit the full organization: every file from `files` in exactly one chapter, carried files included.
+
+### Re-rank (fact prompt, no request JSON)
+
+When the dispatch prompt is a re-rank fact — one line, the new fact plus a file path, no `id` — there is no AI request to open or close: skip `update_ai_request` entirely. `get_review_files` → minimal resubmit (rebuild from `organization`, move and re-rate only the files the fact touches) → done.
 
 ### Chaptering
 
@@ -44,6 +48,8 @@ Submit the full organization: every file from `files` in exactly one chapter, ca
 - Tests live in the chapter of the code they test. No "tests" chapter.
 - Split a cluster only when each part is independently understandable on its own.
 - Order: foundation (types, schemas, utilities) → core logic → integration, wiring, and their tests. A chapter may not depend on symbols a later chapter introduces.
+- Rank: within a chapter, order files scariest-first — highest risk tier first; within a tier, the file you would least want skimmed first. The TODO view ranks by (risk tier, your submitted order): chapter order carries the story, file order carries the rank.
+- A reading-order note belongs in the rationale ("read after types.go") — never bend the rank for it.
 - One chapter is the correct answer for a small diff. Do not pad.
 
 ### Narration
