@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-11
+
+### Fixed
+- Adding an inline comment no longer leaves a second draft composer holding
+  the same text below the new thread. The composer previously waited for a
+  mutate-level callback to close, but the `comment.created` SSE event shifts
+  its index-keyed annotation portal and remounts it, dropping that callback.
+  It now closes eagerly on submit, like the reply box.
+
 ## [0.7.0] - 2026-06-11
 
 ### Added
