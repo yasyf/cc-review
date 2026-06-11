@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
@@ -683,54 +682,69 @@ func TestResolveStaleSessionFindsOwnWindowReview(t *testing.T) {
 	}
 }
 
-func TestChannelActiveIsPIDKeyed(t *testing.T) {
-	ctx := context.Background()
-	s, _ := testServer(t)
-	s.startedAt = time.Now().Add(-time.Minute) // long-running daemon: no boot grace
-
-	if s.channelActive(ctx, "r1", "/repo", 100) {
-		t.Fatal("no signal must read inactive")
-	}
-	s.activity.NotePoll("/repo", channelConsumer, 100)
-	if !s.channelActive(ctx, "r1", "/repo", 100) {
-		t.Fatal("the window's own resolve poll must read active")
-	}
-	if s.channelActive(ctx, "r1", "/repo", 200) {
-		t.Fatal("window A's polls must not light up window B's start")
-	}
-
-	s2, _ := testServer(t)
-	s2.startedAt = time.Now().Add(-time.Minute)
-	detach := s2.activity.Attach("r1", channelConsumer, 100)
-	defer detach()
-	if !s2.channelActive(ctx, "r1", "/repo", 100) {
-		t.Fatal("a live SSE attachment must read active")
-	}
-	if s2.channelActive(ctx, "r1", "/repo", 200) {
-		t.Fatal("an attachment must not count for another window")
+func TestChannelState(t *testing.T) {
+	// The window under test is pid 100; a non-zero pid names which window each
+	// signal belongs to, so foreign-pid rows prove the keying.
+	for _, tc := range []struct {
+		name                          string
+		provenPID, attachPID, pollPID int // 0 = no signal
+		want                          string
+	}{
+		{"no signal", 0, 0, 0, "inactive"},
+		{"poll only", 0, 0, 100, "pending"},
+		{"attach only", 0, 100, 0, "pending"},
+		{"attach and poll unproven", 0, 100, 100, "pending"},
+		{"proven without presence", 100, 0, 0, "inactive"},
+		{"proven with poll only", 100, 0, 100, "pending"},
+		{"proven and attached", 100, 100, 0, "active"},
+		{"proven attached and polled", 100, 100, 100, "active"},
+		{"foreign window's poll", 0, 0, 200, "inactive"},
+		{"foreign window's attachment", 0, 200, 0, "inactive"},
+		{"foreign window's proof while attached", 200, 100, 0, "pending"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{activity: NewActivity()}
+			if tc.provenPID != 0 {
+				s.activity.MarkProven(tc.provenPID)
+			}
+			if tc.attachPID != 0 {
+				detach := s.activity.Attach("r1", channelConsumer, tc.attachPID)
+				defer detach()
+			}
+			if tc.pollPID != 0 {
+				s.activity.NotePoll("/repo", channelConsumer, tc.pollPID)
+			}
+			if got := s.channelState("r1", "/repo", 100); got != tc.want {
+				t.Fatalf("channelState = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestChannelActiveColdBootGraceCatchesLatePoll(t *testing.T) {
+func TestHandleChannelAck(t *testing.T) {
 	ctx := context.Background()
-	s, _ := testServer(t)
-	s.startedAt = time.Now() // cold boot: grace window open
+	s, repo := testServer(t)
 
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		s.activity.NotePoll("/repo", channelConsumer, 100)
-	}()
-	if !s.channelActive(ctx, "r1", "/repo", 100) {
-		t.Fatal("a poll landing inside the boot grace must read active")
+	// No claude pid: nothing to prove, fail fast.
+	resp := s.dispatch(ctx, Request{Proto: ProtocolVersion, Op: OpChannelAck, Cwd: repo})
+	if resp.OK || !strings.Contains(resp.Error, "claude pid") {
+		t.Fatalf("ok=%v err=%q, want a no-pid rejection", resp.OK, resp.Error)
 	}
 
-	// Past the grace window the answer is immediate, not a 3s wait.
-	s.startedAt = time.Now().Add(-time.Minute)
-	begin := time.Now()
-	if s.channelActive(ctx, "r2", "/other", 100) {
-		t.Fatal("no signal must read inactive")
+	// An attached-but-unproven window flips pending -> active on ack.
+	detach := s.activity.Attach("r1", channelConsumer, 100)
+	defer detach()
+	if got := s.channelState("r1", repo, 100); got != "pending" {
+		t.Fatalf("pre-ack state = %q, want pending", got)
 	}
-	if elapsed := time.Since(begin); elapsed > 500*time.Millisecond {
-		t.Fatalf("inactive answer took %s; must not wait outside the grace window", elapsed)
+	resp = s.dispatch(ctx, Request{Proto: ProtocolVersion, Op: OpChannelAck, ClaudePID: 100, Cwd: repo})
+	if !resp.OK {
+		t.Fatalf("channel-ack: %s", resp.Error)
+	}
+	if got := s.channelState("r1", repo, 100); got != "active" {
+		t.Fatalf("post-ack state = %q, want active", got)
+	}
+	if got := s.channelState("r1", repo, 200); got == "active" {
+		t.Fatal("the ack must not prove another window")
 	}
 }

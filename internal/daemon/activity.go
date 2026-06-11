@@ -10,12 +10,16 @@ import (
 // attachments (per review, keyed by consumer name + window pid) and recent
 // resolve polls (per repo root, same key). It is how handleStart can report a
 // channel consumer's presence without blocking on one, and how held sees a
-// pid-less review's recent attachment.
+// pid-less review's recent attachment. proven records windows whose model
+// acked a delivered channel tag; proof lasts the daemon's lifetime —
+// pid-recycle inheritance is accepted because active also requires a live
+// attachment.
 type Activity struct {
 	mu       sync.Mutex
 	attached map[string]map[attachKey]int
 	lastDrop map[string]time.Time
 	polls    map[string]time.Time
+	proven   map[int]struct{}
 	now      func() time.Time
 }
 
@@ -30,6 +34,7 @@ func NewActivity() *Activity {
 		attached: make(map[string]map[attachKey]int),
 		lastDrop: make(map[string]time.Time),
 		polls:    make(map[string]time.Time),
+		proven:   make(map[int]struct{}),
 		now:      time.Now,
 	}
 }
@@ -97,6 +102,21 @@ func (a *Activity) PolledSince(repoRoot, consumer string, pid int, window time.D
 	defer a.mu.Unlock()
 	t, ok := a.polls[pollKey(repoRoot, consumer, pid)]
 	return ok && a.now().Sub(t) <= window
+}
+
+// MarkProven records that the window's model acked a delivered channel tag.
+func (a *Activity) MarkProven(pid int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.proven[pid] = struct{}{}
+}
+
+// Proven reports whether the window's channel round trip has been proven.
+func (a *Activity) Proven(pid int) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.proven[pid]
+	return ok
 }
 
 func pollKey(repoRoot, consumer string, pid int) string {

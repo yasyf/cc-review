@@ -46,8 +46,6 @@ type Server struct {
 	socket   string
 	log      *log.Logger
 
-	startedAt time.Time
-
 	fixedPort    int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
 	httpPort     int
 	evictTimeout time.Duration
@@ -79,7 +77,6 @@ func Run(ctx context.Context, fixedPort int) error {
 		alive:        procs.LiveClaude,
 		socket:       paths.SocketPath(),
 		log:          log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
-		startedAt:    time.Now(),
 		fixedPort:    fixedPort,
 		evictTimeout: defaultEvictTimeout,
 		repoLocks:    make(map[string]*sync.Mutex),
@@ -302,6 +299,8 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 		return s.handleStart(ctx, req)
 	case OpResolve:
 		return s.handleResolve(ctx, req)
+	case OpChannelAck:
+		return s.handleChannelAck(ctx, req)
 	case OpReply:
 		return s.handleReply(ctx, req)
 	case OpFeedback:

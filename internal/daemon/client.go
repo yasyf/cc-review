@@ -92,6 +92,12 @@ func (c *Client) Resolve(session, cwd, consumer string) (*Response, error) {
 	return c.do(Request{Op: OpResolve, Session: session, Cwd: cwd, Consumer: consumer}, 10*time.Second)
 }
 
+// ChannelAck proves the window's channel round trip: the model saw a delivered
+// channel tag. do stamps ClaudePID — the identity being proven.
+func (c *Client) ChannelAck(session, cwd string) (*Response, error) {
+	return c.do(Request{Op: OpChannelAck, Session: session, Cwd: cwd}, 5*time.Second)
+}
+
 // Reply posts Claude's replies.
 func (c *Client) Reply(replies []ReplyInput) (*Response, error) {
 	return c.do(Request{Op: OpReply, Replies: replies}, 10*time.Second)

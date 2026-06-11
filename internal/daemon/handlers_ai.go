@@ -351,15 +351,30 @@ func (s *Server) carryOrganizationForward(ctx context.Context, reviewID string, 
 	return org, true, nil
 }
 
+// openSystemOrganize returns the review's newest open (pending or working)
+// system organize request. A working request reaching a fresh unchanged
+// resume means the dispatched agent died with the old session.
+func (s *Server) openSystemOrganize(ctx context.Context, reviewID string) (store.AIRequest, bool, error) {
+	requests, err := s.store.ListAIRequests(ctx, reviewID)
+	if err != nil {
+		return store.AIRequest{}, false, err
+	}
+	for _, ar := range requests {
+		if ar.Source == store.OriginSystem && (ar.Status == "pending" || ar.Status == "working") {
+			return ar, true, nil
+		}
+	}
+	return store.AIRequest{}, false, nil
+}
+
 // closeStaleOrganizeRequests marks the review's open system organize requests
-// done after a carry: no agent is coming to close them, and an open one keeps
+// done with summary: no agent is coming to close them, and an open one keeps
 // the UI's "organizing…" chip lit forever.
-func (s *Server) closeStaleOrganizeRequests(ctx context.Context, reviewID string, versionNumber int) error {
+func (s *Server) closeStaleOrganizeRequests(ctx context.Context, reviewID string, versionNumber int, summary string) error {
 	requests, err := s.store.ListAIRequests(ctx, reviewID)
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("diff unchanged; organization carried to version %d", versionNumber)
 	for _, ar := range requests {
 		if ar.Source != store.OriginSystem || (ar.Status != "pending" && ar.Status != "working") {
 			continue

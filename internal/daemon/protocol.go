@@ -23,6 +23,7 @@ const (
 	OpShutdown      Op = "shutdown"       // step down and release the socket
 	OpStart         Op = "start"          // snapshot the tree, resolve/create the review
 	OpResolve       Op = "resolve"        // look up an existing review (no create) for a stream consumer
+	OpChannelAck    Op = "channel-ack"    // the model proves the window's channel round trip (first delivered tag seen)
 	OpReply         Op = "reply"          // Claude posts questions/options/answers
 	OpFeedback      Op = "feedback"       // read the frozen feedback + open questions
 	OpStatus        Op = "status"         // daemon + review status
@@ -101,7 +102,7 @@ type Response struct {
 	FeedbackPath  string          `json:"feedback_path,omitempty"`
 	Feedback      json.RawMessage `json:"feedback,omitempty"`
 	Status        string          `json:"status,omitempty"`
-	ChannelActive bool            `json:"channel_active,omitempty"`
+	ChannelState  string          `json:"channel_state,omitempty"` // start: active|pending|inactive — active only for a proven window with the channel consumer attached
 	Allow         bool            `json:"allow,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
 	ReviewFiles   json.RawMessage `json:"review_files,omitempty"` // review-files: {version_number, files: [...], organization?: {basis_version, overview, chapters, new_paths}}

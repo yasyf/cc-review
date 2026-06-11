@@ -49,6 +49,25 @@ func TestActivityPolledSinceWindow(t *testing.T) {
 	}
 }
 
+func TestActivityProven(t *testing.T) {
+	a := NewActivity()
+	if a.Proven(100) {
+		t.Fatal("never-acked window must read unproven")
+	}
+	a.MarkProven(100)
+	if !a.Proven(100) {
+		t.Fatal("acked window must read proven")
+	}
+	if a.Proven(200) {
+		t.Fatal("proof leaked across windows")
+	}
+	detach := a.Attach("r1", "channel", 100)
+	detach()
+	if !a.Proven(100) {
+		t.Fatal("proof is daemon-lifetime and must survive an SSE detach")
+	}
+}
+
 func TestActivityAttachedWithinGrace(t *testing.T) {
 	a := NewActivity()
 	now := time.Unix(1000, 0)

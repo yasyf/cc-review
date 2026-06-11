@@ -120,11 +120,43 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 						return errResp(err.Error())
 					}
 				}
-				return Response{
+				resp := Response{
 					OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: latest.VersionNumber, Resumed: true,
-					HTTPPort:      s.httpPort,
-					ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
+					HTTPPort:     s.httpPort,
+					ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
 				}
+				// An organized version needs no organize agent: close any open
+				// system request stranded by a dead session (it would keep the
+				// UI's "organizing…" chip lit forever). An unorganized one
+				// rescues the still-open request — or queues a fresh one when
+				// the prior request finished without organizing.
+				if _, ok, err := s.store.GetOrganization(ctx, latest.ID); err != nil {
+					return errResp(err.Error())
+				} else if ok {
+					if err := s.closeStaleOrganizeRequests(ctx, review.ID, latest.VersionNumber,
+						fmt.Sprintf("diff unchanged; version %d is already organized", latest.VersionNumber)); err != nil {
+						return errResp(err.Error())
+					}
+					return resp
+				}
+				ar, found, err := s.openSystemOrganize(ctx, review.ID)
+				if err != nil {
+					return errResp(err.Error())
+				}
+				if !found {
+					if ar, err = s.store.CreateAIRequest(ctx, review.ID, latest.VersionNumber, store.OriginSystem, organizePrompt); err != nil {
+						return errResp(err.Error())
+					}
+					s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, latest.VersionNumber, ar)
+				}
+				// Byte-identical to the "request" object in the ai.request.created
+				// payload, so the skill can dedupe the redelivered event by id.
+				organizeJSON, err := json.Marshal(wire.ToAIRequest(ar))
+				if err != nil {
+					return errResp(err.Error())
+				}
+				resp.AIRequest = organizeJSON
+				return resp
 			}
 		}
 	}
@@ -218,15 +250,16 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 			ReviewID: review.ID, Origin: store.OriginClaude, Type: store.EventOrganizationUpdated, VersionNumber: v.VersionNumber,
 			Payload: wire.Event(store.EventOrganizationUpdated, v.VersionNumber, map[string]any{"organization": carried}),
 		})
-		if err := s.closeStaleOrganizeRequests(ctx, review.ID, v.VersionNumber); err != nil {
+		if err := s.closeStaleOrganizeRequests(ctx, review.ID, v.VersionNumber,
+			fmt.Sprintf("diff unchanged; organization carried to version %d", v.VersionNumber)); err != nil {
 			return errResp(err.Error())
 		}
 		// No AIRequest: the skill dispatches no organize agent, matching the
-		// unchanged-resume contract.
+		// organized-resume contract.
 		return Response{
 			OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
-			HTTPPort:      s.httpPort,
-			ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
+			HTTPPort:     s.httpPort,
+			ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
 		}
 	}
 	organize, err := s.store.CreateAIRequest(ctx, review.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
@@ -242,9 +275,9 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	}
 	return Response{
 		OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
-		HTTPPort:      s.httpPort,
-		ChannelActive: s.channelActive(ctx, review.ID, snap.RepoRoot, req.ClaudePID),
-		AIRequest:     organizeJSON,
+		HTTPPort:     s.httpPort,
+		ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
+		AIRequest:    organizeJSON,
 	}
 }
 
@@ -254,33 +287,35 @@ func (s *Server) reviewURL(slug string) string {
 
 const channelConsumer = "channel"
 
-// channelPollWindow is both how recent a channel resolve poll must be to count
-// as presence, and the boot grace during which handleStart keeps checking.
+// channelPollWindow is how recent a channel resolve poll must be to count as
+// presence; it only distinguishes pending from inactive.
 const channelPollWindow = 3 * time.Second
 
-// channelActive reports whether this window's channel consumer is wired to
-// this review: attached to its SSE stream or recently polling resolve for this
-// repo. The pid key is what keeps window A's polls from lighting up window B's
-// start. The channel server polls every second from session start, so on a
-// long-running daemon the answer is immediate. A daemon cold-booted by this
-// very start has no poll history yet, so keep checking until the boot grace
-// window closes — the channel's next 1s poll tick lands inside it. Never block
-// resolve on this: the channel's own poll is the signal source.
-func (s *Server) channelActive(ctx context.Context, reviewID, repoRoot string, pid int) bool {
-	for {
-		if s.activity.Attached(reviewID, channelConsumer, pid) ||
-			s.activity.PolledSince(repoRoot, channelConsumer, pid, channelPollWindow) {
-			return true
-		}
-		if time.Since(s.startedAt) >= channelPollWindow {
-			return false
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(100 * time.Millisecond):
-		}
+// channelState classifies this window's channel route. active requires a
+// proven round trip (the model acked a delivered channel tag) AND a channel
+// consumer currently attached to this review's SSE stream — presence alone can
+// never produce active, because Claude Code silently drops channel
+// notifications when channels are unavailable. An attached or recently-polling
+// but unproven consumer is pending; no consumer is inactive. Both non-active
+// states tell the skill to arm the Monitor. The pid key is what keeps window
+// A's signals from lighting up window B's start.
+func (s *Server) channelState(reviewID, repoRoot string, pid int) string {
+	attached := s.activity.Attached(reviewID, channelConsumer, pid)
+	if attached && s.activity.Proven(pid) {
+		return "active"
 	}
+	if attached || s.activity.PolledSince(repoRoot, channelConsumer, pid, channelPollWindow) {
+		return "pending"
+	}
+	return "inactive"
+}
+
+func (s *Server) handleChannelAck(_ context.Context, req Request) Response {
+	if req.ClaudePID == 0 {
+		return errResp("channel-ack requires a Claude window (no claude pid)")
+	}
+	s.activity.MarkProven(req.ClaudePID)
+	return Response{OK: true}
 }
 
 func (s *Server) handleResolve(ctx context.Context, req Request) Response {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -104,6 +105,37 @@ func runTurnHook(cmd *cobra.Command, send func(daemon.Request) error) {
 		Session: in.SessionID, ClaudePID: procs.ClaudePID(), Cwd: in.Cwd,
 		Prompt: in.Prompt, TranscriptPath: in.TranscriptPath,
 	})
+}
+
+// newChannelAckCmd is the hidden command the model runs when the first
+// <channel> tag arrives while its Monitor is armed: it proves the window's
+// channel round trip, flipping later starts from pending to active.
+func newChannelAckCmd() *cobra.Command {
+	var (
+		session string
+		cwd     string
+	)
+	cmd := &cobra.Command{
+		Use:    "channel-ack",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
+				return err
+			}
+			resp, err := daemon.NewClient().ChannelAck(session, mustCwd(cwd))
+			if err != nil {
+				return err
+			}
+			if !resp.OK {
+				return errors.New(resp.Error)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&session, "session", "", "Claude session id (keys the review with the repo root)")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory)")
+	return cmd
 }
 
 // newGuardEditCmd is the hidden PreToolUse(Edit|Write|NotebookEdit) hook handler.

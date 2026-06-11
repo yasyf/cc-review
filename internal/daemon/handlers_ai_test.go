@@ -480,13 +480,158 @@ func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
 		t.Fatalf("changed-tree start reused organize request id %q", ar.ID)
 	}
 
-	// An unchanged resume reuses the version: no organize request to return.
+	// An unchanged resume reuses the version and rescues the still-open
+	// organize request: same id, no fresh row.
 	third := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
 	if !third.OK || !third.Resumed {
 		t.Fatalf("resume: ok=%v resumed=%v err=%q", third.OK, third.Resumed, third.Error)
 	}
-	if len(third.AIRequest) != 0 {
-		t.Fatalf("unchanged resume returned ai_request %s, want empty", third.AIRequest)
+	var ar3 struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(third.AIRequest, &ar3); err != nil {
+		t.Fatal(err)
+	}
+	if ar3.ID != ar2.ID {
+		t.Fatalf("unchanged resume returned request %q, want the still-open %q", ar3.ID, ar2.ID)
+	}
+}
+
+func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name      string
+		organized bool   // submit an organization for the latest version before resuming
+		sysStatus string // move the eager system organize request here ("" keeps pending)
+		userOpen  bool   // add an open user-origin request before resuming
+		want      string // closed | rescued | fresh
+	}{
+		{name: "organized closes pending", organized: true, want: "closed"},
+		{name: "organized closes working", organized: true, sysStatus: "working", want: "closed"},
+		{name: "pending rescued with the same id", want: "rescued"},
+		{name: "working rescued with the same id", sysStatus: "working", want: "rescued"},
+		{name: "failed gets a fresh request", sysStatus: "failed", want: "fresh"},
+		{name: "open user request untouched", sysStatus: "failed", userOpen: true, want: "fresh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, repo := testServer(t)
+			req, started := startedReview(t, s, repo)
+			var sys struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(started.AIRequest, &sys); err != nil {
+				t.Fatal(err)
+			}
+			sysID, err := strconv.ParseInt(sys.ID, 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.sysStatus != "" {
+				if _, err := s.store.TransitionAIRequest(ctx, sysID, tc.sysStatus, "", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.organized {
+				submitOrg(t, s, req, started.Version, "a.go", "b.go")
+			}
+			var userID int64
+			if tc.userOpen {
+				ur, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, store.OriginUser, "mark a.go")
+				if err != nil {
+					t.Fatal(err)
+				}
+				userID = ur.ID
+			}
+			createdBefore := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false))
+			updatedBefore := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false))
+
+			resumed := s.handleStart(ctx, req)
+			if !resumed.OK || !resumed.Resumed || resumed.Version != started.Version {
+				t.Fatalf("resume: ok=%v resumed=%v version=%d err=%q", resumed.OK, resumed.Resumed, resumed.Version, resumed.Error)
+			}
+
+			switch tc.want {
+			case "closed":
+				if len(resumed.AIRequest) != 0 {
+					t.Fatalf("organized resume returned ai_request %s, want empty", resumed.AIRequest)
+				}
+				got, err := s.store.GetAIRequest(ctx, sysID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Status != "done" || !strings.Contains(got.Summary, "already organized") {
+					t.Fatalf("system request status=%q summary=%q, want done via already-organized", got.Status, got.Summary)
+				}
+				if got := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false)); got != updatedBefore+1 {
+					t.Fatalf("ai.request.updated events = %d, want exactly %d", got, updatedBefore+1)
+				}
+			case "rescued":
+				var ar struct {
+					ID     string `json:"id"`
+					Status string `json:"status"`
+				}
+				if err := json.Unmarshal(resumed.AIRequest, &ar); err != nil {
+					t.Fatal(err)
+				}
+				if ar.ID != sys.ID {
+					t.Fatalf("rescued id = %q, want the open request %q", ar.ID, sys.ID)
+				}
+				wantStatus := tc.sysStatus
+				if wantStatus == "" {
+					wantStatus = "pending"
+				}
+				if ar.Status != wantStatus {
+					t.Fatalf("rescued status = %q, want %q", ar.Status, wantStatus)
+				}
+				requests, err := s.store.ListAIRequests(ctx, started.ReviewID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(requests) != 1 {
+					t.Fatalf("requests = %d, want the single rescued row", len(requests))
+				}
+				if got := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)); got != createdBefore {
+					t.Fatalf("ai.request.created events = %d, want unchanged %d (no re-emit)", got, createdBefore)
+				}
+			case "fresh":
+				var ar struct {
+					ID     string `json:"id"`
+					Source string `json:"source"`
+					Status string `json:"status"`
+				}
+				if err := json.Unmarshal(resumed.AIRequest, &ar); err != nil {
+					t.Fatal(err)
+				}
+				if ar.ID == sys.ID {
+					t.Fatalf("fresh resume reused finished request id %q", ar.ID)
+				}
+				if ar.Source != "system" || ar.Status != "pending" {
+					t.Fatalf("fresh request = %+v, want a pending system request", ar)
+				}
+				created := eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)
+				if len(created) != createdBefore+1 {
+					t.Fatalf("ai.request.created events = %d, want %d", len(created), createdBefore+1)
+				}
+				var payload struct {
+					Request json.RawMessage `json:"request"`
+				}
+				if err := json.Unmarshal(created[len(created)-1].Payload, &payload); err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(payload.Request, resumed.AIRequest) {
+					t.Fatalf("event request = %s\nresponse ai_request = %s\nwant byte-identical", payload.Request, resumed.AIRequest)
+				}
+				if tc.userOpen {
+					got, err := s.store.GetAIRequest(ctx, userID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got.Status != "pending" {
+						t.Fatalf("user request status = %q, want untouched pending", got.Status)
+					}
+				}
+			}
+		})
 	}
 }
 
