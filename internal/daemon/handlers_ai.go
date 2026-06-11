@@ -149,7 +149,10 @@ func (s *Server) handleSubmitOrganization(ctx context.Context, req Request) Resp
 	if fail != nil {
 		return *fail
 	}
-	if req.VersionNumber != 0 && req.VersionNumber != v.VersionNumber {
+	if req.VersionNumber == 0 {
+		return errResp("submit-organization requires version_number — take it from get_review_files")
+	}
+	if req.VersionNumber != v.VersionNumber {
 		return errResp(fmt.Sprintf(
 			"stale version_number %d: the current version is %d — re-run get_review_files against the latest diff and resubmit",
 			req.VersionNumber, v.VersionNumber))
@@ -203,7 +206,7 @@ func (s *Server) handleReviewFiles(ctx context.Context, req Request) Response {
 		}
 		entries = append(entries, e)
 	}
-	result := map[string]any{"version_number": v.VersionNumber, "files": entries}
+	result := map[string]any{"version_number": v.VersionNumber, "patch_path": v.PatchPath, "files": entries}
 	if org, basis, ok, err := s.store.LatestOrganization(ctx, review.ID); err != nil {
 		return errResp(err.Error())
 	} else if ok {

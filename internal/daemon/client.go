@@ -133,8 +133,8 @@ func (c *Client) UpdateAIRequest(session, cwd string, aiRequestID int64, status,
 }
 
 // SubmitOrganization stores the chapter organization for the review's current
-// version. versionNumber 0 targets the current version unchecked; a stale
-// non-zero number is rejected with the current one in the error.
+// version. versionNumber is required and must match the current version; a
+// stale number is rejected with the current one in the error.
 func (c *Client) SubmitOrganization(session, cwd string, org store.Organization, versionNumber int) (*Response, error) {
 	return c.do(Request{
 		Op: OpSubmitOrganization, Session: session, Cwd: cwd,

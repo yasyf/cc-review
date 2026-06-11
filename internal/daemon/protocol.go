@@ -78,7 +78,7 @@ type Request struct {
 	Summary       string              `json:"summary,omitempty"`        // update-ai-request
 	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
-	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization: 0 = current
+	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization: required, must match the current version
 }
 
 // Response is one control-plane reply.

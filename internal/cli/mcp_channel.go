@@ -280,7 +280,7 @@ func updateAIRequestToolSchema() map[string]any {
 func submitOrganizationToolSchema() map[string]any {
 	return map[string]any{
 		"name":        "submit_organization",
-		"description": "Submit the review's chapter organization: every changed file in exactly one chapter, each rated by the risk of skimming it. A stale version_number is rejected with the current one.",
+		"description": "Submit the review's chapter organization: every changed file in exactly one chapter, each rated by the risk of skimming it. Chapter order is narrative; file order within a chapter is rank, scariest first. On resubmit keep every entry the new information doesn't touch byte-identical — the UI animates only what moved. A stale version_number is rejected with the current one.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -294,7 +294,8 @@ func submitOrganizationToolSchema() map[string]any {
 							"title":   map[string]any{"type": "string"},
 							"summary": map[string]any{"type": "string"},
 							"files": map[string]any{
-								"type": "array",
+								"type":        "array",
+								"description": "ordered by rank: scariest to review first",
 								"items": map[string]any{
 									"type": "object",
 									"properties": map[string]any{
@@ -310,7 +311,7 @@ func submitOrganizationToolSchema() map[string]any {
 					},
 				},
 			},
-			"required": []string{"chapters"},
+			"required": []string{"chapters", "version_number"},
 		},
 	}
 }
@@ -318,7 +319,7 @@ func submitOrganizationToolSchema() map[string]any {
 func getReviewFilesToolSchema() map[string]any {
 	return map[string]any{
 		"name":        "get_review_files",
-		"description": "List the open cc-review's current version number and files with status and review state — the server truth bulk operations must act on. Includes the latest organization (overview + chapters) with basis_version, per-file delta (changed/moved/removed; absent = unchanged), and new_paths.",
+		"description": "List the open cc-review's current version number, patch_path (the on-disk unified diff for the current version), and files with status and review state — the server truth bulk operations must act on. Includes the latest organization (overview + chapters) with basis_version, per-file delta (changed/moved/removed; absent = unchanged), and new_paths.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	}
 }

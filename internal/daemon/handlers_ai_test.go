@@ -199,6 +199,15 @@ func TestHandleSubmitOrganization(t *testing.T) {
 		{Path: "b.go", Risk: "mechanical", Rationale: "r"},
 	}}}
 
+	t.Run("missing version_number rejected", func(t *testing.T) {
+		r := req
+		r.Organization = &store.Organization{Chapters: chapters}
+		resp := s.handleSubmitOrganization(ctx, r)
+		if resp.OK || !strings.Contains(resp.Error, "requires version_number") {
+			t.Fatalf("ok=%v err=%q, want requires-version_number rejection", resp.OK, resp.Error)
+		}
+	})
+
 	t.Run("stale version_number rejected with the current one", func(t *testing.T) {
 		r := req
 		r.Organization = &store.Organization{Chapters: chapters}
@@ -214,6 +223,7 @@ func TestHandleSubmitOrganization(t *testing.T) {
 		r := req
 		r.Organization = &store.Organization{Chapters: []store.Chapter{{Title: "Partial", Summary: "s",
 			Files: []store.ChapterFile{{Path: "a.go", Risk: "low", Rationale: "r"}}}}}
+		r.VersionNumber = started.Version
 		resp := s.handleSubmitOrganization(ctx, r)
 		if resp.OK || !strings.Contains(resp.Error, "missing paths: b.go") {
 			t.Fatalf("ok=%v err=%q, want missing-path enumeration", resp.OK, resp.Error)
@@ -243,6 +253,33 @@ func TestHandleSubmitOrganization(t *testing.T) {
 			t.Fatalf("organization.updated events = %+v, want one claude-origin event", events)
 		}
 	})
+}
+
+func TestReviewFilesIncludesPatchPath(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	req, started := startedReview(t, s, repo)
+
+	v, _, err := s.store.LatestVersion(ctx, started.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.PatchPath == "" {
+		t.Fatal("version stored without a patch path")
+	}
+	resp := s.handleReviewFiles(ctx, req)
+	if !resp.OK {
+		t.Fatalf("review-files: %s", resp.Error)
+	}
+	var rf struct {
+		PatchPath string `json:"patch_path"`
+	}
+	if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
+		t.Fatal(err)
+	}
+	if rf.PatchPath != v.PatchPath {
+		t.Fatalf("patch_path = %q, want the stored %q", rf.PatchPath, v.PatchPath)
+	}
 }
 
 func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
