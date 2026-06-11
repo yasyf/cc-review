@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -387,6 +388,68 @@ func TestUpdateAIRequestEventCarriesCurrentVersion(t *testing.T) {
 	}
 	if payload.VersionNumber != second.Version || payload.Request.ID != strconv.FormatInt(ar.ID, 10) {
 		t.Fatalf("payload = %+v, want version %d for request %d", payload, second.Version, ar.ID)
+	}
+}
+
+func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	_, started := startedReview(t, s, repo)
+
+	if len(started.AIRequest) == 0 {
+		t.Fatal("fresh start must return the organize request eagerly")
+	}
+	var ar struct {
+		ID     string `json:"id"`
+		Source string `json:"source"`
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal(started.AIRequest, &ar); err != nil {
+		t.Fatalf("ai_request is not valid JSON: %v", err)
+	}
+	if ar.Source != "system" || ar.Prompt != organizePrompt {
+		t.Fatalf("ai_request = %+v, want the system organize request", ar)
+	}
+
+	// The dedupe contract: the response carries the same bytes (and so the same
+	// id) as the request object inside the ai.request.created event payload.
+	created := eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)
+	if len(created) != 1 {
+		t.Fatalf("ai.request.created events = %d, want 1", len(created))
+	}
+	var payload struct {
+		Request json.RawMessage `json:"request"`
+	}
+	if err := json.Unmarshal(created[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(payload.Request, started.AIRequest) {
+		t.Fatalf("event request = %s\nresponse ai_request = %s\nwant byte-identical", payload.Request, started.AIRequest)
+	}
+
+	// A changed tree lands a new version with a fresh request id.
+	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
+	second := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !second.OK || len(second.AIRequest) == 0 {
+		t.Fatalf("second start: ok=%v err=%q ai_request=%s", second.OK, second.Error, second.AIRequest)
+	}
+	var ar2 struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(second.AIRequest, &ar2); err != nil {
+		t.Fatal(err)
+	}
+	if ar2.ID == ar.ID {
+		t.Fatalf("changed-tree start reused organize request id %q", ar.ID)
+	}
+
+	// An unchanged resume reuses the version: no organize request to return.
+	third := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !third.OK || !third.Resumed {
+		t.Fatalf("resume: ok=%v resumed=%v err=%q", third.OK, third.Resumed, third.Error)
+	}
+	if len(third.AIRequest) != 0 {
+		t.Fatalf("unchanged resume returned ai_request %s, want empty", third.AIRequest)
 	}
 }
 

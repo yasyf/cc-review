@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -39,6 +40,10 @@ func newStartCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "channel: inactive")
 			}
+			offer, reason, offerErr := channelsOffer()
+			for _, line := range startExtraLines(offer, reason, offerErr, resp.AIRequest) {
+				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
 			return nil
 		},
 	}
@@ -47,4 +52,20 @@ func newStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&fresh, "new", false, "force a fresh review, detaching any existing one for this session")
 	cmd.Flags().StringVar(&base, "base", "", "pin a new review's diff base: the fork point of this ref and the working copy (default: HEAD, falling back to trunk when the working tree is clean)")
 	return cmd
+}
+
+// startExtraLines renders the setup: line (always) and the organize: line
+// (only when the daemon returned an eager organize request). An offer error
+// degrades to offer=false with the error as the reason — start never fails on
+// the setup check.
+func startExtraLines(offer bool, reason string, offerErr error, organize json.RawMessage) []string {
+	if offerErr != nil {
+		offer, reason = false, offerErr.Error()
+	}
+	setup, _ := json.Marshal(map[string]any{"offer": offer, "reason": reason})
+	lines := []string{"setup: " + string(setup)}
+	if len(organize) > 0 {
+		lines = append(lines, "organize: "+string(organize))
+	}
+	return lines
 }
