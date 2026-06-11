@@ -138,6 +138,23 @@ export interface AiRequest {
   updatedAt: string;
 }
 
+export interface Turn {
+  id: string;
+  sessionId: string;
+  prompt: string;
+  interrupted: boolean;
+  startedAt: number;
+  endedAt: number;
+}
+
+// New-side 1-based inclusive added-line range; a missing turnId means a
+// manual or pre-existing edit.
+export interface AttributionRange {
+  start: number;
+  end: number;
+  turnId?: string;
+}
+
 export interface SessionResponse {
   review: Review;
   version: number;
@@ -152,6 +169,10 @@ export interface SessionResponse {
   organization: Organization | null;
   // Newest first.
   aiRequests: AiRequest[];
+  // Ordered; display seq = index + 1.
+  turns: Turn[];
+  // Keyed by path; ranges sorted by start within each file.
+  attributions: Record<string, AttributionRange[]>;
   claudeConnected: boolean;
   // Max event seq when the session was fetched, int64-as-string ("0" when no
   // events). The SSE handler toasts only frames newer than this, so the

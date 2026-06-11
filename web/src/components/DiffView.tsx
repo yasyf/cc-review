@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { Ref } from 'react';
-import type { CodeViewOptions, SelectedLineRange } from '@pierre/diffs';
+import type { CodeViewOptions, LineTypes, PostRenderPhase, SelectedLineRange } from '@pierre/diffs';
 import { CodeView } from '@pierre/diffs/react';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { useSetFileStates } from '../lib/api';
+import {
+  TURN_UNSAFE_CSS,
+  buildTurnIndex,
+  decorateContainer,
+  firstOccurrence,
+  turnIdAt,
+} from '../lib/attribution';
+import type { TurnIndexEntry } from '../lib/attribution';
 import { buildItems, parseFiles } from '../lib/diff';
 import type { AnnotationMeta, ComposerDraft, ReviewItem } from '../lib/diff';
 import { clearDraft, composerDraftKey } from '../lib/drafts';
@@ -15,6 +23,7 @@ import { themes } from '../worker';
 import { CommentThread } from './CommentThread';
 import { FileHeaderControls } from './FileHeaderControls';
 import { InlineComposer } from './InlineComposer';
+import { TurnPopover } from './TurnPopover';
 
 // The imperative surface the rest of the app uses to navigate the diff; only
 // this component talks to @pierre/diffs directly.
@@ -32,13 +41,17 @@ const MAX_PENDING_SCROLL_MISSES = 5;
 
 export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref<DiffViewHandle> }) {
   const { slug, version } = useReview();
-  const { viewMode, hideReviewed, expandOverrides, toggleExpandOverride } = useViewPrefs();
+  const { viewMode, hideReviewed, expandOverrides, toggleExpandOverride, activeTurnId } =
+    useViewPrefs();
   const { mutate: mutateStates } = useSetFileStates(slug, version);
   const codeView = useRef<CodeViewHandle<AnnotationMeta>>(null);
   const seqRef = useRef(0);
   const [draft, setDraft] = useState<ComposerDraft | null>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScroll | null>(null);
   const pendingScrollMisses = useRef(0);
+  const [hoverTurn, setHoverTurn] = useState<{ entry: TurnIndexEntry; x: number; y: number } | null>(
+    null,
+  );
 
   const readOnly = session.review.status === 'submitted';
 
@@ -81,6 +94,53 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     if (draft && !items.some((item) => item.id === draft.filePath)) closeDraft();
   }, [draft, items, closeDraft]);
 
+  const turnIndex = useMemo(() => buildTurnIndex(session.turns), [session.turns]);
+
+  // Attribution inputs ride through refs so the options identity stays stable
+  // across turn-focus and attribution changes — an options swap would re-render
+  // every diff. The decorate effect below repaints what's already on screen;
+  // onPostRender covers everything rendered afterwards.
+  const attributionsRef = useRef(session.attributions);
+  const turnIndexRef = useRef(turnIndex);
+  const activeTurnIdRef = useRef(activeTurnId);
+  useEffect(() => {
+    attributionsRef.current = session.attributions;
+    turnIndexRef.current = turnIndex;
+    activeTurnIdRef.current = activeTurnId;
+  });
+
+  useEffect(() => {
+    const instance = codeView.current?.getInstance();
+    if (!instance) return;
+    for (const rendered of instance.getRenderedItems()) {
+      decorateContainer(
+        rendered.element,
+        session.attributions[rendered.id] ?? [],
+        turnIndex,
+        activeTurnId,
+      );
+    }
+  }, [session.attributions, turnIndex, activeTurnId]);
+
+  // Focusing a turn (from the legend) jumps to its first attributed line; a
+  // re-fire on attribution updates alone must not re-scroll.
+  const prevActiveTurnId = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeTurnId !== null && activeTurnId !== prevActiveTurnId.current) {
+      const target = firstOccurrence(session.attributions, activeTurnId);
+      if (target) {
+        codeView.current?.scrollTo({
+          type: 'range',
+          id: target.file,
+          range: { start: target.line, end: target.line, side: 'additions', endSide: 'additions' },
+          align: 'center',
+          behavior: 'smooth',
+        });
+      }
+    }
+    prevActiveTurnId.current = activeTurnId;
+  }, [activeTurnId, session.attributions]);
+
   const options = useMemo<CodeViewOptions<AnnotationMeta>>(
     () => ({
       theme: themes,
@@ -101,6 +161,39 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       // Must stay non-null: the library only routes "+" pointer-downs into
       // gutter selection when this callback exists.
       onGutterUtilityClick: () => {},
+      unsafeCSS: TURN_UNSAFE_CSS,
+      onPostRender: (
+        node: HTMLElement,
+        _instance: unknown,
+        phase: PostRenderPhase,
+        context: { item: { id: string } },
+      ) => {
+        if (phase === 'unmount') return;
+        decorateContainer(
+          node,
+          attributionsRef.current[context.item.id] ?? [],
+          turnIndexRef.current,
+          activeTurnIdRef.current,
+        );
+      },
+      onLineEnter: (
+        props: { lineNumber: number; lineElement: HTMLElement; lineType?: LineTypes },
+        context: { item: { id: string } },
+      ) => {
+        if (props.lineType !== 'change-addition') {
+          setHoverTurn(null);
+          return;
+        }
+        const turnId = turnIdAt(attributionsRef.current[context.item.id] ?? [], props.lineNumber);
+        const entry = turnId ? turnIndexRef.current.get(turnId) : undefined;
+        if (!entry) {
+          setHoverTurn(null);
+          return;
+        }
+        const rect = props.lineElement.getBoundingClientRect();
+        setHoverTurn({ entry, x: rect.left + 8, y: rect.bottom + 4 });
+      },
+      onLineLeave: () => setHoverTurn(null),
     }),
     [readOnly, openDraft, closeDraft],
   );
@@ -197,6 +290,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
       />
+      {hoverTurn ? <TurnPopover entry={hoverTurn.entry} x={hoverTurn.x} y={hoverTurn.y} /> : null}
     </div>
   );
 }

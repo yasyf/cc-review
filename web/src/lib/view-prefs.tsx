@@ -25,10 +25,14 @@ interface ViewPrefsValue extends StoredPrefs {
   // Paths the user explicitly peeked at: an override both expands a collapsed
   // reviewed file and exempts it from the hide-reviewed filter. In-memory only.
   expandOverrides: ReadonlySet<string>;
+  // The turn whose attributed lines are highlighted in the diff; everything
+  // else dims. In-memory only.
+  activeTurnId: string | null;
   setViewMode(mode: ViewMode): void;
   setHideReviewed(hide: boolean): void;
   toggleExpandOverride(path: string): void;
   clearExpandOverride(path: string): void;
+  setActiveTurnId(id: string | null): void;
 }
 
 const ViewPrefsContext = createContext<ViewPrefsValue | null>(null);
@@ -55,10 +59,13 @@ export function ViewPrefsProvider({
   }, [reviewId, prefs]);
 
   const [expandOverrides, setExpandOverrides] = useState<ReadonlySet<string>>(new Set());
+  const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
 
-  // Peeks are per version: a new version's reviewed files start folded again.
+  // Peeks and turn focus are per version: a new version's reviewed files start
+  // folded again and its turns are a different set.
   useEffect(() => {
     setExpandOverrides(new Set());
+    setActiveTurnId(null);
   }, [versionId]);
 
   const setViewMode = useCallback((viewMode: ViewMode) => {
@@ -92,10 +99,12 @@ export function ViewPrefsProvider({
       value={{
         ...prefs,
         expandOverrides,
+        activeTurnId,
         setViewMode,
         setHideReviewed,
         toggleExpandOverride,
         clearExpandOverride,
+        setActiveTurnId,
       }}
     >
       {children}

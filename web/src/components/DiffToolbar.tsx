@@ -1,6 +1,7 @@
 import type { SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import type { ViewMode } from '../lib/view-prefs';
+import { TurnLegend } from './TurnLegend';
 
 const MODES: { id: ViewMode; label: string }[] = [
   { id: 'default', label: 'Default' },
@@ -34,6 +35,7 @@ export function DiffToolbar({ session }: { session: SessionResponse }) {
         ))}
       </div>
       {organizing ? <span className="organizing-chip">organizing…</span> : null}
+      <TurnLegend turns={session.turns} />
       <label className="hide-reviewed">
         <input
           type="checkbox"
