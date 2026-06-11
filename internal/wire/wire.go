@@ -87,6 +87,24 @@ type AIRequest struct {
 	UpdatedAt string            `json:"updatedAt"`
 }
 
+// Turn is the SPA's view of one Claude prompt→stop window.
+type Turn struct {
+	ID            string `json:"id"`
+	SessionID     string `json:"sessionId"`
+	PromptExcerpt string `json:"prompt"`
+	Interrupted   bool   `json:"interrupted"`
+	StartedAt     int64  `json:"startedAt"`
+	EndedAt       int64  `json:"endedAt"`
+}
+
+// AttributionRange is the SPA's view of one attributed line span; an omitted
+// turnId means unattributed.
+type AttributionRange struct {
+	Start  int    `json:"start"`
+	End    int    `json:"end"`
+	TurnID string `json:"turnId,omitempty"`
+}
+
 // ToReview converts a store review, taking the branch from the active version
 // (branch lives on the version, not the review).
 func ToReview(r store.Review, branch string) Review {
@@ -130,6 +148,24 @@ func ToAIRequest(r store.AIRequest) AIRequest {
 	}
 	if out.Changes == nil {
 		out.Changes = []store.AIChange{}
+	}
+	return out
+}
+
+// ToTurn converts a store turn.
+func ToTurn(t store.Turn) Turn {
+	return Turn{
+		ID: id(t.ID), SessionID: t.SessionID, PromptExcerpt: t.PromptExcerpt,
+		Interrupted: t.Status == "interrupted", StartedAt: t.StartedAt, EndedAt: t.EndedAt,
+	}
+}
+
+// ToAttributionRange converts a store attribution range; a zero TurnID becomes
+// an omitted turnId.
+func ToAttributionRange(r store.AttributionRange) AttributionRange {
+	out := AttributionRange{Start: r.Start, End: r.End}
+	if r.TurnID != 0 {
+		out.TurnID = id(r.TurnID)
 	}
 	return out
 }

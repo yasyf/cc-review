@@ -20,17 +20,19 @@ import (
 // --- wire types ------------------------------------------------------------
 
 type sessionResponse struct {
-	Review          wire.Review               `json:"review"`
-	Version         int                       `json:"version"`
-	VersionID       string                    `json:"versionId"`
-	Files           json.RawMessage           `json:"files"`
-	Patch           string                    `json:"patchText"`
-	Comments        []wire.Comment            `json:"comments"`
-	FileStates      map[string]wire.FileState `json:"fileStates"`
-	Organization    *store.Organization       `json:"organization"`
-	AIRequests      []wire.AIRequest          `json:"aiRequests"`
-	ClaudeConnected bool                      `json:"claudeConnected"`
-	LatestEventSeq  string                    `json:"latestEventSeq"`
+	Review          wire.Review                        `json:"review"`
+	Version         int                                `json:"version"`
+	VersionID       string                             `json:"versionId"`
+	Files           json.RawMessage                    `json:"files"`
+	Patch           string                             `json:"patchText"`
+	Comments        []wire.Comment                     `json:"comments"`
+	FileStates      map[string]wire.FileState          `json:"fileStates"`
+	Organization    *store.Organization                `json:"organization"`
+	AIRequests      []wire.AIRequest                   `json:"aiRequests"`
+	Turns           []wire.Turn                        `json:"turns"`
+	Attributions    map[string][]wire.AttributionRange `json:"attributions"`
+	ClaudeConnected bool                               `json:"claudeConnected"`
+	LatestEventSeq  string                             `json:"latestEventSeq"`
 }
 
 type createCommentReq struct {
@@ -161,6 +163,36 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for _, ar := range requests {
 		aiRequests = append(aiRequests, wire.ToAIRequest(ar))
 	}
+	attrsByFile, err := s.store.ListAttributionsByVersion(ctx, version.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	attributions := make(map[string][]wire.AttributionRange, len(attrsByFile))
+	turnIDSet := make(map[int64]bool)
+	for path, ranges := range attrsByFile {
+		out := make([]wire.AttributionRange, 0, len(ranges))
+		for _, rg := range ranges {
+			out = append(out, wire.ToAttributionRange(rg))
+			if rg.TurnID != 0 {
+				turnIDSet[rg.TurnID] = true
+			}
+		}
+		attributions[path] = out
+	}
+	turnIDs := make([]int64, 0, len(turnIDSet))
+	for tid := range turnIDSet {
+		turnIDs = append(turnIDs, tid)
+	}
+	storeTurns, err := s.store.ListTurnsByIDs(ctx, turnIDs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	turns := make([]wire.Turn, 0, len(storeTurns))
+	for _, t := range storeTurns {
+		turns = append(turns, wire.ToTurn(t))
+	}
 	latestSeq, err := s.store.MaxEventSeq(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -176,6 +208,8 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		FileStates:      fileStates,
 		Organization:    organization,
 		AIRequests:      aiRequests,
+		Turns:           turns,
+		Attributions:    attributions,
 		ClaudeConnected: s.backend.ClaudeConnected(review.ID),
 		LatestEventSeq:  strconv.FormatInt(latestSeq, 10),
 	})

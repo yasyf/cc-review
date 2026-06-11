@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/wire"
 )
 
 func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store.Review, store.Version) {
@@ -303,6 +305,17 @@ func TestSessionCarriesLatestEventSeq(t *testing.T) {
 
 func getSessionLatestSeq(t *testing.T, srv *httptest.Server, ref string) string {
 	t.Helper()
+	var out struct {
+		LatestEventSeq string `json:"latestEventSeq"`
+	}
+	if err := json.Unmarshal(getSessionBody(t, srv, ref), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.LatestEventSeq
+}
+
+func getSessionBody(t *testing.T, srv *httptest.Server, ref string) []byte {
+	t.Helper()
 	resp, err := http.Get(srv.URL + "/api/session/" + ref)
 	if err != nil {
 		t.Fatal(err)
@@ -311,11 +324,89 @@ func getSessionLatestSeq(t *testing.T, srv *httptest.Server, ref string) string 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("session status = %d, want 200", resp.StatusCode)
 	}
-	var out struct {
-		LatestEventSeq string `json:"latestEventSeq"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return out.LatestEventSeq
+	return body
+}
+
+func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	ctx := context.Background()
+	review, version := createReviewVersion(t, st, `[]`)
+
+	t1, err := st.CreateTurn(ctx, store.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CloseTurn(ctx, t1.ID, "tree1", "closed"); err != nil {
+		t.Fatal(err)
+	}
+	t2, err := st.CreateTurn(ctx, store.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "fix tests"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CloseOpenTurnsForWindow(ctx, "/repo", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutAttributions(ctx, version.ID, map[string][]store.AttributionRange{
+		"a.go": {{Start: 1, End: 3, TurnID: t2.ID}, {Start: 7, End: 9}},
+		"b.go": {{Start: 2, End: 2, TurnID: t1.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getSessionBody(t, srv, review.ID)
+	var out struct {
+		Turns        []wire.Turn                        `json:"turns"`
+		Attributions map[string][]wire.AttributionRange `json:"attributions"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := st.ListTurnsByIDs(ctx, []int64{t1.ID, t2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTurns := []wire.Turn{
+		{ID: strconv.FormatInt(t1.ID, 10), SessionID: "s1", PromptExcerpt: "add parser",
+			StartedAt: stored[0].StartedAt, EndedAt: stored[0].EndedAt},
+		{ID: strconv.FormatInt(t2.ID, 10), SessionID: "s1", PromptExcerpt: "fix tests", Interrupted: true,
+			StartedAt: stored[1].StartedAt, EndedAt: stored[1].EndedAt},
+	}
+	if !reflect.DeepEqual(out.Turns, wantTurns) {
+		t.Fatalf("turns = %+v, want %+v", out.Turns, wantTurns)
+	}
+	wantAttrs := map[string][]wire.AttributionRange{
+		"a.go": {{Start: 1, End: 3, TurnID: strconv.FormatInt(t2.ID, 10)}, {Start: 7, End: 9}},
+		"b.go": {{Start: 2, End: 2, TurnID: strconv.FormatInt(t1.ID, 10)}},
+	}
+	if !reflect.DeepEqual(out.Attributions, wantAttrs) {
+		t.Fatalf("attributions = %+v, want %+v", out.Attributions, wantAttrs)
+	}
+
+	var raw struct {
+		Attributions map[string][]map[string]json.RawMessage `json:"attributions"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw.Attributions["a.go"][1]["turnId"]; ok {
+		t.Fatalf("untagged range serialized a turnId key: %s", body)
+	}
+}
+
+func TestSessionEmptyTurnsAndAttributionsSerializeNonNull(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	review, _ := createReviewVersion(t, st, `[]`)
+
+	body := getSessionBody(t, srv, review.ID)
+	if !bytes.Contains(body, []byte(`"turns":[]`)) {
+		t.Fatalf(`session body lacks "turns":[]: %s`, body)
+	}
+	if !bytes.Contains(body, []byte(`"attributions":{}`)) {
+		t.Fatalf(`session body lacks "attributions":{}: %s`, body)
+	}
 }
