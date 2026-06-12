@@ -7,12 +7,12 @@ description: Start or resume a cc-review review of the code Claude just wrote. O
 
 You are running a code review. The human reviews your uncommitted changes in a browser; their comments stream to you here; you ask clarifying questions that render under each comment; you make **no edits** until they press **Submit**. Everything is CLI calls to `cc-review` — you are a thin wrapper around it.
 
-`cc-review` is on `PATH`. If it's missing, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"` once.
+The binary is `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review"` — always invoke it by that absolute path, never as bare `cc-review`. If it's missing, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"` once.
 
 ## 1. Start the review and give the user the URL
 
 ```bash
-cc-review start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
 It prints, in order:
@@ -36,12 +36,12 @@ Use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_backg
 - **`channel: pending`** or **`channel: inactive`** — launch a **Monitor** (persistent) wrapping:
 
   ```bash
-  cc-review watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+  "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
   ```
 
   Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification. `pending` means the channel server is wired but unproven — Claude Code may be silently dropping its notifications — so the Monitor is the route.
 
-If a `<channel source="cc-review">` tag arrives while the Monitor is armed, channels are live: run `cc-review channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop the Monitor with **TaskStop**, and rely on tags from then on — dedupe the brief overlap by event id. Delivery is at-least-once: a Monitor re-armed in a later session may replay events you already handled as tags; treat already-handled events as informational (replies dedupe server-side, organize dispatch dedupes by request id).
+If a `<channel source="cc-review">` tag arrives while the Monitor is armed, channels are live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop the Monitor with **TaskStop**, and rely on tags from then on — dedupe the brief overlap by event id. Delivery is at-least-once: a Monitor re-armed in a later session may replay events you already handled as tags; treat already-handled events as informational (replies dedupe server-side, organize dispatch dedupes by request id).
 
 Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
 
@@ -49,8 +49,8 @@ Either way: **do not block waiting.** Tell the user you're watching and let thei
 
 The `setup:` line from step 1 is the offer check. If it printed `"offer":true`, once event delivery is wired up and you're idle — **don't block the review on it** — ask the user via **AskUserQuestion**: approve cc-review as a Claude channel? It goes on the approved allowlist in managed settings (one macOS admin-password prompt), so `--channels` launches load it with no dev-channels warning.
 
-- **Yes** — run `cc-review setup-channels --apply` (a password dialog appears). Then tell them: launch with `--channels plugin:cc-review@cc-review` (replacing `--dangerously-load-development-channels plugin:cc-review@cc-review` if they used it) — same channel, no warning.
-- **No** — run `cc-review setup-channels --decline`.
+- **Yes** — run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" setup-channels --apply` (a password dialog appears). Then tell them: launch with `--channels plugin:cc-review@cc-review` (replacing `--dangerously-load-development-channels plugin:cc-review@cc-review` if they used it) — same channel, no warning.
+- **No** — run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" setup-channels --decline`.
 
 Asked once either way. If `offer` is false, skip silently — `reason` says why. See `reference/channels-setup.md`.
 
@@ -67,13 +67,13 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 
 ```bash
 # a clarifying question
-cc-review reply --comment <commentId> --kind question --body "Did you mean X or Y here?"
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" reply --comment <commentId> --kind question --body "Did you mean X or Y here?"
 # a structured ask (renders as an AskUserQuestion-style card)
-cc-review reply --comment <commentId> --kind ask --body "Which approach?" \
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" reply --comment <commentId> --kind ask --body "Which approach?" \
   --header "Approach" [--multi-select] \
   --options-json '[{"label":"Keep as-is","description":"why..."},{"label":"Extract a helper","description":"why...","preview":"code or markdown shown in a side pane"}]'
 # a free-form note
-cc-review reply --comment <commentId> --kind clarification --body "Note: this also affects callers in foo.go"
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" reply --comment <commentId> --kind clarification --body "Note: this also affects callers in foo.go"
 ```
 
 `reply` returns immediately. Then go back to waiting for the next notification. **Never edit code in this phase.** A hook blocks edits until Submit anyway.
@@ -83,26 +83,26 @@ cc-review reply --comment <commentId> --kind clarification --body "Note: this al
 The submit signal is the Monitor's final line (it exits) on the Monitor path, or a channel tag whose JSON `type` is `submit` on the channel path. Now:
 
 ```bash
-cc-review feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
 ```
 
 This prints the frozen feedback JSON: `threads` (every comment + the back-and-forth) and `open_questions` (your questions the human didn't answer in the UI). Asks the human already answered in the web UI arrived earlier as `comment.updated` events — the ask reply carries `answered: true` and `askAnswer` — and are not in `open_questions`; don't re-ask them. For each open question, ask the human via **AskUserQuestion** (≤4 per call; loop if there are more). When the entry carries `ask`, map it 1:1 onto AskUserQuestion — the field names match: `question` is the question text, `ask.header` the header, `ask.options[].label`/`description` the options, `ask.multiSelect` the multiSelect (absent means false), and an option's `preview` the option preview. Write the pick back:
 
 ```bash
-cc-review reply --answer-to <replyId> --select "<label>" [--select "<label>"] [--other "<free text>"] [--notes "<note>"]
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" reply --answer-to <replyId> --select "<label>" [--select "<label>"] [--other "<free text>"] [--notes "<note>"]
 ```
 
 For a plain `question` entry (no `ask`), write back free text instead:
 
 ```bash
-cc-review reply --answer-to <replyId> --answer "<the human's answer>"
+"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" reply --answer-to <replyId> --answer "<the human's answer>"
 ```
 
 **Only after the open questions are drained do you make code changes.** Apply the feedback from `threads` (and the answers) to the code.
 
 ## 6. Later rounds
 
-After you make changes, the user can run `/cc-review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. `cc-review start --new` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed. It also carries the chapter organization forward when the new diff is identical to the last organized one.
+After you make changes, the user can run `/cc-review:start` again. It resumes the **same** review as a new version with a clean comment slate against the new diff — across `/clear` and resume in the same Claude window — and all prior history is retained. Passing `--new` to `start` forces a fresh review instead. The daemon carries reviewed state forward and unmarks only the files whose diff changed — never touch reviewed flags because the version changed. It also carries the chapter organization forward when the new diff is identical to the last organized one.
 
 ## Reference
 

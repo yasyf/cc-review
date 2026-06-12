@@ -2,9 +2,9 @@
 
 **The binary is missing.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"`. It downloads the release binary for this platform into `bin/cc-review`. The SessionStart hook runs this automatically on the first session.
 
-**No comment notifications arrive.** Confirm the Monitor is running (`/tasks`) and that you launched it with `persistent: true`. `cc-review watch` writes one line per event straight to stdout (unbuffered), so as long as the Monitor is armed, each comment becomes a notification. Check the daemon is up with `cc-review status`.
+**No comment notifications arrive.** Confirm the Monitor is running (`/tasks`) and that you launched it with `persistent: true`. `cc-review watch` writes one line per event straight to stdout (unbuffered), so as long as the Monitor is armed, each comment becomes a notification. Check the daemon is up with `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" status`.
 
-**`channel: pending` printed / tags never arrive.** `pending` is wired-but-unproven: the channel server is attached, but Claude Code may be silently dropping its notifications. The Monitor is the route — arm it exactly as on `inactive`. On the first real `<channel source="cc-review">` tag, run `cc-review channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"` so future starts in this window print `active`. Sessions launched without `--channels`, or where Claude Code prints *"--channels ignored"* / *"Channels are not currently available"*, correctly stay `pending` or `inactive`.
+**`channel: pending` printed / tags never arrive.** `pending` is wired-but-unproven: the channel server is attached, but Claude Code may be silently dropping its notifications. The Monitor is the route — arm it exactly as on `inactive`. On the first real `<channel source="cc-review">` tag, run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"` so future starts in this window print `active`. Sessions launched without `--channels`, or where Claude Code prints *"--channels ignored"* / *"Channels are not currently available"*, correctly stay `pending` or `inactive`.
 
 **A flood of comments stopped the Monitor.** Monitors stop themselves under a high event rate. Re-arm the Monitor; `watch` resumes from its cursor, so you miss nothing.
 

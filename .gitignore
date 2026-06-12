@@ -43,6 +43,7 @@ internal/web/dist/*
 !internal/web/dist/index.html
 
 # Plugin binary — built locally or downloaded from release assets, not committed.
-# The bin/ dir itself ships (`.gitkeep`) so Claude Code adds it to the Bash PATH.
+# `.gitkeep` keeps the dir present in fresh checkouts as install-binary.sh's target;
+# Claude Code puts every enabled plugin's bin/ on the Bash PATH unconditionally.
 plugin/bin/*
 !plugin/bin/.gitkeep
