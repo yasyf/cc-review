@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0]
+
+Ends the daemon version war: concurrent sessions pinned to different cached
+plugin versions no longer kill and respawn the shared daemon on every turn
+boundary.
+
+### Fixed
+- Newest-wins eviction: only a strictly newer binary replaces a running
+  daemon; older clients accept a newer daemon instead of evicting it. Dev
+  builds rank newest, so `task dev-daemon` still takes over a release daemon.
+- The daemon rebinds its previously published HTTP port when free, and no
+  longer deletes `http.json` on shutdown — review URLs survive daemon swaps,
+  upgrades, and crashes.
+- `channel.changed` connectivity flips are delivered to the browser only
+  (the Claude-connected dot); the `channel` and `watch` consumer streams
+  filter them, so they never reach the agent's context.
+
+### Added
+- `~/.cc-review/daemon.log`: lazily spawned daemons append stdout/stderr
+  there, so a daemon death is diagnosable after the fact.
+
 ## [0.10.0]
 
 cc-review joins the cc-family session-activity platform. **Upgrading wipes
