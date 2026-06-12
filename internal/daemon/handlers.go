@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
+	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/feedback"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/session"
@@ -518,13 +520,54 @@ func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
 	if !ok {
 		return Response{OK: true, Allow: true} // no review: nothing to guard
 	}
+	reason := ""
 	if review.Status == "open" {
-		return Response{
-			OK: true, Allow: false,
-			Reason: "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser.",
-		}
+		reason = "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser."
 	}
-	return Response{OK: true, Allow: true}
+	s.recordGateDecision(req, review.ID, reason)
+	return Response{OK: true, Allow: reason == "", Reason: reason}
+}
+
+// recordGateDecision ledgers a resolved gate verdict in decisions_v1. A
+// deliberate deviation from fail-fast: the gate's job is the verdict, the
+// ledger row is telemetry — digest or append failures log and never affect
+// the response.
+func (s *Server) recordGateDecision(req Request, reviewID, reason string) {
+	action := "allow"
+	if reason != "" {
+		action = "block"
+	}
+	toolDigest, err := digest.Tool(req.ToolName, req.ToolInput)
+	if err != nil {
+		toolDigest = ""
+		s.log.Printf("gate decision: digest: %v", err)
+	}
+	detail := map[string]any{"review_id": reviewID}
+	if fp := toolInputFilePath(req.ToolInput); fp != "" {
+		detail["file_path"] = fp
+	}
+	detailJSON, _ := json.Marshal(detail)
+	if err := s.decisions.Append(decisions.Decision{
+		TsMs: time.Now().UnixMilli(), SessionID: req.Session, Source: "cc-review", Kind: "gate",
+		Event: "PreToolUse", Action: action, ToolName: req.ToolName, ToolDigest: toolDigest,
+		Message: reason, DetailJSON: string(detailJSON),
+	}); err != nil {
+		s.log.Printf("gate decision: append: %v", err)
+	}
+}
+
+// toolInputFilePath pulls the guarded file out of a raw tool input: file_path
+// for Edit/Write, notebook_path for NotebookEdit.
+func toolInputFilePath(input json.RawMessage) string {
+	var in struct {
+		FilePath     string `json:"file_path"`
+		NotebookPath string `json:"notebook_path"`
+	}
+	_ = json.Unmarshal(input, &in)
+	if in.FilePath != "" {
+		return in.FilePath
+	}
+	return in.NotebookPath
 }
 
 // --- helpers ---------------------------------------------------------------

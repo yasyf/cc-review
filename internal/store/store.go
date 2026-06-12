@@ -129,8 +129,6 @@ CREATE TABLE IF NOT EXISTS turns (
   session_id        TEXT NOT NULL DEFAULT '',
   claude_pid        INTEGER NOT NULL DEFAULT 0,
   prompt_excerpt    TEXT NOT NULL DEFAULT '',
-  transcript_path   TEXT NOT NULL DEFAULT '',
-  transcript_offset INTEGER NOT NULL DEFAULT -1,
   tree_start        TEXT NOT NULL,
   tree_end          TEXT NOT NULL DEFAULT '',
   status            TEXT NOT NULL DEFAULT 'open',

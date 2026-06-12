@@ -102,8 +102,7 @@ func runTurnHook(cmd *cobra.Command, send func(daemon.Request) error) {
 		return
 	}
 	_ = send(daemon.Request{
-		Session: in.SessionID, ClaudePID: procs.ClaudePID(), Cwd: in.Cwd,
-		Prompt: in.Prompt, TranscriptPath: in.TranscriptPath,
+		Session: in.SessionID, ClaudePID: procs.ClaudePID(), Cwd: in.Cwd, Prompt: in.Prompt,
 	})
 }
 
@@ -148,7 +147,7 @@ func newGuardEditCmd() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			in := readHookInput(cmd.InOrStdin())
-			resp, err := daemon.NewClient().GuardEdit(in.SessionID, in.Cwd)
+			resp, err := daemon.NewClient().GuardEdit(in.SessionID, in.Cwd, in.ToolName, in.ToolInput)
 			if err != nil {
 				return nil // daemon down: nothing to guard
 			}

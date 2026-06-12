@@ -118,9 +118,10 @@ func (c *Client) SessionRecord(session, cwd string) (*Response, error) {
 	return c.do(Request{Op: OpSessionRecord, Session: session, Cwd: cwd}, 5*time.Second)
 }
 
-// GuardEdit asks whether an edit is permitted for the session's review.
-func (c *Client) GuardEdit(session, cwd string) (*Response, error) {
-	return c.do(Request{Op: OpGuardEdit, Session: session, Cwd: cwd}, 5*time.Second)
+// GuardEdit asks whether an edit is permitted for the session's review,
+// carrying the tool call so the daemon can ledger the verdict with its digest.
+func (c *Client) GuardEdit(session, cwd, toolName string, toolInput json.RawMessage) (*Response, error) {
+	return c.do(Request{Op: OpGuardEdit, Session: session, Cwd: cwd, ToolName: toolName, ToolInput: toolInput}, 5*time.Second)
 }
 
 // FileStates batch-sets per-file review state. A non-zero aiRequestID ties the

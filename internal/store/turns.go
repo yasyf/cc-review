@@ -12,27 +12,25 @@ import (
 // Turn is one Claude prompt→stop window in a repo, bracketed by working-tree
 // snapshots. Timestamps are unix milliseconds.
 type Turn struct {
-	ID               int64
-	RepoRoot         string
-	Backend          string // git | jj
-	SessionID        string
-	ClaudePID        int
-	PromptExcerpt    string
-	TranscriptPath   string
-	TranscriptOffset int64
-	TreeStart        string
-	TreeEnd          string // empty until closed
-	Status           string // open | closed | interrupted
-	StartedAt        int64
-	EndedAt          int64 // 0 while open
+	ID            int64
+	RepoRoot      string
+	Backend       string // git | jj
+	SessionID     string
+	ClaudePID     int
+	PromptExcerpt string
+	TreeStart     string
+	TreeEnd       string // empty until closed
+	Status        string // open | closed | interrupted
+	StartedAt     int64
+	EndedAt       int64 // 0 while open
 }
 
-const turnCols = `id, repo_root, backend, session_id, claude_pid, prompt_excerpt, transcript_path, transcript_offset, tree_start, tree_end, status, started_at, ended_at`
+const turnCols = `id, repo_root, backend, session_id, claude_pid, prompt_excerpt, tree_start, tree_end, status, started_at, ended_at`
 
 func scanTurn(row interface{ Scan(...any) error }) (Turn, error) {
 	var t Turn
 	if err := row.Scan(&t.ID, &t.RepoRoot, &t.Backend, &t.SessionID, &t.ClaudePID, &t.PromptExcerpt,
-		&t.TranscriptPath, &t.TranscriptOffset, &t.TreeStart, &t.TreeEnd, &t.Status, &t.StartedAt, &t.EndedAt); err != nil {
+		&t.TreeStart, &t.TreeEnd, &t.Status, &t.StartedAt, &t.EndedAt); err != nil {
 		return Turn{}, err
 	}
 	return t, nil
@@ -44,10 +42,10 @@ func (s *Store) CreateTurn(ctx context.Context, t Turn) (Turn, error) {
 	t.Status = "open"
 	t.StartedAt = time.Now().UnixMilli()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO turns(repo_root, backend, session_id, claude_pid, prompt_excerpt, transcript_path, transcript_offset, tree_start, tree_end, status, started_at, ended_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		t.RepoRoot, t.Backend, t.SessionID, t.ClaudePID, t.PromptExcerpt, t.TranscriptPath,
-		t.TranscriptOffset, t.TreeStart, t.TreeEnd, t.Status, t.StartedAt, t.EndedAt)
+		`INSERT INTO turns(repo_root, backend, session_id, claude_pid, prompt_excerpt, tree_start, tree_end, status, started_at, ended_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		t.RepoRoot, t.Backend, t.SessionID, t.ClaudePID, t.PromptExcerpt,
+		t.TreeStart, t.TreeEnd, t.Status, t.StartedAt, t.EndedAt)
 	if err != nil {
 		return Turn{}, fmt.Errorf("create turn: %w", err)
 	}
@@ -93,6 +91,35 @@ func (s *Store) LatestOpenTurn(ctx context.Context, repoRoot string, claudePID i
 		return Turn{}, false, nil
 	}
 	return t, err == nil, err
+}
+
+// GetTurn returns the turn by id, or ErrNotFound.
+func (s *Store) GetTurn(ctx context.Context, id int64) (Turn, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+turnCols+` FROM turns WHERE id=?`, id)
+	t, err := scanTurn(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Turn{}, ErrNotFound
+	}
+	return t, err
+}
+
+// ListTurnsBySession returns a session's turns in ledger order.
+func (s *Store) ListTurnsBySession(ctx context.Context, sessionID string) ([]Turn, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+turnCols+` FROM turns WHERE session_id=? ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list turns by session: %w", err)
+	}
+	defer rows.Close()
+	var out []Turn
+	for rows.Next() {
+		t, err := scanTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // ListAttributableTurns returns a repo's turns started at or after sinceMs,

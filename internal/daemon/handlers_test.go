@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -10,7 +11,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
+	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/vcs"
@@ -24,6 +28,11 @@ func testServer(t *testing.T) (*Server, string) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
+	ledger, err := decisions.Open(filepath.Join(t.TempDir(), "decisions.db"))
+	if err != nil {
+		t.Fatalf("open decisions ledger: %v", err)
+	}
+	t.Cleanup(func() { ledger.Close() })
 
 	// One commit on main; tests write their own pending files, since
 	// handleStart fails fast on a repo with nothing to review.
@@ -35,6 +44,7 @@ func testServer(t *testing.T) (*Server, string) {
 
 	s := &Server{
 		store:     st,
+		decisions: ledger,
 		bus:       NewBus(),
 		activity:  NewActivity(),
 		alive:     func(int) bool { return false },
@@ -650,6 +660,68 @@ func TestGuardEditPerWindow(t *testing.T) {
 	}
 	if guard := s.handleGuardEdit(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: repo}); !guard.Allow {
 		t.Fatalf("window B has no review and must be allowed: %s", guard.Reason)
+	}
+}
+
+func TestGuardEditWritesGateDecisions(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+	r, err := s.store.CreateReview(ctx, "s1", 100, root, "main", "base0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blockedInput := json.RawMessage(`{"file_path":"` + filepath.Join(root, "a.go") + `","old_string":"a","new_string":"b"}`)
+	if resp := s.handleGuardEdit(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, ToolName: "Edit", ToolInput: blockedInput}); resp.Allow {
+		t.Fatal("guard-edit must block while the review is open")
+	}
+	if err := s.store.SetReviewStatus(ctx, r.ID, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+	allowedInput := json.RawMessage(`{"file_path":"` + filepath.Join(root, "b.go") + `","content":"package p\n"}`)
+	if resp := s.handleGuardEdit(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, ToolName: "Write", ToolInput: allowedInput}); !resp.Allow {
+		t.Fatal("guard-edit must allow once submitted")
+	}
+
+	rows, err := s.decisions.ForTurn("s1", 0, time.Now().UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("decisions = %d, want a block then an allow", len(rows))
+	}
+	for i, want := range []struct {
+		action, tool, file, message string
+		input                       json.RawMessage
+	}{
+		{action: "block", tool: "Edit", file: filepath.Join(root, "a.go"), message: "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser.", input: blockedInput},
+		{action: "allow", tool: "Write", file: filepath.Join(root, "b.go"), input: allowedInput},
+	} {
+		row := rows[i]
+		if row.Source != "cc-review" || row.Kind != "gate" || row.Event != "PreToolUse" {
+			t.Fatalf("row %d = %+v, want a cc-review gate PreToolUse row", i, row)
+		}
+		if row.Action != want.action || row.ToolName != want.tool || row.Message != want.message {
+			t.Fatalf("row %d = %s %s %q, want %s %s %q", i, row.Action, row.ToolName, row.Message, want.action, want.tool, want.message)
+		}
+		wantDigest, err := digest.Tool(want.tool, want.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.ToolDigest != wantDigest {
+			t.Fatalf("row %d digest = %q, want %q", i, row.ToolDigest, wantDigest)
+		}
+		var detail struct {
+			FilePath string `json:"file_path"`
+			ReviewID string `json:"review_id"`
+		}
+		if err := json.Unmarshal([]byte(row.DetailJSON), &detail); err != nil {
+			t.Fatalf("row %d detail %q: %v", i, row.DetailJSON, err)
+		}
+		if detail.FilePath != want.file || detail.ReviewID != r.ID {
+			t.Fatalf("row %d detail = %+v, want file %s review %s", i, detail, want.file, r.ID)
+		}
 	}
 }
 

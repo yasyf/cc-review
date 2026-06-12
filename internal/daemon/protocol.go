@@ -84,8 +84,10 @@ type Request struct {
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
 	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization: required, must match the current version
 
-	Prompt         string `json:"prompt,omitempty"`          // turn-start: the submitted user prompt (stored as a capped excerpt)
-	TranscriptPath string `json:"transcript_path,omitempty"` // turn-start: the session transcript file at prompt time
+	Prompt string `json:"prompt,omitempty"` // turn-start: the submitted user prompt (stored as a capped excerpt)
+
+	ToolName  string          `json:"tool_name,omitempty"`  // guard-edit: the PreToolUse tool name
+	ToolInput json.RawMessage `json:"tool_input,omitempty"` // guard-edit: the raw tool input, digested into the decision ledger
 }
 
 // Response is one control-plane reply.

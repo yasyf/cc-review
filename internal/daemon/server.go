@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/httpapi"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/procs"
@@ -38,13 +39,15 @@ const attachGrace = 10 * time.Second
 // Server is the running daemon: the control-plane unix-socket server plus the
 // data/UI HTTP plane it boots.
 type Server struct {
-	store    *store.Store
-	bus      *Bus
-	activity *Activity
-	resolver session.Resolver
-	alive    func(pid int) bool
-	socket   string
-	log      *log.Logger
+	store     *store.Store
+	decisions *decisions.Log
+	bus       *Bus
+	activity  *Activity
+	resolver  session.Resolver
+	alive     func(pid int) bool
+	socket    string
+	log       *log.Logger
+	sliceWarn sync.Once
 
 	fixedPort    int // 0 = ephemeral; a fixed dev port lets the Vite proxy find us
 	httpPort     int
@@ -69,9 +72,15 @@ func Run(ctx context.Context, fixedPort int) error {
 		return err
 	}
 	defer st.Close()
+	ledger, err := decisions.Open(decisionsPath())
+	if err != nil {
+		return err
+	}
+	defer ledger.Close()
 
 	s := &Server{
 		store:        st,
+		decisions:    ledger,
 		bus:          NewBus(),
 		activity:     NewActivity(),
 		alive:        procs.LiveClaude,
@@ -83,6 +92,15 @@ func Run(ctx context.Context, fixedPort int) error {
 	}
 	s.resolver = session.Resolver{Store: st, Held: s.held}
 	return s.serve(ctx)
+}
+
+// decisionsPath is the family decision ledger location; CC_DECISIONS_DB
+// overrides it for tests.
+func decisionsPath() string {
+	if p := os.Getenv("CC_DECISIONS_DB"); p != "" {
+		return p
+	}
+	return decisions.DefaultPath()
 }
 
 func (s *Server) serve(parent context.Context) error {
@@ -221,7 +239,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		ln.Close()
 		return err
 	}
-	api := httpapi.New(s.store, s)
+	api := httpapi.New(s.store, s.decisions, s.log, s)
 	srv := &http.Server{
 		Handler:     api.Handler(),
 		BaseContext: func(net.Listener) context.Context { return ctx },

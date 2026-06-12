@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -9,7 +10,7 @@ func createTurn(t *testing.T, s *Store, repoRoot string, claudePID int, treeStar
 	t.Helper()
 	turn, err := s.CreateTurn(context.Background(), Turn{
 		RepoRoot: repoRoot, Backend: "git", SessionID: "sess", ClaudePID: claudePID,
-		PromptExcerpt: "fix the bug", TranscriptPath: "/t.jsonl", TranscriptOffset: -1, TreeStart: treeStart,
+		PromptExcerpt: "fix the bug", TreeStart: treeStart,
 	})
 	if err != nil {
 		t.Fatalf("create turn: %v", err)
@@ -126,6 +127,55 @@ func TestListAttributableTurns(t *testing.T) {
 	}
 	if len(turns) != 3 || turns[0].ID != before.ID || turns[1].ID != inWindow1.ID || turns[2].ID != inWindow2.ID {
 		t.Fatalf("all turns = %+v, want repo turns ordered by id", turns)
+	}
+}
+
+func TestGetTurn(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	turn := createTurn(t, s, "/repo", 100, "t1")
+	got, err := s.GetTurn(ctx, turn.ID)
+	if err != nil {
+		t.Fatalf("get turn: %v", err)
+	}
+	if got != turn {
+		t.Fatalf("turn = %+v, want %+v", got, turn)
+	}
+
+	if _, err := s.GetTurn(ctx, turn.ID+999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing turn err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListTurnsBySession(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	mk := func(session, repo string) Turn {
+		t.Helper()
+		turn, err := s.CreateTurn(ctx, Turn{
+			RepoRoot: repo, Backend: "git", SessionID: session, ClaudePID: 100, TreeStart: "t",
+		})
+		if err != nil {
+			t.Fatalf("create turn: %v", err)
+		}
+		return turn
+	}
+	first := mk("sess-a", "/repo")
+	mk("sess-b", "/repo")
+	second := mk("sess-a", "/other")
+
+	turns, err := s.ListTurnsBySession(ctx, "sess-a")
+	if err != nil {
+		t.Fatalf("list by session: %v", err)
+	}
+	if len(turns) != 2 || turns[0].ID != first.ID || turns[1].ID != second.ID {
+		t.Fatalf("turns = %+v, want [%d %d] across repos in ledger order", turns, first.ID, second.ID)
+	}
+
+	if turns, err := s.ListTurnsBySession(ctx, "sess-none"); err != nil || len(turns) != 0 {
+		t.Fatalf("unknown session: turns=%+v err=%v, want none", turns, err)
 	}
 }
 

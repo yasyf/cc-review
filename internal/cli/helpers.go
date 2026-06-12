@@ -16,12 +16,15 @@ func mustCwd(cwd string) string {
 }
 
 // hookInput is the subset of a Claude Code hook's stdin JSON the hooks read.
+// ToolUseID is empty today — hook stdin carries no tool_use_id — but is parsed
+// if it ever appears.
 type hookInput struct {
-	SessionID      string `json:"session_id"`
-	Cwd            string `json:"cwd"`
-	ToolName       string `json:"tool_name"`
-	Prompt         string `json:"prompt"`
-	TranscriptPath string `json:"transcript_path"`
+	SessionID string          `json:"session_id"`
+	Cwd       string          `json:"cwd"`
+	ToolName  string          `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
+	ToolUseID string          `json:"tool_use_id"`
+	Prompt    string          `json:"prompt"`
 }
 
 // readHookInput parses a hook's stdin JSON, tolerating an empty body.
