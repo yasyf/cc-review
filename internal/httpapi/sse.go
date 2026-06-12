@@ -69,7 +69,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// inverts to false until the next transition. A daemon death loses the
 	// detach defer and the debounce timer entirely; the stale connected:true it
 	// leaves behind is reconciled at the next daemon boot
-	// (daemon.Server.reconcileChannelEvents).
+	// (daemon.Server.reconcileChannelEvents). Named consumers never receive
+	// channel.changed frames — only the browser does (it renders the
+	// Claude-connected dot); the log keeps the rows for boot reconciliation.
 	if consumer != "" {
 		wasConnected := s.backend.ClaudeConnected(reviewID)
 		detach := s.backend.Attach(reviewID, consumer, claudePID)
@@ -101,7 +103,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 
 	ctx := r.Context()
-	cursor = s.flushSince(ctx, w, flusher, reviewID, cursor, excludeClaude)
+	cursor = s.flushSince(ctx, w, flusher, reviewID, cursor, excludeClaude, consumer != "")
 	io.WriteString(w, ": connected\n\n") // prove liveness + flush proxies
 	flusher.Flush()
 
@@ -115,29 +117,36 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-signal:
-			cursor = s.flushSince(ctx, w, flusher, reviewID, cursor, excludeClaude)
+			cursor = s.flushSince(ctx, w, flusher, reviewID, cursor, excludeClaude, consumer != "")
 		}
 	}
 }
 
 // flushSince writes one SSE frame per event with seq greater than cursor and
-// returns the new high-water cursor. One query per wake; no DB handle is held
-// across the select.
-func (s *Server) flushSince(ctx context.Context, w io.Writer, fl http.Flusher, reviewID string, cursor int64, excludeClaude bool) int64 {
+// returns the new high-water cursor. named drops channel.changed frames — the
+// connectivity flip a named consumer caused must not wake it — but the cursor
+// advances past skipped rows too, so a wake never re-queries the filtered
+// tail. One query per wake; no DB handle is held across the select.
+func (s *Server) flushSince(ctx context.Context, w io.Writer, fl http.Flusher, reviewID string, cursor int64, excludeClaude, named bool) int64 {
 	evs, err := s.store.EventsSince(ctx, reviewID, cursor, excludeClaude)
 	if err != nil {
 		return cursor
 	}
+	wrote := false
 	for _, e := range evs {
+		if e.Seq > cursor {
+			cursor = e.Seq
+		}
+		if named && e.Type == store.EventChannelChanged {
+			continue
+		}
 		// No `event:` field: native EventSource delivers only default-type frames
 		// to onmessage, which is how the browser consumes the stream. The frame's
 		// type lives inside the JSON payload instead.
 		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.Seq, e.Payload)
-		if e.Seq > cursor {
-			cursor = e.Seq
-		}
+		wrote = true
 	}
-	if len(evs) > 0 {
+	if wrote {
 		fl.Flush()
 	}
 	return cursor

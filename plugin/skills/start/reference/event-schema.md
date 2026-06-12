@@ -15,7 +15,7 @@
 | `file.states` | `states` (`[{path, reviewed, hidden, reason?}]`), `aiRequestId?`, `undoOf?` | Informational — the human's checkboxes, an undo, or the daemon unmarking changed files. Values are absolute per path, never deltas. |
 | `organization.updated` | `organization` (`overview`, `chapters`) | Never delivered to you — it originates from the organize agent's `submit_organization` (or the daemon carrying the organization forward onto an identical new version); the browser renders it. |
 | `version.created` | *(none beyond `type`, `version_number`)* | Informational — a new version was captured. |
-| `channel.changed` | `connected` | Informational. |
+| `channel.changed` | `connected` | Never delivered to you — drives the browser's Claude-connected indicator. |
 
 Your own replies surface in the browser (and the frozen feedback) as `claude.question`, `claude.ask`, and `claude.clarification`, threaded under the comment they answer. A `claude.ask` payload is `{commentId, reply}`, the reply carrying `ask: {header, multiSelect, options: [{label, description?, preview?}]}`. You never receive these back from `watch`.
 

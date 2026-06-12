@@ -186,6 +186,139 @@ func TestEventsChannelChangedStampsLatestVersion(t *testing.T) {
 	}
 }
 
+type sseFrame struct {
+	id   int64
+	data string
+}
+
+// readFramesUntilLive collects replayed SSE frames up to the ": connected"
+// liveness comment the handler writes after the first flush. The request
+// context's timeout bounds the scan.
+func readFramesUntilLive(t *testing.T, body io.Reader) []sseFrame {
+	t.Helper()
+	sc := bufio.NewScanner(body)
+	var frames []sseFrame
+	var cur sseFrame
+	for sc.Scan() {
+		line := sc.Text()
+		switch {
+		case line == ": connected":
+			return frames
+		case strings.HasPrefix(line, "id: "):
+			n, err := strconv.ParseInt(strings.TrimPrefix(line, "id: "), 10, 64)
+			if err != nil {
+				t.Fatalf("bad id line %q: %v", line, err)
+			}
+			cur.id = n
+		case strings.HasPrefix(line, "data: "):
+			cur.data = strings.TrimPrefix(line, "data: ")
+			frames = append(frames, cur)
+			cur = sseFrame{}
+		}
+	}
+	t.Fatalf("stream ended before liveness comment, frames so far: %+v", frames)
+	return nil
+}
+
+func TestEventsChannelChangedFilteredFromNamedConsumers(t *testing.T) {
+	seed := func(t *testing.T, st *store.Store, reviewID string) (channelSeq, commentSeq int64) {
+		t.Helper()
+		ctx := context.Background()
+		channelSeq, err := st.AppendEvent(ctx, &store.Event{
+			ReviewID: reviewID, Origin: store.OriginSystem, Type: store.EventChannelChanged,
+			VersionNumber: 1, Payload: []byte(`{"type":"channel.changed","connected":true}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		commentSeq, err = st.AppendEvent(ctx, &store.Event{
+			ReviewID: reviewID, Origin: store.OriginUser, Type: store.EventCommentCreated,
+			VersionNumber: 1, Payload: []byte(`{"type":"comment.created","commentId":"1"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return channelSeq, commentSeq
+	}
+	get := func(t *testing.T, url string) []sseFrame {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return readFramesUntilLive(t, resp.Body)
+	}
+
+	cases := []struct {
+		name   string
+		params string
+		want   []string // event types in delivery order
+	}{
+		{"channel consumer gets only the comment", "&consumer=channel&claude_pid=4242", []string{store.EventCommentCreated}},
+		{"watch consumer gets only the comment", "&consumer=watch", []string{store.EventCommentCreated}},
+		{"browser gets both, channel.changed first", "", []string{store.EventChannelChanged, store.EventCommentCreated}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, _, srv := newTestServer(t)
+			review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main", "base0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			channelSeq, commentSeq := seed(t, st, review.ID)
+			seqs := map[string]int64{store.EventChannelChanged: channelSeq, store.EventCommentCreated: commentSeq}
+
+			frames := get(t, srv.URL+"/events?session="+review.ID+tc.params)
+			if len(frames) != len(tc.want) {
+				t.Fatalf("got %d frames %+v, want types %v", len(frames), frames, tc.want)
+			}
+			for i, typ := range tc.want {
+				if frames[i].id != seqs[typ] || !strings.Contains(frames[i].data, typ) {
+					t.Fatalf("frame %d = %+v, want id %d carrying %q", i, frames[i], seqs[typ], typ)
+				}
+			}
+		})
+	}
+
+	t.Run("reconnect with last delivered id does not redeliver the filtered tail", func(t *testing.T) {
+		st, backend, srv := newTestServer(t)
+		review, err := st.CreateReview(context.Background(), "s1", 100, "/repo", "main", "base0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, commentSeq := seed(t, st, review.ID)
+
+		url := srv.URL + "/events?session=" + review.ID + "&consumer=channel&claude_pid=4242"
+		frames := get(t, url)
+		if len(frames) != 1 || frames[0].id != commentSeq {
+			t.Fatalf("first connect frames = %+v, want only the comment at seq %d", frames, commentSeq)
+		}
+		// Drain the stub's cap-1 attach/detach channels so the reconnect's
+		// Attach doesn't block on a full buffer.
+		<-backend.attached
+		select {
+		case <-backend.detached:
+		case <-time.After(2 * time.Second):
+			t.Fatal("first consumer was never detached")
+		}
+		// The tail past the comment holds only the filtered channel.changed:
+		// resuming from the last delivered id must replay nothing.
+		if _, err := st.AppendEvent(context.Background(), &store.Event{
+			ReviewID: review.ID, Origin: store.OriginSystem, Type: store.EventChannelChanged,
+			VersionNumber: 1, Payload: []byte(`{"type":"channel.changed","connected":false}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if frames := get(t, url+"&last_event_id="+strconv.FormatInt(commentSeq, 10)); len(frames) != 0 {
+			t.Fatalf("filtered tail was redelivered: %+v", frames)
+		}
+	})
+}
+
 func TestEventsUnknownReviewIs404(t *testing.T) {
 	_, _, srv := newTestServer(t)
 	resp, err := http.Get(srv.URL + "/events?session=nope")
