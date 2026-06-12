@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0]
+
+cc-review joins the cc-family session-activity platform. **Upgrading wipes
+local review state** (`~/.cc-review`) per the no-migrations policy.
+
+### Added
+- Gate decisions are durable: every guard-edit verdict writes an
+  `allow`/`block` row (tool name + RFC 8785 content digest) to the shared
+  cc-family ledger at `~/.cc-transcript/decisions.db`, dual-written with
+  captain-hook and readable by any miner.
+- Bypass detection by subtraction: a locked-review turn whose tree changed
+  beyond what gate-allowed tool calls and slice-visible Bash calls explain
+  lands a `bypass-detected` note with `changed_files`/`attributed_files`.
+- `cc-review export activity --session <uuid>`: the `cc-review.activity/1`
+  JSON contract (integer-ms turns, version-dimensioned attributions) consumed
+  by cc-transcript's Python reader.
+- `GET /api/turns/{id}/provenance` + an Activity sidebar tab: per-turn
+  hook/gate decision rows with action chips, and lazy tool-call provenance
+  fetched via `cc-transcript slice` (degrades cleanly when absent).
+- `internal/digest`: the cross-language tool digest (RFC 8785 + sha256),
+  conformance-gated by the fixture corpus generated from cc-transcript.
+
+### Removed
+- `turns.transcript_path` / `turns.transcript_offset` (written, never read) —
+  turn provenance is keyed by session UUID + time window.
+
 ## [Unreleased]
 
 ## [0.9.0] - 2026-06-12
