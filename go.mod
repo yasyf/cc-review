@@ -4,6 +4,7 @@ go 1.26.2
 
 require (
 	github.com/bluekeyes/go-gitdiff v0.8.1
+	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.46.0
