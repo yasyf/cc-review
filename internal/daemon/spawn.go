@@ -16,12 +16,13 @@ import (
 // shutdown, SIGKILL, and process-exit waits plus the new daemon's boot.
 const UpgradeTimeout = 30 * time.Second
 
-// EnsureCurrent returns once a daemon at this binary's version is reachable,
-// spawning a detached `cc-review daemon` if none is. A reachable daemon at a
-// different build version is replaced: the spawned daemon's listen() evicts the
-// skewed holder. Used by every user-facing command, so a stale daemon dies on
-// first contact with a newer binary. A flock around the spawn serializes
-// simultaneous cold starts so only one process binds the socket.
+// EnsureCurrent returns once a daemon at least as new as this binary is
+// reachable, spawning a detached `cc-review daemon` if none is. A strictly
+// older daemon is replaced on first contact with a newer binary: the spawned
+// daemon's listen() evicts it. A same-or-newer daemon is accepted as-is, so
+// sessions pinned to older plugin builds never tear down the shared daemon. A
+// flock around the spawn serializes simultaneous cold starts so only one
+// process binds the socket.
 func EnsureCurrent(timeout time.Duration) error {
 	c := NewClient()
 	if currentVersion(c) {
@@ -42,10 +43,11 @@ func EnsureCurrent(timeout time.Duration) error {
 	})
 }
 
-// EnsureCurrentIfRunning replaces a reachable version-skewed daemon exactly as
-// EnsureCurrent does, but never cold-spawns one when nothing answers on the
-// socket: it is for hooks, which must not boot daemons. Returns
-// ErrDaemonUnavailable when no daemon is running.
+// EnsureCurrentIfRunning replaces a reachable strictly-older daemon exactly as
+// EnsureCurrent does (and likewise accepts a same-or-newer one), but never
+// cold-spawns one when nothing answers on the socket: it is for hooks, which
+// must not boot daemons. Returns ErrDaemonUnavailable when no daemon is
+// running.
 func EnsureCurrentIfRunning() error {
 	if !NewClient().Available() {
 		return ErrDaemonUnavailable
@@ -53,9 +55,11 @@ func EnsureCurrentIfRunning() error {
 	return EnsureCurrent(UpgradeTimeout)
 }
 
+// currentVersion reports whether a reachable daemon is at least this binary's
+// version — same-or-newer is current, only strictly older needs replacing.
 func currentVersion(c *Client) bool {
 	resp, err := c.Health()
-	return err == nil && resp.OK && resp.DaemonVersion == version.String()
+	return err == nil && resp.OK && !version.Newer(version.String(), resp.DaemonVersion)
 }
 
 // underStartLock runs fn while holding the exclusive start flock, waiting for
@@ -89,14 +93,22 @@ func underStartLock(deadline time.Time, fn func() error) error {
 }
 
 // spawnDaemon starts a detached `cc-review daemon` (Setsid + Release) that
-// outlives the CLI.
+// outlives the CLI, with stdout/stderr appended to the daemon log so boot,
+// eviction, and panic output survives the process.
 func spawnDaemon() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
 	}
+	// Append, never truncate: during an eviction the dying daemon's last words
+	// must land in the log alongside the successor's boot line.
+	logFile, err := os.OpenFile(paths.LogPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open daemon log: %w", err)
+	}
+	defer logFile.Close()
 	cmd := exec.Command(exe, "daemon")
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, logFile, logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("spawn daemon: %w", err)

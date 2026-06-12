@@ -1,8 +1,8 @@
 // Package daemon is the lazily-started local daemon: a control-plane unix-socket
 // server speaking newline-delimited JSON, plus the data/UI HTTP plane it boots.
 // Mirrors claude-pool's daemon (detached Setsid spawn, single-RPC-per-conn, wg
-// drain on shutdown, version-skew eviction of a stale socket holder) with a
-// flock guarding lazy start. Every control op is fast request/response;
+// drain on shutdown, newest-wins eviction of a strictly older socket holder)
+// with a flock guarding lazy start. Every control op is fast request/response;
 // realtime delivery is the HTTP SSE stream, not a blocking socket op.
 package daemon
 

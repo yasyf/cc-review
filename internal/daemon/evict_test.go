@@ -98,12 +98,29 @@ func TestEvictRefusesSameVersionHolder(t *testing.T) {
 	startFakeHolder(t, sock, version.String())
 
 	_, err := evictServer(sock).listen()
-	if err == nil || !strings.Contains(err.Error(), "already running") {
+	if err == nil || !strings.Contains(err.Error(), "already holds the socket") {
 		t.Fatalf("err = %v, want same-version refusal", err)
 	}
 }
 
-func TestEvictShutsDownSkewedHolder(t *testing.T) {
+func TestEvictRefusesNewerHolder(t *testing.T) {
+	orig := version.Version
+	t.Cleanup(func() { version.Version = orig })
+	version.Version = "v0.5.0"
+
+	sock := shortSockPath(t)
+	h := startFakeHolder(t, sock, "v0.6.0")
+
+	_, err := evictServer(sock).listen()
+	if err == nil || !strings.Contains(err.Error(), "already holds the socket") {
+		t.Fatalf("err = %v, want newer-holder refusal", err)
+	}
+	if n := h.shutdowns.Load(); n != 0 {
+		t.Fatalf("newer holder received %d shutdowns, want 0", n)
+	}
+}
+
+func TestEvictShutsDownOlderHolder(t *testing.T) {
 	sock := shortSockPath(t)
 	h := startFakeHolder(t, sock, "v0.0.1-old")
 
@@ -200,6 +217,36 @@ func TestEnsureCurrentNoopWhenVersionMatches(t *testing.T) {
 	// spawn arm re-execs the real binary and is covered by manual verification.
 	if !currentVersion(&Client{socket: sock}) {
 		t.Fatal("currentVersion should match the fake holder's version")
+	}
+}
+
+func TestCurrentVersionPolicy(t *testing.T) {
+	orig := version.Version
+	t.Cleanup(func() { version.Version = orig })
+
+	cases := []struct {
+		name          string
+		myVersion     string
+		holderVersion string
+		wantCurrent   bool
+	}{
+		{"newer daemon is current", "v0.5.0", "v0.6.0", true},
+		{"older daemon is not current", "v0.6.0", "v0.5.0", false},
+		{"same version is current", "v0.5.0", "v0.5.0", true},
+		{"dev daemon is current for releases", "v0.5.0", "dev", true},
+		{"dev binary outranks every release daemon", "dev", "v9.9.9", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			version.Version = tc.myVersion
+			sock := shortSockPath(t)
+			startFakeHolder(t, sock, tc.holderVersion)
+
+			if got := currentVersion(&Client{socket: sock}); got != tc.wantCurrent {
+				t.Fatalf("currentVersion(me=%s, daemon=%s) = %v, want %v",
+					tc.myVersion, tc.holderVersion, got, tc.wantCurrent)
+			}
+		})
 	}
 }
 

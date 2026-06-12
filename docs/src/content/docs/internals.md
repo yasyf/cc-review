@@ -11,15 +11,17 @@ There is no install step for the daemon and no service manager. Every user-facin
 
 Cold starts are serialized by an exclusive flock on `~/.cc-review/locks/start.lock`, so concurrent commands racing to boot the daemon produce exactly one process. The SessionStart hook uses `EnsureCurrentIfRunning` instead, which upgrades a running daemon without ever booting one, because a hook must not be the thing that starts daemons. The edit-guard hook skips the handshake entirely: it talks to whatever daemon answers the socket and fails open when none does.
 
-Version skew resolves itself on first contact. When a newer CLI finds a daemon built from an older binary, the freshly spawned daemon's `listen()` evicts the holder: it asks the old daemon to shut down over the socket, escalates to SIGKILL if it wedges, and waits for the old process to exit before binding. A same-version holder is never evicted; that refusal is what prevents two daemons from evicting each other in a loop.
+Version skew resolves newest-wins on first contact. When a CLI finds a daemon built from a strictly older binary, the freshly spawned daemon's `listen()` evicts the holder: it asks the old daemon to shut down over the socket, escalates to SIGKILL if it wedges, and waits for the old process to exit before binding. A same-or-newer holder is never evicted — the spawned daemon exits with an error instead, and the spawning client accepts the running daemon. The tie refusal is what prevents two daemons from evicting each other in a loop, and the newer-holder refusal is what stops sessions pinned to older plugin builds from tearing down the shared daemon every turn. A dev build counts as newest: a dev daemon is never evicted, and a dev binary always takes over a release daemon.
 
-The HTTP plane binds an ephemeral 127.0.0.1 port and publishes it to `~/.cc-review/http.json` so the CLI and stream consumers can find it. With `cc-review daemon --dev` the port is pinned to 8787, which is where the Vite dev proxy expects to find the API during frontend work.
+The HTTP plane binds a 127.0.0.1 port and publishes it to `~/.cc-review/http.json` so the CLI and stream consumers can find it. The file is left in place on shutdown, and a booting daemon tries that previous port first before falling back to an ephemeral one, so printed review URLs survive a daemon swap. With `cc-review daemon --dev` the port is pinned to 8787, which is where the Vite dev proxy expects to find the API during frontend work.
+
+Daemons spawned by the CLI append their stdout and stderr to `~/.cc-review/daemon.log` — boot lines, eviction sequences, and panics all land there across daemon generations. A manual `cc-review daemon` run keeps its output on the terminal.
 
 ## Two planes
 
 The daemon exposes two surfaces.
 
-The **control plane** is a unix socket at `~/.cc-review/daemon.sock` (mode 0600) speaking newline-delimited JSON, one request per connection. This is what CLI commands call. The ops dispatched in `internal/daemon/server.go` are `health`, `shutdown`, `start`, `resolve`, `reply`, `feedback`, `status`, `session-record`, `guard-edit`, `file-states`, `update-ai-request`, `submit-organization`, and `review-files`. Requests carry a protocol version; a mismatch returns an error telling the client to retry, since first contact from a newer CLI upgrades the daemon.
+The **control plane** is a unix socket at `~/.cc-review/daemon.sock` (mode 0600) speaking newline-delimited JSON, one request per connection. This is what CLI commands call. The ops dispatched in `internal/daemon/server.go` are `health`, `shutdown`, `start`, `resolve`, `reply`, `feedback`, `status`, `session-record`, `guard-edit`, `file-states`, `update-ai-request`, `submit-organization`, and `review-files`. Requests carry a protocol version; a mismatch returns an error saying the session is pinned to an older plugin version and needs a restart to pick up the current one.
 
 The **HTTP plane** (`internal/httpapi`) binds 127.0.0.1 only, and that bind is the entire access-control story. It serves the embedded SPA at `/`, a JSON REST surface, and one SSE stream. These routes are registered in `internal/httpapi/server.go`.
 
@@ -44,7 +46,7 @@ Delivery is at-least-once. `GET /events?session=<ref>` streams a review's log; c
 
 Each event carries an `origin` of `user`, `claude`, or `system`. The browser subscribes with no filter and sees everything; Claude-side consumers pass `exclude_origin=claude` so they never receive an echo of their own replies. Duplicate suppression on the write side uses an optional `dedup_key` with a unique partial index, so a redelivered reply inserts once and re-emits nothing.
 
-Named consumers also register presence: their attach and detach transitions drive `channel.changed` events, which is how the UI knows whether a live Claude session is wired to the review.
+Named consumers also register presence: their attach and detach transitions drive `channel.changed` events, which is how the UI knows whether a live Claude session is wired to the review. `channel.changed` is delivered to the browser only — named consumer streams (`channel`, `watch`) filter it out, since a consumer learning about its own attachment is noise.
 
 ## Storage
 
@@ -60,8 +62,8 @@ The schema declares eight tables: `reviews`, `review_versions`, `comments`, `rep
 ~/.cc-review/
 ├── review.db               # SQLite database
 ├── daemon.sock             # control-plane unix socket
-├── daemon.log              # daemon log path
-├── http.json               # HTTP port handshake, deleted on shutdown
+├── daemon.log              # spawned daemons append stdout/stderr here
+├── http.json               # HTTP port handshake, kept across restarts for port reuse
 ├── channels-setup.json     # marker: the one-time channels offer was made
 ├── locks/
 │   └── start.lock          # flock serializing lazy daemon starts

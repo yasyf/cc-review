@@ -108,9 +108,10 @@ func (s *Server) serve(parent context.Context) error {
 	defer stop()
 	s.triggerShutdown = stop
 
-	// Bind (and evict any skewed holder of) the control socket before publishing
-	// the HTTP handshake: the evicted daemon deletes http.json on its way out, so
-	// writing ours first would get clobbered. Connections queue in the listener
+	// Bind (and evict any older holder of) the control socket before publishing
+	// the HTTP handshake: pre-fix daemons delete http.json on their way out, so
+	// writing ours first would get clobbered; post-fix daemons leave the file
+	// for the successor to reuse its port. Connections queue in the listener
 	// backlog until the accept loop starts below, so nothing observes the gap.
 	ln, err := s.listen()
 	if err != nil {
@@ -152,12 +153,11 @@ func (s *Server) serve(parent context.Context) error {
 	}
 
 	s.wg.Wait()
-	_ = os.Remove(paths.HTTPInfoPath())
 	s.log.Printf("daemon stopped")
 	return nil
 }
 
-// listen binds the control socket, first evicting any version-skewed daemon
+// listen binds the control socket, first evicting any strictly older daemon
 // holding it. A stale socket left by a crashed daemon is removed before
 // binding; the lazy-start flock prevents two live daemons from racing here.
 func (s *Server) listen() (net.Listener, error) {
@@ -179,20 +179,22 @@ func (s *Server) listen() (net.Listener, error) {
 	return ln, nil
 }
 
-// evictHolder clears a version-skewed daemon holding the socket: ask it to step
-// down, then SIGKILL the exact socket peer if it wedges. A same-version holder
-// is never evicted — that is a legitimate running daemon, so refusing here is
-// what prevents two daemons from ever evicting each other.
+// evictHolder clears a strictly older daemon holding the socket: ask it to
+// step down, then SIGKILL the exact socket peer if it wedges. A same-or-newer
+// holder is never evicted — refusing the tie is what prevents two daemons from
+// ever evicting each other, and refusing a newer holder makes a spawned older
+// daemon exit while its spawning client converges on the newer holder instead
+// of ping-ponging evictions.
 func (s *Server) evictHolder() error {
 	c := &Client{socket: s.socket}
 	resp, err := c.Health()
 	if err != nil {
 		return nil // no live holder; a stale socket file is removed by listen
 	}
-	if resp.DaemonVersion == version.String() {
-		return errors.New("another cc-review daemon at the same version is already running")
+	if !version.Newer(version.String(), resp.DaemonVersion) {
+		return fmt.Errorf("cc-review daemon %s already holds the socket (this binary is %s)", resp.DaemonVersion, version.String())
 	}
-	s.log.Printf("evicting version-skewed daemon (%s) holding the socket", resp.DaemonVersion)
+	s.log.Printf("evicting older daemon (%s) holding the socket", resp.DaemonVersion)
 	pid, _ := c.peerPID() // grab before shutdown: the peer is gone afterwards
 	if _, err := c.Shutdown(); err != nil {
 		return fmt.Errorf("evict holder %s: %w", resp.DaemonVersion, err)
@@ -205,9 +207,10 @@ func (s *Server) evictHolder() error {
 			return fmt.Errorf("holder %s did not release the socket within %s", resp.DaemonVersion, s.evictTimeout)
 		}
 	}
-	// The old daemon deletes http.json on its way out, up to its drain window
-	// after the socket closes — shipped code we cannot patch. Wait for the
-	// process itself to exit so our handshake is not clobbered.
+	// Pre-fix daemons delete http.json on their way out, up to their drain
+	// window after the socket closes — shipped code we cannot patch. Wait for
+	// the process itself to exit so our handshake is not clobbered; the wait is
+	// also what lets listenHTTP read the predecessor's port and reuse it.
 	if pid > 1 && pid != os.Getpid() {
 		deadline := time.Now().Add(s.evictTimeout)
 		for time.Now().Before(deadline) {
@@ -221,16 +224,28 @@ func (s *Server) evictHolder() error {
 	return nil
 }
 
-// startHTTP binds the data/UI plane on an ephemeral 127.0.0.1 port, publishes the
-// port handshake, and serves until ctx is cancelled. Request contexts derive
+// listenHTTP binds the data/UI plane. A fixed dev port binds exactly or fails
+// loud; otherwise the port last published to http.json is tried first so
+// printed review URLs survive a daemon swap, falling back to an ephemeral
+// port. The prior port is a reuse hint, not a contract.
+func (s *Server) listenHTTP() (net.Listener, error) {
+	if s.fixedPort != 0 {
+		return net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.fixedPort))
+	}
+	if prev := readHTTPInfo().Port; prev != 0 {
+		if ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", prev)); err == nil {
+			return ln, nil
+		}
+	}
+	return net.Listen("tcp", "127.0.0.1:0")
+}
+
+// startHTTP binds the data/UI plane on 127.0.0.1, publishes the port
+// handshake, and serves until ctx is cancelled. Request contexts derive
 // from ctx (BaseContext), so cancelling it ends every parked SSE handler
 // before the graceful Shutdown drains them — and before Run closes the store.
 func (s *Server) startHTTP(ctx context.Context) error {
-	addr := "127.0.0.1:0"
-	if s.fixedPort != 0 {
-		addr = fmt.Sprintf("127.0.0.1:%d", s.fixedPort)
-	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := s.listenHTTP()
 	if err != nil {
 		return err
 	}
@@ -309,7 +324,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	}
 	if req.Proto != ProtocolVersion {
 		return errResp(fmt.Sprintf(
-			"cc-review protocol skew: daemon speaks v%d, request is v%d — client and daemon versions differ; retry the command (first contact upgrades the daemon)",
+			"cc-review protocol skew: daemon speaks v%d, request is v%d — this session is pinned to an older plugin version; restart the session to pick up the current one",
 			ProtocolVersion, req.Proto))
 	}
 	switch req.Op {

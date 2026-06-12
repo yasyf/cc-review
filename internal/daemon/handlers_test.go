@@ -142,8 +142,8 @@ func TestDispatchRejectsSkewedProto(t *testing.T) {
 			if resp.OK != tc.wantOK {
 				t.Fatalf("ok=%v (err=%q), want %v", resp.OK, resp.Error, tc.wantOK)
 			}
-			if !tc.wantOK && !strings.Contains(resp.Error, "retry") {
-				t.Fatalf("skew error %q must tell the user to retry", resp.Error)
+			if !tc.wantOK && !strings.Contains(resp.Error, "restart the session") {
+				t.Fatalf("skew error %q must tell the user to restart the session", resp.Error)
 			}
 		})
 	}
