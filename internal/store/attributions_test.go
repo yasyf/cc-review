@@ -33,6 +33,51 @@ func TestAttributionsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestListAttributionsBySession(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r1, _ := s.CreateReview(ctx, "sess-a", 0, "/repo", "main", "base0")
+	v1, _ := s.CreateVersion(ctx, r1.ID, "main", "HEAD", "/p", "[]")
+	v2, _ := s.CreateVersion(ctx, r1.ID, "main", "HEAD", "/p", "[]")
+	other, _ := s.CreateReview(ctx, "sess-b", 0, "/repo2", "main", "base0")
+	vOther, _ := s.CreateVersion(ctx, other.ID, "main", "HEAD", "/p", "[]")
+
+	if err := s.PutAttributions(ctx, v1.ID, map[string][]AttributionRange{
+		"b.go": {{Start: 2, End: 3, TurnID: 9}},
+		"a.go": {{Start: 1, End: 4, TurnID: 7}, {Start: 10, End: 10}},
+	}); err != nil {
+		t.Fatalf("put v1: %v", err)
+	}
+	if err := s.PutAttributions(ctx, v2.ID, map[string][]AttributionRange{
+		"a.go": {{Start: 5, End: 6, TurnID: 9}},
+	}); err != nil {
+		t.Fatalf("put v2: %v", err)
+	}
+	if err := s.PutAttributions(ctx, vOther.ID, map[string][]AttributionRange{
+		"c.go": {{Start: 1, End: 1, TurnID: 12}},
+	}); err != nil {
+		t.Fatalf("put other session: %v", err)
+	}
+
+	got, err := s.ListAttributionsBySession(ctx, "sess-a")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []SessionAttribution{
+		{ReviewID: r1.ID, Version: 1, FilePath: "a.go", Ranges: []AttributionRange{{Start: 1, End: 4, TurnID: 7}, {Start: 10, End: 10}}},
+		{ReviewID: r1.ID, Version: 1, FilePath: "b.go", Ranges: []AttributionRange{{Start: 2, End: 3, TurnID: 9}}},
+		{ReviewID: r1.ID, Version: 2, FilePath: "a.go", Ranges: []AttributionRange{{Start: 5, End: 6, TurnID: 9}}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("session attributions = %+v, want %+v", got, want)
+	}
+
+	none, err := s.ListAttributionsBySession(ctx, "sess-none")
+	if err != nil || len(none) != 0 {
+		t.Fatalf("unknown session: %+v err=%v, want none", none, err)
+	}
+}
+
 func TestPutAttributionsReplacesOnConflict(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

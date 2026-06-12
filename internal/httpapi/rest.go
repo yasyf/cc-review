@@ -31,6 +31,7 @@ type sessionResponse struct {
 	AIRequests      []wire.AIRequest                   `json:"aiRequests"`
 	Turns           []wire.Turn                        `json:"turns"`
 	Attributions    map[string][]wire.AttributionRange `json:"attributions"`
+	TurnActivity    map[string][]wire.Decision         `json:"turnActivity"`
 	ClaudeConnected bool                               `json:"claudeConnected"`
 	LatestEventSeq  string                             `json:"latestEventSeq"`
 }
@@ -210,9 +211,35 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		AIRequests:      aiRequests,
 		Turns:           turns,
 		Attributions:    attributions,
+		TurnActivity:    s.turnActivity(storeTurns),
 		ClaudeConnected: s.backend.ClaudeConnected(review.ID),
 		LatestEventSeq:  strconv.FormatInt(latestSeq, 10),
 	})
+}
+
+// turnActivity collects each turn's decision-ledger rows, keyed by the turn's
+// wire id. The ledger is shared telemetry written concurrently by other
+// cc-family tools, so a read failure degrades to an empty panel with a log
+// line instead of failing the session.
+func (s *Server) turnActivity(turns []store.Turn) map[string][]wire.Decision {
+	out := make(map[string][]wire.Decision, len(turns))
+	for _, t := range turns {
+		untilMs := t.EndedAt
+		if untilMs == 0 {
+			untilMs = time.Now().UnixMilli()
+		}
+		rows, err := s.decisions.ForTurn(t.SessionID, t.StartedAt, untilMs)
+		if err != nil {
+			s.log.Printf("turn activity: decisions for turn %d: %v", t.ID, err)
+			rows = nil
+		}
+		wired := make([]wire.Decision, 0, len(rows))
+		for _, d := range rows {
+			wired = append(wired, wire.ToDecision(d))
+		}
+		out[strconv.FormatInt(t.ID, 10)] = wired
+	}
+	return out
 }
 
 func (s *Server) handleGetVersions(w http.ResponseWriter, r *http.Request) {

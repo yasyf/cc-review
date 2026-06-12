@@ -1,5 +1,12 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AiRequest, AskAnswer, LineRange, SessionResponse, Side } from './types';
+import type {
+  AiRequest,
+  AskAnswer,
+  LineRange,
+  ProvenanceResponse,
+  SessionResponse,
+  Side,
+} from './types';
 
 export type VersionKey = number | 'latest';
 
@@ -34,6 +41,17 @@ export function useSession(slug: string, version?: number) {
   return useQuery({
     queryKey: sessionKey(slug, version ?? 'latest'),
     queryFn: () => fetchSession(slug, version),
+  });
+}
+
+// Fetched lazily when a turn's activity section opens. The daemon caches
+// closed turns; staleTime keeps the browser from re-shelling on every toggle.
+export function useTurnProvenance(turnId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['provenance', turnId] as const,
+    queryFn: () => request<ProvenanceResponse>(`/api/turns/${turnId}/provenance`),
+    enabled,
+    staleTime: Infinity,
   });
 }
 

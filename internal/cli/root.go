@@ -26,6 +26,7 @@ func NewRootCmd() *cobra.Command {
 		newWatchCmd(),
 		newReplyCmd(),
 		newFeedbackCmd(),
+		newExportCmd(),
 		newStatusCmd(),
 		newStopCmd(),
 		newDaemonCmd(),

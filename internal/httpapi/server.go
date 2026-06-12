@@ -7,8 +7,11 @@ package httpapi
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"sync"
 
+	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -28,14 +31,23 @@ type Backend interface {
 // the listener and the chosen port. The listener binds 127.0.0.1 only, which is
 // the whole access-control story.
 type Server struct {
-	store   *store.Store
-	backend Backend
-	mux     *http.ServeMux
+	store     *store.Store
+	decisions *decisions.Log
+	backend   Backend
+	log       *log.Logger
+	mux       *http.ServeMux
+
+	provMu     sync.Mutex
+	provCache  map[int64][]provenanceItem // closed turns only; never persisted
+	provWarned map[string]bool            // session ids already warned about slice failures
 }
 
 // New builds the HTTP server.
-func New(st *store.Store, backend Backend) *Server {
-	s := &Server{store: st, backend: backend, mux: http.NewServeMux()}
+func New(st *store.Store, ledger *decisions.Log, logger *log.Logger, backend Backend) *Server {
+	s := &Server{
+		store: st, decisions: ledger, backend: backend, log: logger, mux: http.NewServeMux(),
+		provCache: make(map[int64][]provenanceItem), provWarned: make(map[string]bool),
+	}
 	s.routes()
 	return s
 }
@@ -53,6 +65,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/ai-requests", s.handleCreateAIRequest)
 	s.mux.HandleFunc("POST /api/ai-requests/{id}/undo", s.handleUndoAIRequest)
 	s.mux.HandleFunc("POST /api/submit", s.handleSubmit)
+	s.mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)
 	s.mux.HandleFunc("GET /events", s.handleEvents)
 	// Registered last and least-specific: the SPA shell + embedded assets.
 	s.mux.Handle("/", s.static())

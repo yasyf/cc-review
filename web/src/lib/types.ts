@@ -155,6 +155,36 @@ export interface AttributionRange {
   turnId?: string;
 }
 
+export type DecisionAction = 'allow' | 'block' | 'warn' | 'nudge' | 'note';
+
+// One decision-ledger row inside a turn window: a hook or gate verdict
+// recorded by a cc-family tool (cc-review's own gate, captain-hook, …).
+export interface TurnDecision {
+  tsMs: number;
+  source: string;
+  kind: string;
+  action: DecisionAction;
+  toolName: string;
+  message: string;
+}
+
+// One tool call of a turn window; field names come straight from the
+// cc-transcript.slice/1 contract the daemon passes through.
+export interface ProvenanceItem {
+  event_uuid: string;
+  ts_ms: number;
+  tool_name: string;
+  summary: string;
+  file_path: string;
+}
+
+// provenance_unavailable means the slice degraded (binary absent, transcript
+// expired); the empty list is then a "don't know", not a "nothing happened".
+export interface ProvenanceResponse {
+  provenance: ProvenanceItem[];
+  provenance_unavailable: boolean;
+}
+
 export interface SessionResponse {
   review: Review;
   version: number;
@@ -173,6 +203,8 @@ export interface SessionResponse {
   turns: Turn[];
   // Keyed by path; ranges sorted by start within each file.
   attributions: Record<string, AttributionRange[]>;
+  // Keyed by turn id; every listed turn has an entry, possibly empty.
+  turnActivity: Record<string, TurnDecision[]>;
   claudeConnected: boolean;
   // Max event seq when the session was fetched, int64-as-string ("0" when no
   // events). The SSE handler toasts only frames newer than this, so the

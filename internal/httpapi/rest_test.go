@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/wire"
 )
@@ -408,5 +409,53 @@ func TestSessionEmptyTurnsAndAttributionsSerializeNonNull(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"attributions":{}`)) {
 		t.Fatalf(`session body lacks "attributions":{}: %s`, body)
+	}
+	if !bytes.Contains(body, []byte(`"turnActivity":{}`)) {
+		t.Fatalf(`session body lacks "turnActivity":{}: %s`, body)
+	}
+}
+
+func TestSessionCarriesTurnActivity(t *testing.T) {
+	st, ledger, _, srv := newTestServerWithLedger(t)
+	ctx := context.Background()
+	review, version := createReviewVersion(t, st, `[]`)
+
+	turn, err := st.CreateTurn(ctx, store.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutAttributions(ctx, version.ID, map[string][]store.AttributionRange{
+		"a.go": {{Start: 1, End: 3, TurnID: turn.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inWindow := decisions.Decision{
+		TsMs: turn.StartedAt + 1, SessionID: "s1", Source: "cc-review", Kind: "gate",
+		Event: "PreToolUse", Action: "block", ToolName: "Edit", Message: "locked review",
+	}
+	beforeWindow := inWindow
+	beforeWindow.TsMs = turn.StartedAt - 10
+	otherSession := inWindow
+	otherSession.SessionID = "s2"
+	for _, d := range []decisions.Decision{inWindow, beforeWindow, otherSession} {
+		if err := ledger.Append(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out struct {
+		TurnActivity map[string][]wire.Decision `json:"turnActivity"`
+	}
+	if err := json.Unmarshal(getSessionBody(t, srv, review.ID), &out); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]wire.Decision{
+		strconv.FormatInt(turn.ID, 10): {{
+			TsMs: turn.StartedAt + 1, Source: "cc-review", Kind: "gate",
+			Action: "block", ToolName: "Edit", Message: "locked review",
+		}},
+	}
+	if !reflect.DeepEqual(out.TurnActivity, want) {
+		t.Fatalf("turnActivity = %+v, want %+v", out.TurnActivity, want)
 	}
 }

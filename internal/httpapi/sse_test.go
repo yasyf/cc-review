@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -39,16 +42,27 @@ func (b *stubBackend) Attach(reviewID, consumer string, claudePID int) func() {
 func (b *stubBackend) ClaudeConnected(string) bool { return false }
 
 func newTestServer(t *testing.T) (*store.Store, *stubBackend, *httptest.Server) {
+	st, _, backend, srv := newTestServerWithLedger(t)
+	return st, backend, srv
+}
+
+func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *stubBackend, *httptest.Server) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	ledger, err := decisions.Open(filepath.Join(dir, "decisions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ledger.Close() })
 	backend := &stubBackend{attached: make(chan string, 1), detached: make(chan string, 1), events: make(chan *store.Event, 4)}
-	srv := httptest.NewServer(New(st, backend).Handler())
+	srv := httptest.NewServer(New(st, ledger, log.New(io.Discard, "", 0), backend).Handler())
 	t.Cleanup(srv.Close)
-	return st, backend, srv
+	return st, ledger, backend, srv
 }
 
 func TestEventsRegistersNamedConsumer(t *testing.T) {

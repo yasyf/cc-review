@@ -33,6 +33,48 @@ func (s *Store) PutAttributions(ctx context.Context, versionID int64, byFile map
 	return nil
 }
 
+// SessionAttribution is one file's attribution ranges within one review
+// version, joined back to the owning review for the activity export.
+type SessionAttribution struct {
+	ReviewID string
+	Version  int
+	FilePath string
+	Ranges   []AttributionRange
+}
+
+// ListAttributionsBySession returns every attribution row of a session's
+// reviews, joined through review versions and ordered by (review, version,
+// file path) — the (review_id, version, file_path) dimension of the activity
+// export.
+func (s *Store) ListAttributionsBySession(ctx context.Context, sessionID string) ([]SessionAttribution, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT r.id, v.version_number, a.file_path, a.ranges_json
+		 FROM turn_attributions a
+		 JOIN review_versions v ON v.id = a.version_id
+		 JOIN reviews r ON r.id = v.review_id
+		 WHERE r.session_id = ?
+		 ORDER BY r.id, v.version_number, a.file_path`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list session attributions: %w", err)
+	}
+	defer rows.Close()
+	var out []SessionAttribution
+	for rows.Next() {
+		var (
+			sa         SessionAttribution
+			rangesJSON string
+		)
+		if err := rows.Scan(&sa.ReviewID, &sa.Version, &sa.FilePath, &rangesJSON); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(rangesJSON), &sa.Ranges); err != nil {
+			return nil, fmt.Errorf("decode attribution ranges for %s v%d %s: %w", sa.ReviewID, sa.Version, sa.FilePath, err)
+		}
+		out = append(out, sa)
+	}
+	return out, rows.Err()
+}
+
 // ListAttributionsByVersion returns a version's attribution ranges keyed by
 // file path.
 func (s *Store) ListAttributionsByVersion(ctx context.Context, versionID int64) (map[string][]AttributionRange, error) {

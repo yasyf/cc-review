@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -105,6 +106,17 @@ type AttributionRange struct {
 	TurnID string `json:"turnId,omitempty"`
 }
 
+// Decision is the SPA's view of one decision-ledger row inside a turn window:
+// the turn-activity panel data.
+type Decision struct {
+	TsMs     int64  `json:"tsMs"`
+	Source   string `json:"source"`
+	Kind     string `json:"kind"`
+	Action   string `json:"action"`
+	ToolName string `json:"toolName"`
+	Message  string `json:"message"`
+}
+
 // ToReview converts a store review, taking the branch from the active version
 // (branch lives on the version, not the review).
 func ToReview(r store.Review, branch string) Review {
@@ -157,6 +169,14 @@ func ToTurn(t store.Turn) Turn {
 	return Turn{
 		ID: id(t.ID), SessionID: t.SessionID, PromptExcerpt: t.PromptExcerpt,
 		Interrupted: t.Status == "interrupted", StartedAt: t.StartedAt, EndedAt: t.EndedAt,
+	}
+}
+
+// ToDecision converts a decision-ledger row.
+func ToDecision(d decisions.Decision) Decision {
+	return Decision{
+		TsMs: d.TsMs, Source: d.Source, Kind: d.Kind, Action: d.Action,
+		ToolName: d.ToolName, Message: d.Message,
 	}
 }
 

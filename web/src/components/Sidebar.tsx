@@ -6,6 +6,7 @@ import { ChapterPanel } from './ChapterPanel';
 import { CommentsPanel } from './CommentsPanel';
 import { FileTreePanel } from './FileTreePanel';
 import { TodoPanel } from './TodoPanel';
+import { TurnActivityPanel } from './TurnActivityPanel';
 
 function TreeIcon() {
   return (
@@ -15,6 +16,20 @@ function TreeIcon() {
         stroke="currentColor"
         strokeWidth="1.4"
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function ActivityIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M1.5 8h3l2-5 3 10 2-5h3"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );
@@ -49,7 +64,7 @@ export function Sidebar({
   onSelectFile(path: string): void;
   onSelectComment(comment: Comment): void;
 }) {
-  const [tab, setTab] = useState<'files' | 'comments'>('files');
+  const [tab, setTab] = useState<'files' | 'comments' | 'activity'>('files');
   const { seen } = useUnread();
   const { viewMode } = useViewPrefs();
   const unread = unreadCount(session.comments, seen);
@@ -79,8 +94,20 @@ export function Sidebar({
           <CommentIcon />
           {unread > 0 ? <span className="tab-badge">{unread}</span> : null}
         </button>
+        <button
+          type="button"
+          role="tab"
+          className="tab-btn"
+          aria-selected={tab === 'activity'}
+          title="Turn activity"
+          onClick={() => setTab('activity')}
+        >
+          <ActivityIcon />
+        </button>
       </div>
-      {tab === 'files' ? (
+      {tab === 'activity' ? (
+        <TurnActivityPanel session={session} />
+      ) : tab === 'files' ? (
         organization ? (
           viewMode === 'todo' ? (
             <TodoPanel session={session} organization={organization} onSelectFile={onSelectFile} />
