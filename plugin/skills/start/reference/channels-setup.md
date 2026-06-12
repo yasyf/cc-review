@@ -1,8 +1,8 @@
-# Silencing the dev-channels warning
+# Approving the cc-review channel
 
-Launching Claude with `--dangerously-load-development-channels plugin:cc-review@cc-review` shows a **"WARNING: Loading development channels"** confirmation on every start. That dialog exists only for the development path. The same channel loads with no dialog once cc-review is on Claude's *approved* allowlist and is selected through the normal channels mechanism.
+The channel loads with no dialog only once cc-review is on Claude's *approved* allowlist and is selected through the normal channels mechanism (`--channels plugin:cc-review@cc-review`). Before approval, `--dangerously-load-development-channels plugin:cc-review@cc-review` is the only way to load it, and it shows a **"WARNING: Loading development channels"** confirmation on every start.
 
-`cc-review setup-channels` makes that switch. `cc-review start` runs the same gating check and prints the result as its `setup: {"offer":…,"reason":…}` line; the `/cc-review:start` skill makes the offer from that line once, the first time a development-channels session has no approval yet.
+`cc-review setup-channels` grants that approval. `cc-review start` runs the same gating check and prints the result as its `setup: {"offer":…,"reason":…}` line; the `/cc-review:start` skill makes the offer from that line once, the first time a session has no approval yet.
 
 ## What `--apply` writes
 
@@ -13,11 +13,11 @@ It then writes a marker at `~/.cc-review/channels-setup.json` so the offer is ne
 
 ## After applying
 
-Relaunch with `--channels plugin:cc-review@cc-review` in place of `--dangerously-load-development-channels plugin:cc-review@cc-review` (in your alias, `ccp run`, or however you start Claude). Approval moves the plugin onto the allowlist, so the approved `--channels` flag loads it with no warning; you still select the channel at launch — approval does not auto-load it. The `--dangerously-…` flag is the sole trigger for the dialog, so swapping it out is what removes the warning.
+Launch with `--channels plugin:cc-review@cc-review`, replacing `--dangerously-load-development-channels plugin:cc-review@cc-review` if you used it (in your alias, `ccp run`, or however you start Claude). Approval moves the plugin onto the allowlist, so the approved `--channels` flag loads it with no warning; you still select the channel at launch — approval does not auto-load it. The `--dangerously-…` flag is the sole trigger for the dialog, so swapping it out is what removes the warning.
 
 ## Gating
 
-`start`'s `setup:` line (and `--check`, which runs the same check) reports `{ "offer": true }` only when all three hold: no marker yet, cc-review is not already approved, and the current session descends from a Claude launched with the development-channels flag (so Monitor-only users are never asked). `--decline` records a no without writing any settings.
+`start`'s `setup:` line (and `--check`, which runs the same check) reports `{ "offer": true }` only when both hold: no marker yet, and cc-review is not already approved. `--decline` records a no without writing any settings.
 
 ## Undo
 

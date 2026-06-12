@@ -15,10 +15,10 @@ import (
 )
 
 // newSetupChannelsCmd is the hidden command behind /cc-review:start's one-time
-// offer to silence the "Loading development channels" confirmation. --check
-// reports whether to offer (dev-channels session, not yet approved, not yet
-// asked); --apply writes the approved-channels config through an admin prompt;
-// --decline records a "no" so the offer never repeats.
+// offer to approve cc-review's channel. --check reports whether to offer (not
+// yet approved, not yet asked); --apply writes the approved-channels config
+// through an admin prompt; --decline records a "no" so the offer never
+// repeats.
 func newSetupChannelsCmd() *cobra.Command {
 	var check, apply, decline bool
 	cmd := &cobra.Command{
@@ -68,14 +68,7 @@ func channelsOffer() (bool, string, error) {
 	if approved {
 		return false, "already approved", nil
 	}
-	dev, err := channelsetup.LaunchedWithDevChannels()
-	if err != nil {
-		return false, "", err
-	}
-	if !dev {
-		return false, "not a development-channels session", nil
-	}
-	return true, "development-channels session not yet approved", nil
+	return true, "channel not yet approved", nil
 }
 
 func runChannelsApply(out io.Writer) error {
@@ -97,7 +90,7 @@ func runChannelsApply(out io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(out, "cc-review is now an approved channel.")
-	fmt.Fprintf(out, "Relaunch with `--channels %s` in place of `--dangerously-load-development-channels %s` — same channel, no warning.\n", channelsetup.ChannelID, channelsetup.ChannelID)
+	fmt.Fprintf(out, "Launch with `--channels %s` (replacing `--dangerously-load-development-channels %s` if you used it) — same channel, no warning.\n", channelsetup.ChannelID, channelsetup.ChannelID)
 	return nil
 }
 

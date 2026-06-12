@@ -23,10 +23,10 @@ func TestStartExtraLines(t *testing.T) {
 			name:         "active offer with organize",
 			channelState: "active",
 			offer:        true,
-			reason:       "development-channels session not yet approved",
+			reason:       "channel not yet approved",
 			want: []string{
 				"channel: active",
-				`setup: {"offer":true,"reason":"development-channels session not yet approved"}`,
+				`setup: {"offer":true,"reason":"channel not yet approved"}`,
 				`organize: ` + string(organize),
 			},
 			organize: organize,

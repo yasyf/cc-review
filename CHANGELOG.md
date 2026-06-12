@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-12
+
+### Changed
+- The one-time channel-approval offer no longer requires the session to
+  descend from a `--dangerously-load-development-channels` launch. `start`'s
+  `setup:` line (and `setup-channels --check`) offers whenever no marker
+  exists and the channel is not yet approved, so release installs and
+  Monitor-only sessions are asked too.
+
 ## [0.8.0] - 2026-06-11
 
 ### Changed

@@ -45,11 +45,11 @@ If a `<channel source="cc-review">` tag arrives while the Monitor is armed, chan
 
 Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
 
-## First run only: offer to silence the dev-channels warning
+## First run only: offer to approve the channel
 
-The `setup:` line from step 1 is the offer check. If it printed `"offer":true`, once event delivery is wired up and you're idle — **don't block the review on it** — ask the user via **AskUserQuestion**: stop the *"Loading development channels"* confirmation that appears on every launch? cc-review gets added to Claude's approved channels (one macOS admin-password prompt).
+The `setup:` line from step 1 is the offer check. If it printed `"offer":true`, once event delivery is wired up and you're idle — **don't block the review on it** — ask the user via **AskUserQuestion**: approve cc-review as a Claude channel? It goes on the approved allowlist in managed settings (one macOS admin-password prompt), so `--channels` launches load it with no dev-channels warning.
 
-- **Yes** — run `cc-review setup-channels --apply` (a password dialog appears). Then tell them: relaunch with `--channels plugin:cc-review@cc-review` in place of `--dangerously-load-development-channels plugin:cc-review@cc-review` — same channel, no warning.
+- **Yes** — run `cc-review setup-channels --apply` (a password dialog appears). Then tell them: launch with `--channels plugin:cc-review@cc-review` (replacing `--dangerously-load-development-channels plugin:cc-review@cc-review` if they used it) — same channel, no warning.
 - **No** — run `cc-review setup-channels --decline`.
 
 Asked once either way. If `offer` is false, skip silently — `reason` says why. See `reference/channels-setup.md`.
