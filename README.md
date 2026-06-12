@@ -1,6 +1,6 @@
 # cc-review
 
-![cc-review banner](docs/assets/readme-banner.png)
+![cc-review banner](docs/assets/readme-banner.webp)
 
 [![CI](https://img.shields.io/github/actions/workflow/status/yasyf/cc-review/ci.yml?branch=main&label=CI)](https://github.com/yasyf/cc-review/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/github/actions/workflow/status/yasyf/cc-review/docs.yml?branch=main&label=docs)](https://yasyf.github.io/cc-review)
