@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0]
+
+AI-bar requests submitted while no Claude session is attached are no longer
+lost, and the event-delivery path is hardened against leaked watchers and
+windows whose channel never proves out.
+
+### Added
+- Monitor-less event delivery: when the Claude window has no Monitor tool,
+  `/cc-review:start` streams review events through a background streamer
+  subagent instead. See `reference/monitor-fallback.md`.
+- The channel server pushes a hello tag at attach, so a window's channel can
+  prove `active` without waiting for the first human comment.
+
+### Fixed
+- Orphaned AI-bar requests recover: `/cc-review:start` re-offers every request
+  still open on the current version — the system organize plus any human
+  AI-bar prompts that arrived while no session was attached — so a freshly
+  attached session dispatches each. A request left pending past ten minutes is
+  failed by the daemon, so the UI never shows a permanently stuck "queued" chip.
+- `cc-review watch` exits when its Claude window dies, so a leaked watcher no
+  longer holds the shared event cursor or drains undelivered events; stream
+  cursor writes now fail loud instead of silently replaying the backlog later.
+- The reorganizing banner is scoped to system organize requests only.
+
 ## [0.11.0]
 
 Ends the daemon version war: concurrent sessions pinned to different cached
