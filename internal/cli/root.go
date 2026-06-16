@@ -24,6 +24,12 @@ func NewRootCmd() *cobra.Command {
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
 	d := deps()
+	// The plugin's scripts/mcp-channel.sh invokes the historical `mcp-channel`
+	// name; cc-interact's ChannelCmd defaults to `channel`. Preserve the plugin
+	// contract and keep `channel` as an alias.
+	channelCmd := cmd.ChannelCmd(d)
+	channelCmd.Use = "mcp-channel"
+	channelCmd.Aliases = []string{"channel"}
 	root.AddCommand(
 		// Substrate commands from cc-interact.
 		cmd.WatchCmd(d),
@@ -32,7 +38,7 @@ func NewRootCmd() *cobra.Command {
 		cmd.SessionRecordCmd(d),
 		cmd.GuardEditCmd(d),
 		cmd.ChannelAckCmd(d),
-		cmd.ChannelCmd(d),
+		channelCmd,
 		// cc-review domain commands.
 		newDaemonCmd(),
 		newStartCmd(),
