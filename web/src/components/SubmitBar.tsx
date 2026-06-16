@@ -1,16 +1,14 @@
 import { useSubmit } from '../lib/api';
-import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
 import type { SessionResponse } from '../lib/types';
 
 export function SubmitBar({ session }: { session: SessionResponse }) {
   const { slug } = useReview();
   const submit = useSubmit(slug);
-  const { feedbackPath } = useEventStream();
 
   const submitted = session.review.status === 'submitted';
   const openCount = session.comments.filter((c) => c.status === 'open').length;
-  const frozenPath = feedbackPath ?? submit.data?.feedbackPath ?? null;
+  const frozenPath = session.feedbackPath ?? submit.data?.feedbackPath ?? null;
   const total = session.files.length;
   const reviewedCount = session.files.filter((f) => session.fileStates[f.path]?.reviewed).length;
 

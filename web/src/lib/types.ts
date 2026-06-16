@@ -210,6 +210,9 @@ export interface SessionResponse {
   // events). The SSE handler toasts only frames newer than this, so the
   // cursor-0 replay patches state without replaying notifications.
   latestEventSeq: string;
+  // Client-only: the daemon never sends this on the REST snapshot; the stream's
+  // submit reduce folds the frozen feedback path into the cache here.
+  feedbackPath?: string;
 }
 
 // `file.states` entries are absolute per-path values, never deltas: the
@@ -250,10 +253,3 @@ export type ReviewEvent =
 export type ReviewEventType = ReviewEvent['type'];
 
 export type NotificationLevel = 'info' | 'warn' | 'error';
-
-export interface Notification {
-  id: string;
-  level: NotificationLevel;
-  message: string;
-  at: number;
-}

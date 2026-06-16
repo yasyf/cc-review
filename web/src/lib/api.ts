@@ -1,4 +1,10 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  createQueryClient,
+  request,
+  scopedKey,
+  useOptimisticMutation,
+} from '@cc-interact/react';
 import type {
   AiRequest,
   AskAnswer,
@@ -10,26 +16,10 @@ import type {
 
 export type VersionKey = number | 'latest';
 
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 5_000, retry: 1, refetchOnWindowFocus: false },
-  },
-});
+export const queryClient = createQueryClient();
 
 export const sessionKey = (slug: string, version: VersionKey) =>
-  ['session', slug, version] as const;
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${init?.method ?? 'GET'} ${path} failed (${res.status}): ${text}`);
-  }
-  return res.json() as Promise<T>;
-}
+  scopedKey('session', slug, version);
 
 export function fetchSession(slug: string, version?: number): Promise<SessionResponse> {
   const path =
@@ -114,24 +104,21 @@ export interface FileStatePatch {
   hidden?: boolean;
 }
 
+interface FileStatesResult {
+  states: { path: string; reviewed: boolean; hidden: boolean }[];
+}
+
 export function useSetFileStates(slug: string, version?: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (files: FileStatePatch[]) =>
-      request<{ states: { path: string; reviewed: boolean; hidden: boolean }[] }>(
-        '/api/file-states',
-        { method: 'POST', body: JSON.stringify({ reviewId: slug, files }) },
-      ),
-    // Optimistic: checkbox → collapse must be instant. SSE redelivers the same
-    // absolute per-path state, so the echo converges with this merge.
-    onMutate: async (files) => {
-      const key = sessionKey(slug, version ?? 'latest');
-      // An in-flight session refetch (kicked off by another mutation's
-      // invalidate) would resolve with a pre-mutation snapshot and clobber
-      // both this merge and the SSE echo.
-      await qc.cancelQueries({ queryKey: key });
-      const current = qc.getQueryData<SessionResponse>(key);
-      if (!current) return;
+  // Optimistic: checkbox → collapse must be instant. SSE redelivers the same
+  // absolute per-path state, so the echo converges with this merge.
+  return useOptimisticMutation<FileStatePatch[], FileStatesResult, SessionResponse>({
+    mutationFn: (files) =>
+      request<FileStatesResult>('/api/file-states', {
+        method: 'POST',
+        body: JSON.stringify({ reviewId: slug, files }),
+      }),
+    queryKey: () => sessionKey(slug, version ?? 'latest'),
+    applyOptimistic: (current, files) => {
       const fileStates = { ...current.fileStates };
       for (const patch of files) {
         const prev = fileStates[patch.path] ?? { reviewed: false, hidden: false };
@@ -140,11 +127,9 @@ export function useSetFileStates(slug: string, version?: number) {
           hidden: patch.hidden ?? prev.hidden,
         };
       }
-      qc.setQueryData<SessionResponse>(key, { ...current, fileStates });
+      return { ...current, fileStates };
     },
-    onError: () => {
-      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
-    },
+    invalidate: () => ({ queryKey: ['session', slug], exact: false }),
   });
 }
 

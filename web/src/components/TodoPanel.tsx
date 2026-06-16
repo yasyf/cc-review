@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { isOrganizing, userRequestInFlight } from '../lib/ai-requests';
 import { useSetFileStates } from '../lib/api';
+import { useFlip } from '@cc-interact/react';
 import { conversationByFile } from '../lib/conversation';
-import { useFlip } from '../lib/flip';
 import { todoGroups } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import type { Organization, SessionResponse } from '../lib/types';
@@ -34,7 +34,7 @@ export function TodoPanel({
   const { mutate: mutateStates } = useSetFileStates(slug, version);
   const [doneOpen, setDoneOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  useFlip(listRef);
+  useFlip(listRef, { flipClass: 'todo-row-flip', movedClass: 'todo-row-moved' });
 
   const groups = useMemo(
     () => todoGroups(organization, new Set(session.files.map((f) => f.path))),

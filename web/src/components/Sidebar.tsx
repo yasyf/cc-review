@@ -71,7 +71,7 @@ export function Sidebar({
   const organization = viewMode !== 'default' ? session.organization : null;
 
   return (
-    <div className="sidebar">
+    <>
       <div className="sidebar-tabs" role="tablist">
         <button
           type="button"
@@ -129,6 +129,6 @@ export function Sidebar({
       ) : (
         <CommentsPanel session={session} onSelectComment={onSelectComment} />
       )}
-    </div>
+    </>
   );
 }
