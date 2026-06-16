@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useCreateAiRequest, useUndoAiRequest } from '../lib/api';
 import { useReview } from '../lib/review-context';
 import type { AiRequest, SessionResponse } from '../lib/types';
@@ -10,6 +10,10 @@ const STATUS_LABEL: Record<AiRequest['status'], string> = {
   failed: 'failed',
   undone: 'undone',
 };
+
+// A request still queued this long after submission, with Claude connected,
+// most likely never reached the session; the daemon fails it shortly after.
+const STALE_PENDING_MS = 60_000;
 
 function RequestStatus({
   request,
@@ -84,6 +88,20 @@ export function AiBar({ session }: { session: SessionResponse }) {
   const connected = session.claudeConnected;
   const latest = session.aiRequests[0];
 
+  // Tick a clock only while a request is queued, so the "still queued" hint can
+  // appear once it has waited too long without mirroring any server state.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (latest?.status !== 'pending') return;
+    const id = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, [latest?.status]);
+  const stalePending =
+    connected &&
+    latest !== undefined &&
+    latest.status === 'pending' &&
+    now - new Date(latest.createdAt).getTime() > STALE_PENDING_MS;
+
   function send() {
     const text = prompt.trim();
     if (!text) return;
@@ -146,6 +164,12 @@ export function AiBar({ session }: { session: SessionResponse }) {
       {!connected ? (
         <div className="ai-hint">
           Claude is not connected — run /cc-review:start in the Claude session to enable AI actions.
+        </div>
+      ) : null}
+      {stalePending ? (
+        <div className="ai-hint">
+          Still queued — Claude may not have picked this up. Resume /cc-review:start in the Claude
+          session to run it; otherwise it expires shortly.
         </div>
       ) : null}
     </footer>

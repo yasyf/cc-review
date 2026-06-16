@@ -36,7 +36,7 @@ func newStartCmd() *cobra.Command {
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), resp.URL)
 			offer, reason, offerErr := channelsOffer()
-			for _, line := range startExtraLines(resp.ChannelState, offer, reason, offerErr, resp.AIRequest) {
+			for _, line := range startExtraLines(resp.ChannelState, offer, reason, offerErr, resp.AIRequests) {
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			return nil
@@ -49,18 +49,21 @@ func newStartCmd() *cobra.Command {
 	return cmd
 }
 
-// startExtraLines renders the channel: and setup: lines (always) and the
-// organize: line (only when the daemon returned an eager organize request).
-// An offer error degrades to offer=false with the error as the reason — start
-// never fails on the setup check.
-func startExtraLines(channelState string, offer bool, reason string, offerErr error, organize json.RawMessage) []string {
+// startExtraLines renders the channel: and setup: lines (always) and one
+// organize: line per open request the daemon re-offered (the eager system
+// organize plus any human AI-bar prompts left pending). An offer error degrades
+// to offer=false with the error as the reason — start never fails on the setup
+// check.
+func startExtraLines(channelState string, offer bool, reason string, offerErr error, organizes []json.RawMessage) []string {
 	if offerErr != nil {
 		offer, reason = false, offerErr.Error()
 	}
 	setup, _ := json.Marshal(map[string]any{"offer": offer, "reason": reason})
 	lines := []string{"channel: " + channelState, "setup: " + string(setup)}
-	if len(organize) > 0 {
-		lines = append(lines, "organize: "+string(organize))
+	for _, organize := range organizes {
+		if len(organize) > 0 {
+			lines = append(lines, "organize: "+string(organize))
+		}
 	}
 	return lines
 }

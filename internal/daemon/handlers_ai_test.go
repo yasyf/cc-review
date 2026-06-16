@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-review/internal/store"
 )
@@ -433,15 +434,15 @@ func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
 	s, repo := testServer(t)
 	_, started := startedReview(t, s, repo)
 
-	if len(started.AIRequest) == 0 {
-		t.Fatal("fresh start must return the organize request eagerly")
+	if len(started.AIRequests) != 1 {
+		t.Fatalf("fresh start must re-offer exactly the organize request, got %d", len(started.AIRequests))
 	}
 	var ar struct {
 		ID     string `json:"id"`
 		Source string `json:"source"`
 		Prompt string `json:"prompt"`
 	}
-	if err := json.Unmarshal(started.AIRequest, &ar); err != nil {
+	if err := json.Unmarshal(started.AIRequests[0], &ar); err != nil {
 		t.Fatalf("ai_request is not valid JSON: %v", err)
 	}
 	if ar.Source != "system" || ar.Prompt != organizePrompt {
@@ -460,20 +461,20 @@ func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
 	if err := json.Unmarshal(created[0].Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(payload.Request, started.AIRequest) {
-		t.Fatalf("event request = %s\nresponse ai_request = %s\nwant byte-identical", payload.Request, started.AIRequest)
+	if !bytes.Equal(payload.Request, started.AIRequests[0]) {
+		t.Fatalf("event request = %s\nresponse ai_request = %s\nwant byte-identical", payload.Request, started.AIRequests[0])
 	}
 
 	// A changed tree lands a new version with a fresh request id.
 	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
 	second := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
-	if !second.OK || len(second.AIRequest) == 0 {
-		t.Fatalf("second start: ok=%v err=%q ai_request=%s", second.OK, second.Error, second.AIRequest)
+	if !second.OK || len(second.AIRequests) != 1 {
+		t.Fatalf("second start: ok=%v err=%q ai_requests=%v", second.OK, second.Error, second.AIRequests)
 	}
 	var ar2 struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(second.AIRequest, &ar2); err != nil {
+	if err := json.Unmarshal(second.AIRequests[0], &ar2); err != nil {
 		t.Fatal(err)
 	}
 	if ar2.ID == ar.ID {
@@ -486,10 +487,13 @@ func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
 	if !third.OK || !third.Resumed {
 		t.Fatalf("resume: ok=%v resumed=%v err=%q", third.OK, third.Resumed, third.Error)
 	}
+	if len(third.AIRequests) != 1 {
+		t.Fatalf("unchanged resume re-offered %d requests, want the single still-open organize", len(third.AIRequests))
+	}
 	var ar3 struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(third.AIRequest, &ar3); err != nil {
+	if err := json.Unmarshal(third.AIRequests[0], &ar3); err != nil {
 		t.Fatal(err)
 	}
 	if ar3.ID != ar2.ID {
@@ -508,6 +512,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 	}{
 		{name: "organized closes pending", organized: true, want: "closed"},
 		{name: "organized closes working", organized: true, sysStatus: "working", want: "closed"},
+		{name: "organized re-offers open user request", organized: true, userOpen: true, want: "user-only"},
 		{name: "pending rescued with the same id", want: "rescued"},
 		{name: "working rescued with the same id", sysStatus: "working", want: "rescued"},
 		{name: "failed gets a fresh request", sysStatus: "failed", want: "fresh"},
@@ -519,7 +524,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 			var sys struct {
 				ID string `json:"id"`
 			}
-			if err := json.Unmarshal(started.AIRequest, &sys); err != nil {
+			if err := json.Unmarshal(started.AIRequests[0], &sys); err != nil {
 				t.Fatal(err)
 			}
 			sysID, err := strconv.ParseInt(sys.ID, 10, 64)
@@ -552,8 +557,8 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 
 			switch tc.want {
 			case "closed":
-				if len(resumed.AIRequest) != 0 {
-					t.Fatalf("organized resume returned ai_request %s, want empty", resumed.AIRequest)
+				if len(resumed.AIRequests) != 0 {
+					t.Fatalf("organized resume re-offered %v, want none", resumed.AIRequests)
 				}
 				got, err := s.store.GetAIRequest(ctx, sysID)
 				if err != nil {
@@ -565,12 +570,40 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				if got := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false)); got != updatedBefore+1 {
 					t.Fatalf("ai.request.updated events = %d, want exactly %d", got, updatedBefore+1)
 				}
+			case "user-only":
+				// The incident: an organized resume closes the system organize but
+				// re-offers the human's still-open AI-bar request so the freshly
+				// attached session dispatches it.
+				if len(resumed.AIRequests) != 1 {
+					t.Fatalf("organized resume re-offered %d requests, want only the open user request", len(resumed.AIRequests))
+				}
+				var ar struct {
+					ID     string `json:"id"`
+					Source string `json:"source"`
+					Status string `json:"status"`
+				}
+				if err := json.Unmarshal(resumed.AIRequests[0], &ar); err != nil {
+					t.Fatal(err)
+				}
+				if ar.ID != strconv.FormatInt(userID, 10) || ar.Source != "user" || ar.Status != "pending" {
+					t.Fatalf("re-offered request = %+v, want the open user request %d", ar, userID)
+				}
+				sysReq, err := s.store.GetAIRequest(ctx, sysID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sysReq.Status != "done" {
+					t.Fatalf("system organize status = %q, want done (closed, not re-offered)", sysReq.Status)
+				}
 			case "rescued":
+				if len(resumed.AIRequests) != 1 {
+					t.Fatalf("rescued resume re-offered %d requests, want the single rescued organize", len(resumed.AIRequests))
+				}
 				var ar struct {
 					ID     string `json:"id"`
 					Status string `json:"status"`
 				}
-				if err := json.Unmarshal(resumed.AIRequest, &ar); err != nil {
+				if err := json.Unmarshal(resumed.AIRequests[0], &ar); err != nil {
 					t.Fatal(err)
 				}
 				if ar.ID != sys.ID {
@@ -599,7 +632,9 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 					Source string `json:"source"`
 					Status string `json:"status"`
 				}
-				if err := json.Unmarshal(resumed.AIRequest, &ar); err != nil {
+				// AIRequests[0] is the freshly created system organize (newest);
+				// an open user request, if any, trails it.
+				if err := json.Unmarshal(resumed.AIRequests[0], &ar); err != nil {
 					t.Fatal(err)
 				}
 				if ar.ID == sys.ID {
@@ -618,8 +653,8 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				if err := json.Unmarshal(created[len(created)-1].Payload, &payload); err != nil {
 					t.Fatal(err)
 				}
-				if !bytes.Equal(payload.Request, resumed.AIRequest) {
-					t.Fatalf("event request = %s\nresponse ai_request = %s\nwant byte-identical", payload.Request, resumed.AIRequest)
+				if !bytes.Equal(payload.Request, resumed.AIRequests[0]) {
+					t.Fatalf("event request = %s\nresponse ai_request = %s\nwant byte-identical", payload.Request, resumed.AIRequests[0])
 				}
 				if tc.userOpen {
 					got, err := s.store.GetAIRequest(ctx, userID)
@@ -629,9 +664,73 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 					if got.Status != "pending" {
 						t.Fatalf("user request status = %q, want untouched pending", got.Status)
 					}
+					// The open user request trails the fresh system organize in the
+					// re-offer, so a freshly attached session dispatches both.
+					if len(resumed.AIRequests) != 2 {
+						t.Fatalf("re-offered %d requests, want system organize + open user request", len(resumed.AIRequests))
+					}
 				}
 			}
 		})
+	}
+}
+
+func TestSweepStalePending(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	_, started := startedReview(t, s, repo)
+
+	// A human AI-bar request no live session ever dispatched.
+	userReq, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, store.OriginUser, "mark all mechanical changes as viewed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A working user request must survive the sweep (only pending is failed).
+	working, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, store.OriginUser, "in flight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.TransitionAIRequest(ctx, working.ID, "working", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	updatedBefore := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false))
+
+	// A cutoff in the future treats every still-pending request as stale.
+	if err := s.sweepStalePending(ctx, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	got, err := s.store.GetAIRequest(ctx, userReq.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "failed" || !strings.Contains(got.Summary, "Resume with /cc-review:start") {
+		t.Fatalf("user request status=%q summary=%q, want failed with a resume hint", got.Status, got.Summary)
+	}
+	if w, _ := s.store.GetAIRequest(ctx, working.ID); w.Status != "working" {
+		t.Fatalf("working request status=%q, want untouched working", w.Status)
+	}
+	// The system organize (source=system) is never swept.
+	var sys struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(started.AIRequests[0], &sys); err != nil {
+		t.Fatal(err)
+	}
+	sysID, _ := strconv.ParseInt(sys.ID, 10, 64)
+	if sr, _ := s.store.GetAIRequest(ctx, sysID); sr.Status != "pending" {
+		t.Fatalf("system organize status=%q, want untouched pending", sr.Status)
+	}
+	if updates := eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false); len(updates) != updatedBefore+1 {
+		t.Fatalf("ai.request.updated events = %d, want exactly one more (%d)", len(updates), updatedBefore+1)
+	}
+
+	// Idempotent: a second sweep finds nothing still pending and emits nothing.
+	if err := s.sweepStalePending(ctx, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if again := eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false); len(again) != updatedBefore+1 {
+		t.Fatalf("second sweep emitted more events: %d", len(again))
 	}
 }
 
@@ -722,8 +821,8 @@ func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 	if !third.OK || third.Version != 3 {
 		t.Fatalf("third start: ok=%v version=%d err=%q", third.OK, third.Version, third.Error)
 	}
-	if len(third.AIRequest) != 0 {
-		t.Fatalf("carried start returned ai_request %s, want empty", third.AIRequest)
+	if len(third.AIRequests) != 0 {
+		t.Fatalf("carried start re-offered %v, want none", third.AIRequests)
 	}
 	v3, _, err := s.store.LatestVersion(ctx, started.ReviewID)
 	if err != nil {
@@ -774,8 +873,8 @@ func TestStartDoesNotCarryAcrossAChangedDiff(t *testing.T) {
 
 	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
 	second := s.handleStart(ctx, req)
-	if !second.OK || len(second.AIRequest) == 0 {
-		t.Fatalf("second start: ok=%v err=%q ai_request=%s", second.OK, second.Error, second.AIRequest)
+	if !second.OK || len(second.AIRequests) != 1 {
+		t.Fatalf("second start: ok=%v err=%q ai_requests=%v", second.OK, second.Error, second.AIRequests)
 	}
 	v2, _, err := s.store.LatestVersion(ctx, started.ReviewID)
 	if err != nil {

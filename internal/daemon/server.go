@@ -36,6 +36,14 @@ const defaultEvictTimeout = 5 * time.Second
 // have dropped for held to still consider the review occupied.
 const attachGrace = 10 * time.Second
 
+// stalePendingTTL is how long a human AI-bar request may sit pending before the
+// sweeper fails it: long enough that a live session always dispatches first,
+// short enough the UI's "queued" chip never lingers on an abandoned request.
+const stalePendingTTL = 10 * time.Minute
+
+// sweepInterval is how often the daemon sweeps for stale pending requests.
+const sweepInterval = 1 * time.Minute
+
 // Server is the running daemon: the control-plane unix-socket server plus the
 // data/UI HTTP plane it boots.
 type Server struct {
@@ -127,6 +135,8 @@ func (s *Server) serve(parent context.Context) error {
 	if err := s.startHTTP(ctx); err != nil {
 		return err
 	}
+	s.wg.Add(1)
+	go s.sweepLoop(ctx)
 
 	s.log.Printf("daemon %s started; socket=%s http=127.0.0.1:%d", version.String(), s.socket, s.httpPort)
 
@@ -297,6 +307,25 @@ func (s *Server) held(_ context.Context, r store.Review) bool {
 		return s.alive(r.ClaudePID)
 	}
 	return s.activity.AttachedWithin(r.ID, attachGrace)
+}
+
+// sweepLoop periodically fails human AI-bar requests left pending past the TTL,
+// so a request no live session ever dispatched stops showing as "queued"
+// forever. It drains on ctx cancellation like the other wg goroutines.
+func (s *Server) sweepLoop(ctx context.Context) {
+	defer s.wg.Done()
+	t := time.NewTicker(sweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.sweepStalePending(ctx, time.Now().Add(-stalePendingTTL)); err != nil {
+				s.log.Printf("sweep stale pending: %v", err)
+			}
+		}
+	}
 }
 
 // repoLock returns the mutex serializing working-tree snapshots for one repo,

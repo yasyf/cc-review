@@ -10,13 +10,14 @@ import (
 
 func TestStartExtraLines(t *testing.T) {
 	organize := json.RawMessage(`{"id":"7","source":"system","prompt":"Organize this review into chapters and rate per-file risk."}`)
+	userReq := json.RawMessage(`{"id":"8","source":"user","prompt":"mark all mechanical changes as viewed"}`)
 	for _, tc := range []struct {
 		name         string
 		channelState string
 		offer        bool
 		reason       string
 		offerErr     error
-		organize     json.RawMessage
+		organizes    []json.RawMessage
 		want         []string
 	}{
 		{
@@ -29,7 +30,7 @@ func TestStartExtraLines(t *testing.T) {
 				`setup: {"offer":true,"reason":"channel not yet approved"}`,
 				`organize: ` + string(organize),
 			},
-			organize: organize,
+			organizes: []json.RawMessage{organize},
 		},
 		{
 			name:         "pending no offer no organize",
@@ -52,9 +53,22 @@ func TestStartExtraLines(t *testing.T) {
 				`setup: {"offer":false,"reason":"stat \"/Library/Application Support\": denied"}`,
 			},
 		},
+		{
+			name:         "multiple requests emit one organize line each",
+			channelState: "active",
+			offer:        false,
+			reason:       "already approved",
+			organizes:    []json.RawMessage{organize, userReq},
+			want: []string{
+				"channel: active",
+				`setup: {"offer":false,"reason":"already approved"}`,
+				`organize: ` + string(organize),
+				`organize: ` + string(userReq),
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := startExtraLines(tc.channelState, tc.offer, tc.reason, tc.offerErr, tc.organize)
+			got := startExtraLines(tc.channelState, tc.offer, tc.reason, tc.offerErr, tc.organizes)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("lines = %q, want %q", got, tc.want)
 			}

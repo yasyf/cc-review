@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
@@ -184,4 +185,74 @@ func TestListAIRequestsNewestFirst(t *testing.T) {
 	if len(got) != 2 || got[0].ID != newer.ID || got[1].ID != older.ID {
 		t.Fatalf("order = %+v, want newest first", got)
 	}
+}
+
+func TestListOpenAIRequestsScopedToVersion(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
+
+	// v1: a closed system organize, an open (working) user request, a done one.
+	sysV1, _ := s.CreateAIRequest(ctx, r.ID, 1, "system", "organize")
+	userV1, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "mark mechanical")
+	doneV1, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "already handled")
+	if _, err := s.TransitionAIRequest(ctx, sysV1.ID, "done", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TransitionAIRequest(ctx, userV1.ID, "working", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TransitionAIRequest(ctx, doneV1.ID, "done", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	// v2: a fresh open system organize that must not leak into a v1 query.
+	sysV2, _ := s.CreateAIRequest(ctx, r.ID, 2, "system", "organize v2")
+
+	openV1, err := s.ListOpenAIRequests(ctx, r.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(openV1) != 1 || openV1[0].ID != userV1.ID {
+		t.Fatalf("v1 open = %+v, want only the working user request %d", openV1, userV1.ID)
+	}
+	openV2, err := s.ListOpenAIRequests(ctx, r.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(openV2) != 1 || openV2[0].ID != sysV2.ID {
+		t.Fatalf("v2 open = %+v, want only the v2 system organize %d", openV2, sysV2.ID)
+	}
+}
+
+func TestStalePendingUserRequests(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
+
+	stale, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "stale user pending")
+	working, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "user working")
+	sysPending, _ := s.CreateAIRequest(ctx, r.ID, 1, "system", "system pending")
+	fresh, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "fresh user pending")
+
+	// Backdate the first three past the cutoff; leave fresh recent.
+	old := time.Now().Add(-time.Hour)
+	for _, id := range []int64{stale.ID, working.ID, sysPending.ID} {
+		if _, err := s.db.ExecContext(ctx, `UPDATE ai_requests SET created_at=? WHERE id=?`, unix(old), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.TransitionAIRequest(ctx, working.ID, "working", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.StalePendingUserRequests(ctx, time.Now().Add(-30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the backdated, pending, user-sourced request qualifies: working is not
+	// pending, sysPending is not user, fresh is not old enough.
+	if len(got) != 1 || got[0].ID != stale.ID {
+		t.Fatalf("stale = %+v, want only the backdated pending user request %d", got, stale.ID)
+	}
+	_ = fresh
 }

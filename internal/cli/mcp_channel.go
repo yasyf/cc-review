@@ -145,13 +145,30 @@ func streamToChannel(ctx context.Context, ch *channel, session, cwd string) {
 		Port: port, ReviewID: reviewID, Consumer: "channel", ClaudePID: claudePID,
 		Refresh: refreshHandshake(client, session, cwd, "channel"),
 	}
-	_ = ConsumeEvents(ctx, src, func(_ int64, data string) (bool, error) {
+	// Prove the channel without waiting for human traffic: one hello tag at
+	// attach lets the model run channel-ack so channelState can reach "active"
+	// even on a review that gets no comments before its first AI-bar request —
+	// the case that otherwise strands the session on the kill-prone Monitor path.
+	// Best-effort: a failed hello means stdout is already broken, which the event
+	// loop below surfaces on its own.
+	if err := ch.notify("notifications/claude/channel", map[string]any{
+		"content": `{"type":"channel.hello"}`,
+		"meta":    map[string]any{"type": "channel.hello", "review_id": reviewID},
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "[cc-review] channel: hello push failed for review %s: %v\n", reviewID, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "[cc-review] channel: pushed hello tag for review %s\n", reviewID)
+	}
+	_ = ConsumeEvents(ctx, src, func(seq int64, data string) (bool, error) {
 		// A failed push must propagate so the cursor doesn't advance past an
 		// undelivered event; a channel otherwise runs for the whole session.
 		err := ch.notify("notifications/claude/channel", map[string]any{
 			"content": data,
 			"meta":    map[string]any{"type": eventType(data), "review_id": reviewID},
 		})
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "[cc-review] channel: pushed tag seq=%d type=%s for review %s\n", seq, eventType(data), reviewID)
+		}
 		return false, err
 	})
 }

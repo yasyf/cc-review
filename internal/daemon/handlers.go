@@ -139,6 +139,13 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 						fmt.Sprintf("diff unchanged; version %d is already organized", latest.VersionNumber)); err != nil {
 						return errResp(err.Error())
 					}
+					// The system organize is closed; re-offer only open human AI-bar
+					// requests stranded while no session was watching.
+					reoffer, err := s.openAIRequestsJSON(ctx, review.ID, latest.VersionNumber)
+					if err != nil {
+						return errResp(err.Error())
+					}
+					resp.AIRequests = reoffer
 					return resp
 				}
 				ar, found, err := s.openSystemOrganize(ctx, review.ID)
@@ -151,13 +158,14 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 					}
 					s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, latest.VersionNumber, ar)
 				}
-				// Byte-identical to the "request" object in the ai.request.created
-				// payload, so the skill can dedupe the redelivered event by id.
-				organizeJSON, err := json.Marshal(wire.ToAIRequest(ar))
+				// Re-offer the rescued/created system organize plus any open human
+				// AI-bar requests. Each is byte-identical to its ai.request.created
+				// payload, so the skill dedupes the redelivered offer by id.
+				reoffer, err := s.openAIRequestsJSON(ctx, review.ID, latest.VersionNumber)
 				if err != nil {
 					return errResp(err.Error())
 				}
-				resp.AIRequest = organizeJSON
+				resp.AIRequests = reoffer
 				return resp
 			}
 		}
@@ -256,12 +264,17 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 			fmt.Sprintf("diff unchanged; organization carried to version %d", v.VersionNumber)); err != nil {
 			return errResp(err.Error())
 		}
-		// No AIRequest: the skill dispatches no organize agent, matching the
-		// organized-resume contract.
+		// No system organize (carried verbatim); re-offer only open human
+		// AI-bar requests stranded while no session was watching.
+		reoffer, err := s.openAIRequestsJSON(ctx, review.ID, v.VersionNumber)
+		if err != nil {
+			return errResp(err.Error())
+		}
 		return Response{
 			OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
 			HTTPPort:     s.httpPort,
 			ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
+			AIRequests:   reoffer,
 		}
 	}
 	organize, err := s.store.CreateAIRequest(ctx, review.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
@@ -269,9 +282,10 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 		return errResp(err.Error())
 	}
 	s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
-	// Byte-identical to the "request" object in the ai.request.created payload,
-	// so the skill can dedupe the redelivered event by id.
-	organizeJSON, err := json.Marshal(wire.ToAIRequest(organize))
+	// Re-offer the new system organize plus any open human AI-bar requests. Each
+	// is byte-identical to its ai.request.created payload, so the skill dedupes
+	// the redelivered offer by id.
+	reoffer, err := s.openAIRequestsJSON(ctx, review.ID, v.VersionNumber)
 	if err != nil {
 		return errResp(err.Error())
 	}
@@ -279,7 +293,7 @@ func (s *Server) handleStart(ctx context.Context, req Request) Response {
 		OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
 		HTTPPort:     s.httpPort,
 		ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
-		AIRequest:    organizeJSON,
+		AIRequests:   reoffer,
 	}
 }
 

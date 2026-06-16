@@ -95,6 +95,52 @@ func (s *Store) ListAIRequests(ctx context.Context, reviewID string) ([]AIReques
 	return out, rows.Err()
 }
 
+// ListOpenAIRequests returns a version's open (pending or working) requests,
+// newest first — the set /cc-review:start re-offers so a freshly attached
+// session dispatches any request (system organize or a human's AI-bar prompt)
+// left open while no live session was watching. Scoped to one version so a
+// prior version's stale organize never leaks onto a newer start.
+func (s *Store) ListOpenAIRequests(ctx context.Context, reviewID string, versionNumber int) ([]AIRequest, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+aiRequestCols+` FROM ai_requests WHERE review_id=? AND version_number=? AND status IN ('pending','working') ORDER BY created_at DESC, id DESC`,
+		reviewID, versionNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AIRequest
+	for rows.Next() {
+		r, err := scanAIRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// StalePendingUserRequests returns user-sourced requests still pending since
+// before the cutoff — the sweeper's candidates to fail when no live session
+// ever dispatched them. System organize requests are closed on resume instead.
+func (s *Store) StalePendingUserRequests(ctx context.Context, before time.Time) ([]AIRequest, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+aiRequestCols+` FROM ai_requests WHERE source=? AND status='pending' AND created_at < ? ORDER BY id`,
+		OriginUser, unix(before))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AIRequest
+	for rows.Next() {
+		r, err := scanAIRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // TransitionAIRequest moves a request to its next status, guarded by
 // aiTransitions (ErrInvalidTransition otherwise), and returns the updated row.
 // An empty summary keeps the stored one; nil unmatched keeps the stored list.

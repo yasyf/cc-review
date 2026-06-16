@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/vcs"
@@ -365,6 +366,59 @@ func (s *Server) openSystemOrganize(ctx context.Context, reviewID string) (store
 		}
 	}
 	return store.AIRequest{}, false, nil
+}
+
+// openAIRequestsJSON returns the review's open requests as wire JSON, each
+// byte-identical to its ai.request.created payload so the skill dedupes the
+// redelivered offer by id. /cc-review:start re-offers these so a freshly
+// attached session dispatches any request — a system organize or a human's AI
+// bar prompt — left open while no live session was watching.
+func (s *Server) openAIRequestsJSON(ctx context.Context, reviewID string, versionNumber int) ([]json.RawMessage, error) {
+	open, err := s.store.ListOpenAIRequests(ctx, reviewID, versionNumber)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, 0, len(open))
+	for _, ar := range open {
+		b, err := json.Marshal(wire.ToAIRequest(ar))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// sweepStalePending fails user AI-bar requests left pending past
+// stalePendingTTL: no live session dispatched them, so they would otherwise
+// show "queued" forever. Only pending (never working) user requests are
+// touched — a request a just-attached agent already moved to working races out
+// via ErrInvalidTransition — and system organize requests are handled on resume.
+// before is the staleness cutoff (sweepLoop passes now-stalePendingTTL).
+func (s *Server) sweepStalePending(ctx context.Context, before time.Time) error {
+	stale, err := s.store.StalePendingUserRequests(ctx, before)
+	if err != nil {
+		return err
+	}
+	for _, ar := range stale {
+		updated, err := s.store.TransitionAIRequest(ctx, ar.ID, "failed",
+			"Request expired — no live review session picked it up. Resume with /cc-review:start and retry.", nil)
+		if err != nil {
+			if errors.Is(err, store.ErrInvalidTransition) {
+				continue
+			}
+			return err
+		}
+		v, ok, err := s.store.LatestVersion(ctx, ar.ReviewID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestUpdated, v.VersionNumber, updated)
+	}
+	return nil
 }
 
 // closeStaleOrganizeRequests marks the review's open system organize requests

@@ -92,21 +92,21 @@ type Request struct {
 
 // Response is one control-plane reply.
 type Response struct {
-	Proto         int             `json:"proto"`
-	OK            bool            `json:"ok"`
-	Error         string          `json:"error,omitempty"`
-	DaemonVersion string          `json:"daemon_version,omitempty"`
-	URL           string          `json:"url,omitempty"`
-	ReviewID      string          `json:"review_id,omitempty"`
-	Version       int             `json:"version,omitempty"`
-	Resumed       bool            `json:"resumed,omitempty"`
-	HTTPPort      int             `json:"http_port,omitempty"`
-	FeedbackPath  string          `json:"feedback_path,omitempty"`
-	Feedback      json.RawMessage `json:"feedback,omitempty"`
-	Status        string          `json:"status,omitempty"`
-	ChannelState  string          `json:"channel_state,omitempty"` // start: active|pending|inactive — active only for a proven window with the channel consumer attached
-	Allow         bool            `json:"allow,omitempty"`
-	Reason        string          `json:"reason,omitempty"`
-	ReviewFiles   json.RawMessage `json:"review_files,omitempty"` // review-files: {version_number, files: [...], organization?: {basis_version, overview, chapters, new_paths}}
-	AIRequest     json.RawMessage `json:"ai_request,omitempty"`   // start: the eager system organize request (absent on an unchanged resume)
+	Proto         int               `json:"proto"`
+	OK            bool              `json:"ok"`
+	Error         string            `json:"error,omitempty"`
+	DaemonVersion string            `json:"daemon_version,omitempty"`
+	URL           string            `json:"url,omitempty"`
+	ReviewID      string            `json:"review_id,omitempty"`
+	Version       int               `json:"version,omitempty"`
+	Resumed       bool              `json:"resumed,omitempty"`
+	HTTPPort      int               `json:"http_port,omitempty"`
+	FeedbackPath  string            `json:"feedback_path,omitempty"`
+	Feedback      json.RawMessage   `json:"feedback,omitempty"`
+	Status        string            `json:"status,omitempty"`
+	ChannelState  string            `json:"channel_state,omitempty"` // start: active|pending|inactive — active only for a proven window with the channel consumer attached
+	Allow         bool              `json:"allow,omitempty"`
+	Reason        string            `json:"reason,omitempty"`
+	ReviewFiles   json.RawMessage   `json:"review_files,omitempty"` // review-files: {version_number, files: [...], organization?: {basis_version, overview, chapters, new_paths}}
+	AIRequests    []json.RawMessage `json:"ai_requests,omitempty"`  // start: open requests to dispatch — the eager system organize plus any human AI-bar prompts left pending; the skill dispatches each, deduped by id
 }
