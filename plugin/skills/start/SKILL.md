@@ -24,24 +24,26 @@ setup: {"offer":<bool>,"reason":"<string>"}
 organize: {"id":"<n>","source":"system","prompt":"Organize this review into chapters and rate per-file risk.","status":"pending","summary":"","unmatched":[],"changes":[],"createdAt":"<RFC3339 UTC>","updatedAt":"<RFC3339 UTC>"}
 ```
 
-The `organize:` line appears when a new version needs organizing, and again when an unchanged resume finds the latest version still unorganized — the daemon re-offers the still-open request with the same `id`. A new version identical to the last organized one, whose organization the daemon carries forward itself, omits it. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
+There can be **zero or more** `organize:` lines — one per request still open on the current version. The first is usually the system organize (`source: "system"`), present when a new version needs organizing or an unchanged resume finds the latest version still unorganized. The rest, `source: "user"`, are the human's AI-bar prompts that were submitted while no live session was attached and so never ran — the daemon re-offers each here so this freshly attached session dispatches it. A new version identical to the last organized one, whose organization the daemon carries forward itself, omits the system organize but still re-offers any open user request. **Show the URL to the user verbatim** and tell them to open it and leave inline comments, then press **Submit** when done.
 
-## 2. When `organize:` is present, dispatch the organize agent
+## 2. For each `organize:` line, dispatch the organize agent
 
-Use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_background: true`, and the `organize:` line's JSON, verbatim, as the prompt. Don't wait for it — show the user the URL and move on. The agent builds the chapters and closes the request itself. Remember the request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4). If the `organize:` line's `id` is one you already dispatched in this conversation — the daemon re-offers a still-open request on resume — do not dispatch again.
+For **every** `organize:` line, use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_background: true`, and that line's JSON, verbatim, as the prompt — `source: "user"` lines carry a human's AI-bar request and the agent already handles them. Don't wait for any of them — show the user the URL and move on. The agent builds the chapters (or executes the request) and closes it itself. Remember each request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4). If an `organize:` line's `id` is one you already dispatched in this conversation — the daemon re-offers a still-open request on resume — do not dispatch it again. Dedupe by exact id only.
 
 ## 3. Wire up event delivery — then keep working
 
 - **`channel: active`** — this window's channel is proven and streaming the review. Do **not** arm a Monitor (you would receive every event twice). Comments arrive as `<channel source="cc-review">` tags carrying the same JSON event payloads.
-- **`channel: pending`** or **`channel: inactive`** — launch a **Monitor** (persistent) wrapping:
+- **`channel: pending`** or **`channel: inactive`** — stream `watch`. Use the first route whose tools you have:
+  - **Monitor available** — launch a **Monitor** (`persistent: true`, description `cc-review comments`) wrapping:
 
-  ```bash
-  "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
-  ```
+    ```bash
+    "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
+    ```
 
-  Use the Monitor tool with `persistent: true` and a description like `cc-review comments`. Each line it prints is one JSON event; each becomes a chat notification. `pending` means the channel server is wired but unproven — Claude Code may be silently dropping its notifications — so the Monitor is the route.
+    Each line it prints is one JSON event; each becomes a chat notification. `pending` means the channel server is wired but unproven — Claude Code may be silently dropping its notifications — so the Monitor is the route.
+  - **No Monitor tool** — run the watcher in a **background streamer subagent**, never in this thread. With `SendMessage`/teams it stays resident and messages you each event; without, it returns one event and completes and you re-spawn it per event until `submit`. Either way you only see clean event JSON. Protocol: `reference/monitor-fallback.md`.
 
-If a `<channel source="cc-review">` tag arrives while the Monitor is armed, channels are live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop the Monitor with **TaskStop**, and rely on tags from then on — dedupe the brief overlap by event id. Delivery is at-least-once: a Monitor re-armed in a later session may replay events you already handled as tags; treat already-handled events as informational (replies dedupe server-side, organize dispatch dedupes by request id).
+If a `<channel source="cc-review">` tag arrives while the Monitor is armed or the streamer is running, channels are live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop the Monitor (**TaskStop**) or the streamer, and rely on tags from then on — dedupe the brief overlap by event id. Delivery is at-least-once: a watcher re-armed in a later session may replay events you already handled as tags; treat already-handled events as informational (replies dedupe server-side, organize dispatch dedupes by request id).
 
 Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
 
@@ -56,7 +58,7 @@ Asked once either way. If `offer` is false, skip silently — `reason` says why.
 
 ## 4. React to each event — READ ONLY, make NO code changes
 
-Each event (Monitor line or channel tag) is a JSON object with a `type`. The ones you act on:
+Each event (a Monitor line, a channel tag, or a streamer message/result) is a JSON object with a `type`. The ones you act on:
 
 - **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything. When a reply or answer materially changes a file's risk read, dispatch the organize agent in the background — the same **Agent** tool invocation as step 2, `run_in_background: true` — with a one-line re-rank prompt: the new fact plus the file path. Replies themselves stay in the main session.
 - **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking for review work. Dispatch exactly as in step 2 — the **Agent** tool, `subagent_type: "cc-review:organize"`, `run_in_background: true`, the event's `request` JSON as the prompt — **unless** `request.id` equals the id you already dispatched from start output (the same request redelivered): ignore it. Dedupe by exact id only.
@@ -80,7 +82,7 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 
 ## 5. On the `submit` event — drain open questions, then proceed
 
-The submit signal is the Monitor's final line (it exits) on the Monitor path, or a channel tag whose JSON `type` is `submit` on the channel path. Now:
+The submit signal is the Monitor's final line (it exits) on the Monitor path, a channel tag whose JSON `type` is `submit` on the channel path, or — on the streamer fallback — a captured line whose JSON `type` is `submit`, after which the streamer stops (resident) or completes and you don't re-spawn it. Now:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
@@ -109,5 +111,6 @@ After you make changes, the user can run `/cc-review:start` again. It resumes th
 - `reference/cli-cheatsheet.md` — every `cc-review` command and flag.
 - `reference/event-schema.md` — the event types and payload shapes.
 - `reference/troubleshooting.md` — Monitor buffering, daemon, resume keying.
+- `reference/monitor-fallback.md` — no Monitor tool: stream `watch` from a background streamer subagent.
 - `reference/channels.md` — opt-in: receive review events as `<channel>` tags instead of via Monitor.
 - `reference/channels-setup.md` — the one-time offer that approves cc-review's channel so it loads without the dev-channels warning.
