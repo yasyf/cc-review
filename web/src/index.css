@@ -1040,7 +1040,8 @@ button.primary {
   border-radius: 6px;
   animation: ai-pulse 1.4s ease-in-out infinite;
 }
-.todo-reorganizing::after {
+.todo-reorganizing::after,
+.todo-applying::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -1098,7 +1099,8 @@ button.primary {
   .todo-row-moved {
     animation: none;
   }
-  .todo-reorganizing::after {
+  .todo-reorganizing::after,
+  .todo-applying::after {
     animation: none;
     background: none;
   }

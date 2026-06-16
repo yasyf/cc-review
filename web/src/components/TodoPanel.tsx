@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { isOrganizing, userRequestInFlight } from '../lib/ai-requests';
 import { useSetFileStates } from '../lib/api';
 import { conversationByFile } from '../lib/conversation';
 import { useFlip } from '../lib/flip';
@@ -89,9 +90,8 @@ export function TodoPanel({
     return result;
   }, [groups, session.files, session.fileStates, doneOpen]);
 
-  const reorganizing = session.aiRequests.some(
-    (r) => r.status === 'pending' || r.status === 'working',
-  );
+  const reorganizing = isOrganizing(session.aiRequests);
+  const applyingUserRequest = userRequestInFlight(session.aiRequests);
   const hidden = session.files.filter((f) => session.fileStates[f.path]?.hidden);
 
   function toggleReviewed(path: string, reviewed: boolean) {
@@ -101,8 +101,16 @@ export function TodoPanel({
 
   return (
     <>
-      <div className={`todo-panel${reorganizing ? ' todo-reorganizing' : ''}`}>
-        {reorganizing ? <div className="todo-banner">Claude is reorganizing…</div> : null}
+      <div
+        className={`todo-panel${
+          reorganizing ? ' todo-reorganizing' : applyingUserRequest ? ' todo-applying' : ''
+        }`}
+      >
+        {reorganizing ? (
+          <div className="todo-banner">Claude is reorganizing…</div>
+        ) : applyingUserRequest ? (
+          <div className="todo-banner">Claude is applying your request…</div>
+        ) : null}
         <div className="todo-list" ref={listRef}>
           {entries.map((entry) => {
             switch (entry.kind) {

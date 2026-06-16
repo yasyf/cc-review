@@ -1,3 +1,4 @@
+import { isOrganizing } from '../lib/ai-requests';
 import type { SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import type { ViewMode } from '../lib/view-prefs';
@@ -13,9 +14,7 @@ export function DiffToolbar({ session }: { session: SessionResponse }) {
   const { viewMode, setViewMode, hideReviewed, setHideReviewed } = useViewPrefs();
 
   const hasOrganization = session.organization !== null;
-  const organizing = session.aiRequests.some(
-    (r) => r.source === 'system' && (r.status === 'pending' || r.status === 'working'),
-  );
+  const organizing = isOrganizing(session.aiRequests);
 
   return (
     <div className="diff-toolbar">
