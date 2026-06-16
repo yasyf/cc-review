@@ -1,46 +1,48 @@
-// Package store is cc-review's sole state layer: a modernc.org/sqlite (pure-Go)
-// append-only database holding reviews, their diff versions, inline comments,
-// the back-and-forth replies, and the single per-review event log that drives
-// the realtime fan-out. Rows are never deleted; status flags carry state. Large
-// patches live on disk (see internal/paths); the DB keeps only the patch path
-// and a files summary.
+// Package store is cc-review's domain state layer on top of cc-interact's
+// append-only core (subjects + the per-subject event log). It adds the review
+// domain tables — per-review pinned base (review_meta), diff versions, inline
+// comments, the back-and-forth replies, file states, AI requests, organizations,
+// and turn attributions — and their CRUD. Rows are never deleted; status flags
+// carry state. Large patches live on disk (see internal/paths); the DB keeps
+// only the patch path and a files summary.
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
+	ccstore "github.com/yasyf/cc-interact/store"
+	"github.com/yasyf/cc-interact/vcs"
 )
 
-// Store wraps the single-writer sqlite connection.
+// ErrNotFound is returned when a lookup by id finds no row.
+var ErrNotFound = ccstore.ErrNotFound
+
+// Store holds the review domain tables on a borrowed single-writer connection.
+// The connection (and the core subjects/events schema) belong to cc-interact's
+// store; a Store opened via Open owns its Close, one built via New does not.
 type Store struct {
+	cc *ccstore.Store // nil when wrapping a borrowed connection
 	db *sql.DB
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS reviews (
-  id         TEXT PRIMARY KEY,
-  slug       TEXT NOT NULL DEFAULT '',
-  session_id TEXT,
-  repo_root  TEXT NOT NULL,
+// reviewSchema is the review domain schema layered on cc-interact's core
+// subjects/events tables. review_meta pins each review's diff base and creation
+// branch (the per-version base_ref still lives on review_versions). Foreign keys
+// point at the core subjects table the core schema created first.
+const reviewSchema = `
+CREATE TABLE IF NOT EXISTS review_meta (
+  subject_id TEXT PRIMARY KEY REFERENCES subjects(id),
   base_ref   TEXT NOT NULL DEFAULT '',
-  claude_pid INTEGER NOT NULL DEFAULT 0,
-  status     TEXT NOT NULL DEFAULT 'open',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  branch     TEXT NOT NULL DEFAULT ''
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_session_repo
-  ON reviews(session_id, repo_root) WHERE session_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_reviews_repo ON reviews(repo_root);
-CREATE INDEX IF NOT EXISTS idx_reviews_pid_repo ON reviews(claude_pid, repo_root);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_slug ON reviews(slug) WHERE slug <> '';
 CREATE TABLE IF NOT EXISTS review_versions (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  review_id      TEXT NOT NULL REFERENCES reviews(id),
+  review_id      TEXT NOT NULL REFERENCES subjects(id),
   version_number INTEGER NOT NULL,
   branch         TEXT NOT NULL DEFAULT '',
   base_ref       TEXT NOT NULL DEFAULT '',
@@ -82,7 +84,7 @@ CREATE TABLE IF NOT EXISTS replies (
 CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_dedup ON replies(dedup_key) WHERE dedup_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS file_states (
-  review_id            TEXT NOT NULL REFERENCES reviews(id),
+  review_id            TEXT NOT NULL REFERENCES subjects(id),
   path                 TEXT NOT NULL,
   reviewed             INTEGER NOT NULL DEFAULT 0,
   hidden               INTEGER NOT NULL DEFAULT 0,
@@ -92,7 +94,7 @@ CREATE TABLE IF NOT EXISTS file_states (
 );
 CREATE TABLE IF NOT EXISTS ai_requests (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  review_id      TEXT NOT NULL REFERENCES reviews(id),
+  review_id      TEXT NOT NULL REFERENCES subjects(id),
   version_number INTEGER NOT NULL,
   source         TEXT NOT NULL,
   prompt         TEXT NOT NULL,
@@ -110,33 +112,6 @@ CREATE TABLE IF NOT EXISTS organizations (
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS events (
-  review_id      TEXT NOT NULL REFERENCES reviews(id),
-  seq            INTEGER NOT NULL,
-  origin         TEXT NOT NULL,
-  type           TEXT NOT NULL,
-  version_number INTEGER NOT NULL DEFAULT 0,
-  payload        TEXT NOT NULL DEFAULT '{}',
-  created_at     INTEGER NOT NULL,
-  dedup_key      TEXT,
-  PRIMARY KEY (review_id, seq)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(review_id, dedup_key) WHERE dedup_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS turns (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  repo_root         TEXT NOT NULL,
-  backend           TEXT NOT NULL DEFAULT 'git',
-  session_id        TEXT NOT NULL DEFAULT '',
-  claude_pid        INTEGER NOT NULL DEFAULT 0,
-  prompt_excerpt    TEXT NOT NULL DEFAULT '',
-  tree_start        TEXT NOT NULL,
-  tree_end          TEXT NOT NULL DEFAULT '',
-  status            TEXT NOT NULL DEFAULT 'open',
-  started_at        INTEGER NOT NULL,
-  ended_at          INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_turns_repo ON turns(repo_root, id);
-CREATE INDEX IF NOT EXISTS idx_turns_repo_open ON turns(repo_root, claude_pid) WHERE status='open';
 CREATE TABLE IF NOT EXISTS turn_attributions (
   version_id  INTEGER NOT NULL REFERENCES review_versions(id),
   file_path   TEXT NOT NULL,
@@ -146,26 +121,45 @@ CREATE TABLE IF NOT EXISTS turn_attributions (
 );
 `
 
-// Open opens (creating if needed) the database at path and applies the schema.
-// A single serialized writer (SetMaxOpenConns(1)) with WAL avoids "database is
-// locked" across the SSE fan-out, REST, and the event bus. There are no
-// migrations: on a schema change, wipe the local state dir.
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)")
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+// ReviewMigrate applies the turn-snapshot tables and the review domain schema on
+// top of cc-interact's core. It is the migrate callback handed to the daemon's
+// store.Open: idempotent CREATE TABLE IF NOT EXISTS, no migrations beyond it.
+func ReviewMigrate(ctx context.Context, db *sql.DB) error {
+	if err := vcs.TurnsMigrate(ctx, db); err != nil {
+		return err
 	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+	if _, err := db.ExecContext(ctx, reviewSchema); err != nil {
+		return fmt.Errorf("apply review schema: %w", err)
 	}
-	return s, nil
+	return nil
 }
 
-// Close closes the underlying database.
-func (s *Store) Close() error { return s.db.Close() }
+// Open opens the cc-interact core database at path with the review schema applied
+// and returns a Store that owns its Close. The daemon does not use this — its
+// store is opened inside daemon.New — but the export command and the tests do.
+func Open(path string) (*Store, error) {
+	cc, err := ccstore.Open(path, ReviewMigrate)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{cc: cc, db: cc.DB()}, nil
+}
+
+// New wraps a borrowed connection (the daemon's) for domain CRUD. The caller
+// owns the connection lifecycle; Close on such a Store is a no-op.
+func New(db *sql.DB) *Store { return &Store{db: db} }
+
+// DB exposes the underlying connection so callers can build sibling stores
+// (the turn ledger, the subject CAS) against the same writer.
+func (s *Store) DB() *sql.DB { return s.db }
+
+// Close closes the database when this Store owns it (opened via Open).
+func (s *Store) Close() error {
+	if s.cc != nil {
+		return s.cc.Close()
+	}
+	return nil
+}
 
 // newID returns a random 128-bit identifier as 32 lowercase hex chars.
 func newID() string {

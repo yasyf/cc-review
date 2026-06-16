@@ -199,7 +199,7 @@ func (s *Store) answerAsk(ctx context.Context, replyID int64, ans AskAnswer, via
 		query += ` AND EXISTS (
 			SELECT 1 FROM comments c
 			JOIN review_versions v ON v.id = c.version_id
-			JOIN reviews rv ON rv.id = v.review_id
+			JOIN subjects rv ON rv.id = v.review_id
 			WHERE c.id = replies.comment_id AND rv.status = 'open')`
 	}
 	res, err := s.db.ExecContext(ctx, query, string(answerJSON), via, replyID)

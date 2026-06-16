@@ -51,7 +51,7 @@ func (s *Store) ListAttributionsBySession(ctx context.Context, sessionID string)
 		`SELECT r.id, v.version_number, a.file_path, a.ranges_json
 		 FROM turn_attributions a
 		 JOIN review_versions v ON v.id = a.version_id
-		 JOIN reviews r ON r.id = v.review_id
+		 JOIN subjects r ON r.id = v.review_id
 		 WHERE r.session_id = ?
 		 ORDER BY r.id, v.version_number, a.file_path`, sessionID)
 	if err != nil {

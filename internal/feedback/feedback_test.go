@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -19,8 +20,12 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 	}
 	defer st.Close()
 
-	r, _ := st.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
-	v, _ := st.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	subjectID := store.NewSlugHash()
+	if _, err := ccstore.NewSubjectStore(st.DB(), []string{"open"}).
+		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := st.CreateVersion(ctx, subjectID, "main", "HEAD", "/p", "[]")
 	cid, _ := st.CreateComment(ctx, store.Comment{
 		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm",
 	})
@@ -34,7 +39,7 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 	openAsk := &store.Ask{Options: []store.AskOption{{Label: "X"}, {Label: "Y"}}}
 	openID, _, _ := st.CreateReply(ctx, store.Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "still?", Ask: openAsk})
 
-	fb, err := Build(ctx, st, r.ID, v, time.Unix(100, 0))
+	fb, err := Build(ctx, st, subjectID, v, time.Unix(100, 0))
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

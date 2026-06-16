@@ -1,72 +1,83 @@
-// Package httpapi is the daemon's data/UI plane: a 127.0.0.1 HTTP server that
-// serves the embedded SPA, a small JSON REST surface, and one Server-Sent-Events
-// stream that fans the per-review event log out to the browser and to the
-// Claude-side stream consumers. It depends on the store concretely and on the
-// daemon only through the narrow Backend interface, so there is no import cycle.
+// Package httpapi is cc-review's REST plane, mounted on the cc-interact daemon's
+// mux. It serves the embedded SPA and a small JSON surface; the realtime SSE
+// stream is the daemon's own /events plane. Every event it writes goes through
+// the daemon's Append chokepoint so the bus wakes the stream.
 package httpapi
 
 import (
 	"context"
+	"io/fs"
 	"log"
 	"net/http"
 	"sync"
+
+	ccevent "github.com/yasyf/cc-interact/event"
+	ccstore "github.com/yasyf/cc-interact/store"
+	"github.com/yasyf/cc-interact/sse"
+	"github.com/yasyf/cc-interact/subject"
+	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
-// Backend is the daemon-side capability the HTTP plane needs: subscribe to a
-// review's wakeup bus, append an event (which persists it and publishes the
-// wakeup), register a named SSE stream consumer, and read whether a live
-// Claude-side consumer is wired to a review. The daemon's appendEvent
-// chokepoint, Bus, and Activity satisfy this.
-type Backend interface {
-	Subscribe(reviewID string) (<-chan struct{}, func())
-	AppendEvent(ctx context.Context, e *store.Event) (int64, error)
-	Attach(reviewID, consumer string, claudePID int) func()
-	ClaudeConnected(reviewID string) bool
+// appendFunc persists an event then publishes its subject's wakeup — the daemon's
+// single persist→publish chokepoint, handed to the REST plane so its mutations
+// reach the SSE stream.
+type appendFunc = func(ctx context.Context, e *ccevent.Event) (int64, error)
+
+// Deps is everything the REST plane needs from the daemon process: the domain
+// store, the shared decision ledger, the logger, the Append chokepoint, the
+// named-consumer presence predicate, and the embedded SPA.
+type Deps struct {
+	Store             *store.Store
+	Decisions         *decisions.Log
+	Log               *log.Logger
+	Append            appendFunc
+	ConsumerConnected func(reviewID string) bool
+	Dist              fs.FS
 }
 
-// Server is the HTTP handler tree. It is constructed by the daemon, which owns
-// the listener and the chosen port. The listener binds 127.0.0.1 only, which is
-// the whole access-control story.
+// Server holds the REST handlers' shared state.
 type Server struct {
 	store     *store.Store
+	subjects  subject.Store
+	turns     *vcs.TurnStore
 	decisions *decisions.Log
-	backend   Backend
 	log       *log.Logger
-	mux       *http.ServeMux
+	append    appendFunc
+	connected func(reviewID string) bool
 
 	provMu     sync.Mutex
 	provCache  map[int64][]provenanceItem // closed turns only; never persisted
 	provWarned map[string]bool            // session ids already warned about slice failures
 }
 
-// New builds the HTTP server.
-func New(st *store.Store, ledger *decisions.Log, logger *log.Logger, backend Backend) *Server {
+// RESTMount registers cc-review's REST routes and the SPA static handler on the
+// daemon's mux. The daemon already mounts GET /events; Go's pattern mux gives the
+// more specific /api routes precedence over the catch-all "/".
+func RESTMount(mux *http.ServeMux, d Deps) {
 	s := &Server{
-		store: st, decisions: ledger, backend: backend, log: logger, mux: http.NewServeMux(),
-		provCache: make(map[int64][]provenanceItem), provWarned: make(map[string]bool),
+		store:      d.Store,
+		subjects:   ccstore.NewSubjectStore(d.Store.DB(), []string{"open"}),
+		turns:      vcs.NewTurnStore(d.Store.DB()),
+		decisions:  d.Decisions,
+		log:        d.Log,
+		append:     d.Append,
+		connected:  d.ConsumerConnected,
+		provCache:  make(map[int64][]provenanceItem),
+		provWarned: make(map[string]bool),
 	}
-	s.routes()
-	return s
-}
-
-// Handler returns the root handler for the daemon to serve.
-func (s *Server) Handler() http.Handler { return s.mux }
-
-func (s *Server) routes() {
-	s.mux.HandleFunc("GET /api/session/{reviewId}", s.handleGetSession)
-	s.mux.HandleFunc("GET /api/session/{reviewId}/versions", s.handleGetVersions)
-	s.mux.HandleFunc("POST /api/comments", s.handleCreateComment)
-	s.mux.HandleFunc("PUT /api/comments/{id}", s.handleUpdateComment)
-	s.mux.HandleFunc("POST /api/replies/{commentId}", s.handleCreateReply)
-	s.mux.HandleFunc("POST /api/file-states", s.handleSetFileStates)
-	s.mux.HandleFunc("POST /api/ai-requests", s.handleCreateAIRequest)
-	s.mux.HandleFunc("POST /api/ai-requests/{id}/undo", s.handleUndoAIRequest)
-	s.mux.HandleFunc("POST /api/submit", s.handleSubmit)
-	s.mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)
-	s.mux.HandleFunc("GET /events", s.handleEvents)
+	mux.HandleFunc("GET /api/session/{reviewId}", s.handleGetSession)
+	mux.HandleFunc("GET /api/session/{reviewId}/versions", s.handleGetVersions)
+	mux.HandleFunc("POST /api/comments", s.handleCreateComment)
+	mux.HandleFunc("PUT /api/comments/{id}", s.handleUpdateComment)
+	mux.HandleFunc("POST /api/replies/{commentId}", s.handleCreateReply)
+	mux.HandleFunc("POST /api/file-states", s.handleSetFileStates)
+	mux.HandleFunc("POST /api/ai-requests", s.handleCreateAIRequest)
+	mux.HandleFunc("POST /api/ai-requests/{id}/undo", s.handleUndoAIRequest)
+	mux.HandleFunc("POST /api/submit", s.handleSubmit)
+	mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)
 	// Registered last and least-specific: the SPA shell + embedded assets.
-	s.mux.Handle("/", s.static())
+	mux.Handle("/", sse.StaticHandler(d.Dist))
 }

@@ -3,57 +3,20 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/yasyf/cc-review/internal/decisions"
+	ccd "github.com/yasyf/cc-interact/daemon"
+	"github.com/yasyf/cc-interact/subject"
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/digest"
-	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
-	"github.com/yasyf/cc-review/internal/vcs"
 )
-
-func testServer(t *testing.T) (*Server, string) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir()) // keep handleStart's ~/.cc-review review dirs out of the real home
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { st.Close() })
-	ledger, err := decisions.Open(filepath.Join(t.TempDir(), "decisions.db"))
-	if err != nil {
-		t.Fatalf("open decisions ledger: %v", err)
-	}
-	t.Cleanup(func() { ledger.Close() })
-
-	// One commit on main; tests write their own pending files, since
-	// handleStart fails fast on a repo with nothing to review.
-	repo := t.TempDir()
-	gitRun(t, repo, "init", "-q", "-b", "main")
-	writeFile(t, repo, "base.go", "package p\n")
-	gitRun(t, repo, "add", "-A")
-	gitRun(t, repo, "commit", "-qm", "init")
-
-	s := &Server{
-		store:     st,
-		decisions: ledger,
-		bus:       NewBus(),
-		activity:  NewActivity(),
-		alive:     func(int) bool { return false },
-		log:       log.New(io.Discard, "", 0),
-		repoLocks: make(map[string]*sync.Mutex),
-	}
-	s.resolver = session.Resolver{Store: st, Held: s.held}
-	return s, repo
-}
 
 func gitRun(t *testing.T, repo string, args ...string) string {
 	t.Helper()
@@ -85,68 +48,6 @@ func repoRoot(t *testing.T, cwd string) string {
 		t.Fatalf("repo root: %v", err)
 	}
 	return root
-}
-
-func seedComment(t *testing.T, s *Server, root string) (reviewID string, commentID int64) {
-	t.Helper()
-	ctx := context.Background()
-	r, err := s.store.CreateReview(ctx, "s1", 0, root, "main", "base0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, err := s.store.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cid, err := s.store.CreateComment(ctx, store.Comment{
-		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "hm",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r.ID, cid
-}
-
-func countEvents(t *testing.T, s *Server, reviewID, typ string) int {
-	t.Helper()
-	events, err := s.store.EventsSince(context.Background(), reviewID, 0, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 0
-	for _, e := range events {
-		if e.Type == typ {
-			n++
-		}
-	}
-	return n
-}
-
-func TestDispatchRejectsSkewedProto(t *testing.T) {
-	ctx := context.Background()
-	s, repo := testServer(t)
-	s.triggerShutdown = func() {}
-
-	for _, tc := range []struct {
-		name   string
-		req    Request
-		wantOK bool
-	}{
-		{"health answers any proto", Request{Proto: 1, Op: OpHealth}, true},
-		{"shutdown answers any proto", Request{Proto: 1, Op: OpShutdown}, true},
-		{"status rejects skew", Request{Proto: 1, Op: OpStatus, Cwd: repo}, false},
-		{"status accepts current proto", Request{Proto: ProtocolVersion, Op: OpStatus, Cwd: repo}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp := s.dispatch(ctx, tc.req)
-			if resp.OK != tc.wantOK {
-				t.Fatalf("ok=%v (err=%q), want %v", resp.OK, resp.Error, tc.wantOK)
-			}
-			if !tc.wantOK && !strings.Contains(resp.Error, "restart the session") {
-				t.Fatalf("skew error %q must tell the user to restart the session", resp.Error)
-			}
-		})
-	}
 }
 
 func TestHandleReplyValidatesKind(t *testing.T) {
@@ -306,7 +207,7 @@ func TestSessionRecordRotationFollowsWindow(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("session-record failed: %s", resp.Error)
 	}
-	got, ok, _ := s.store.FindReviewBySessionRepo(ctx, "sB", root)
+	got, ok, _ := s.resolver.Store.FindBySessionScope(ctx, "sB", root)
 	if !ok || got.ID != started.ReviewID {
 		t.Fatal("binding did not follow the rotated session id")
 	}
@@ -322,7 +223,7 @@ func TestSessionRecordAdoptsDeadWindowsReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main", "base0")
+	orphan, err := s.createReview(ctx, "sA", 100, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +233,7 @@ func TestSessionRecordAdoptsDeadWindowsReview(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("session-record failed: %s", resp.Error)
 	}
-	got, ok, _ := s.store.FindReviewBySessionRepo(ctx, "sB", root)
+	got, ok, _ := s.resolver.Store.FindBySessionScope(ctx, "sB", root)
 	if !ok || got.ID != orphan.ID {
 		t.Fatal("orphaned review was not adopted")
 	}
@@ -346,7 +247,7 @@ func TestSessionRecordNeverStealsLiveWindow(t *testing.T) {
 	s, repo := testServer(t)
 	s.alive = aliveSet(100)
 	root := repoRoot(t, repo)
-	held, err := s.store.CreateReview(ctx, "sA", 100, root, "main", "base0")
+	held, err := s.createReview(ctx, "sA", 100, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +256,7 @@ func TestSessionRecordNeverStealsLiveWindow(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("session-record failed: %s", resp.Error)
 	}
-	got, err := s.store.GetReview(ctx, held.ID)
+	got, err := s.getReview(ctx, held.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,19 +269,19 @@ func TestSessionRecordSkipsWhenSessionAlreadyBound(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	mine, _ := s.store.CreateReview(ctx, "s2", 200, root, "main", "base0")
-	other, _ := s.store.CreateReview(ctx, "s1", 100, root, "main", "base0")
+	mine, _ := s.createReview(ctx, "s2", 200, root, "main", "base0")
+	other, _ := s.createReview(ctx, "s1", 100, root, "main", "base0")
 
 	resp := s.handleSessionRecord(ctx, Request{Session: "s2", ClaudePID: 200, Cwd: repo})
 	if !resp.OK {
 		t.Fatalf("session-record failed: %s", resp.Error)
 	}
 	// Neither binding moves: s2 keeps its own review, s1 keeps the newer one.
-	got, ok, _ := s.store.FindReviewBySessionRepo(ctx, "s2", root)
+	got, ok, _ := s.resolver.Store.FindBySessionScope(ctx, "s2", root)
 	if !ok || got.ID != mine.ID {
 		t.Fatal("s2's own binding was disturbed")
 	}
-	got, ok, _ = s.store.FindReviewBySessionRepo(ctx, "s1", root)
+	got, ok, _ = s.resolver.Store.FindBySessionScope(ctx, "s1", root)
 	if !ok || got.ID != other.ID {
 		t.Fatal("s1's binding was stolen despite s2 being bound")
 	}
@@ -402,19 +303,19 @@ func TestStartAdoptRaceLoserCreatesOwn(t *testing.T) {
 	root := repoRoot(t, repo)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 	head := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
-	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main", head)
+	orphan, err := s.createReview(ctx, "sA", 100, root, "main", head)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A competing window wins the adoption between the loser's peek and the
 	// write phase; by the write phase the winner's window is alive.
 	stole := false
-	s.resolver.Held = func(ctx context.Context, r store.Review) bool {
+	s.resolver.Policy.Held = func(ctx context.Context, sub subject.Subject) bool {
 		if stole {
 			return true
 		}
 		stole = true
-		if ok, err := s.store.RebindReview(ctx, r.ID, r.ClaudePID, "winner", 999); err != nil || !ok {
+		if ok, err := s.resolver.Store.Rebind(ctx, sub.ID, sub.ClaudePID, "winner", 999); err != nil || !ok {
 			t.Fatalf("competing rebind: ok=%v err=%v", ok, err)
 		}
 		return false
@@ -427,7 +328,7 @@ func TestStartAdoptRaceLoserCreatesOwn(t *testing.T) {
 	if resp.ReviewID == orphan.ID || resp.Resumed {
 		t.Fatalf("loser must create its own review: id=%q resumed=%v", resp.ReviewID, resp.Resumed)
 	}
-	got, err := s.store.GetReview(ctx, orphan.ID)
+	got, err := s.getReview(ctx, orphan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,10 +353,10 @@ func TestHandleStartNoChanges(t *testing.T) {
 	if resp.OK {
 		t.Fatal("start on a clean trunk must fail")
 	}
-	if !strings.Contains(resp.Error, "no changes to review") {
-		t.Fatalf("error = %q, want it to name no changes to review", resp.Error)
+	if !strings.Contains(resp.Error, "no changes to capture") {
+		t.Fatalf("error = %q, want it to name no changes to capture", resp.Error)
 	}
-	if _, ok, err := s.store.FindReviewBySessionRepo(ctx, "sN", repoRoot(t, repo)); err != nil || ok {
+	if _, ok, err := s.resolver.Store.FindBySessionScope(ctx, "sN", repoRoot(t, repo)); err != nil || ok {
 		t.Fatalf("a failed start created a review (ok=%v err=%v)", ok, err)
 	}
 }
@@ -481,7 +382,7 @@ func TestHandleStartTrunkFallbackAndExplicitBase(t *testing.T) {
 	if !started.OK {
 		t.Fatalf("start: %s", started.Error)
 	}
-	review, err := s.store.GetReview(ctx, started.ReviewID)
+	review, err := s.getReview(ctx, started.ReviewID)
 	if err != nil || review.BaseRef != shaA {
 		t.Fatalf("pinned base = %q (err %v), want %q", review.BaseRef, err, shaA)
 	}
@@ -500,7 +401,7 @@ func TestHandleStartTrunkFallbackAndExplicitBase(t *testing.T) {
 	if !fallback.OK {
 		t.Fatalf("fallback start: %s", fallback.Error)
 	}
-	review, err = s.store.GetReview(ctx, fallback.ReviewID)
+	review, err = s.getReview(ctx, fallback.ReviewID)
 	if err != nil || review.BaseRef != shaA {
 		t.Fatalf("fallback pinned base = %q (err %v), want trunk fork point %q", review.BaseRef, err, shaA)
 	}
@@ -516,7 +417,7 @@ func TestHandleStartPinnedBaseAndDedupAcrossCommits(t *testing.T) {
 	if !started.OK {
 		t.Fatalf("start: %s", started.Error)
 	}
-	review, err := s.store.GetReview(ctx, started.ReviewID)
+	review, err := s.getReview(ctx, started.ReviewID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +475,7 @@ func TestHandleStartDedupReopensSubmittedReview(t *testing.T) {
 	if !started.OK {
 		t.Fatalf("start: %s", started.Error)
 	}
-	if err := s.store.SetReviewStatus(ctx, started.ReviewID, "submitted"); err != nil {
+	if err := s.resolver.Store.SetStatus(ctx, started.ReviewID, "submitted"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -582,7 +483,7 @@ func TestHandleStartDedupReopensSubmittedReview(t *testing.T) {
 	if !resumed.OK || !resumed.Resumed || resumed.Version != started.Version {
 		t.Fatalf("resume: ok=%v resumed=%v version=%d err=%q, want dedup of version %d", resumed.OK, resumed.Resumed, resumed.Version, resumed.Error, started.Version)
 	}
-	if status, _ := s.store.ReviewStatus(ctx, started.ReviewID); status != "open" {
+	if status, _ := s.reviewStatus(ctx, started.ReviewID); status != "open" {
 		t.Fatalf("status = %q, want open: a successful start must reopen the round", status)
 	}
 	if guard := s.handleGuardEdit(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo}); guard.Allow {
@@ -597,7 +498,7 @@ func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
 
 	// Orphan pinned to the current HEAD, then HEAD advances past it.
 	headA := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
-	orphan, err := s.store.CreateReview(ctx, "sA", 100, root, "main", headA)
+	orphan, err := s.createReview(ctx, "sA", 100, root, "main", headA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,12 +510,12 @@ func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
 
 	// The orphan is stolen between the loser's peek and the write phase.
 	stole := false
-	s.resolver.Held = func(ctx context.Context, r store.Review) bool {
+	s.resolver.Policy.Held = func(ctx context.Context, sub subject.Subject) bool {
 		if stole {
 			return true
 		}
 		stole = true
-		if ok, err := s.store.RebindReview(ctx, r.ID, r.ClaudePID, "winner", 999); err != nil || !ok {
+		if ok, err := s.resolver.Store.Rebind(ctx, sub.ID, sub.ClaudePID, "winner", 999); err != nil || !ok {
 			t.Fatalf("competing rebind: ok=%v err=%v", ok, err)
 		}
 		return false
@@ -624,7 +525,7 @@ func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
 	if !resp.OK || resp.Resumed || resp.ReviewID == orphan.ID {
 		t.Fatalf("loser must create its own: ok=%v resumed=%v id=%q err=%q", resp.OK, resp.Resumed, resp.ReviewID, resp.Error)
 	}
-	review, err := s.store.GetReview(ctx, resp.ReviewID)
+	review, err := s.getReview(ctx, resp.ReviewID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +568,7 @@ func TestGuardEditWritesGateDecisions(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	r, err := s.store.CreateReview(ctx, "s1", 100, root, "main", "base0")
+	r, err := s.createReview(ctx, "s1", 100, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -676,7 +577,7 @@ func TestGuardEditWritesGateDecisions(t *testing.T) {
 	if resp := s.handleGuardEdit(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, ToolName: "Edit", ToolInput: blockedInput}); resp.Allow {
 		t.Fatal("guard-edit must block while the review is open")
 	}
-	if err := s.store.SetReviewStatus(ctx, r.ID, "submitted"); err != nil {
+	if err := s.resolver.Store.SetStatus(ctx, r.ID, "submitted"); err != nil {
 		t.Fatal(err)
 	}
 	allowedInput := json.RawMessage(`{"file_path":"` + filepath.Join(root, "b.go") + `","content":"package p\n"}`)
@@ -729,8 +630,8 @@ func TestResolveStaleSessionFindsOwnWindowReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	a, _ := s.store.CreateReview(ctx, "sA", 100, root, "main", "base0")
-	if _, err := s.store.CreateReview(ctx, "sB", 200, root, "main", "base0"); err != nil {
+	a, _ := s.createReview(ctx, "sA", 100, root, "main", "base0")
+	if _, err := s.createReview(ctx, "sB", 200, root, "main", "base0"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -775,7 +676,7 @@ func TestChannelState(t *testing.T) {
 		{"foreign window's proof while attached", 200, 100, 0, "pending"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{activity: NewActivity()}
+			s := &Server{activity: ccd.NewActivity()}
 			if tc.provenPID != 0 {
 				s.activity.MarkProven(tc.provenPID)
 			}
@@ -794,25 +695,16 @@ func TestChannelState(t *testing.T) {
 }
 
 func TestHandleChannelAck(t *testing.T) {
-	ctx := context.Background()
 	s, repo := testServer(t)
 
-	// No claude pid: nothing to prove, fail fast.
-	resp := s.dispatch(ctx, Request{Proto: ProtocolVersion, Op: OpChannelAck, Cwd: repo})
-	if resp.OK || !strings.Contains(resp.Error, "claude pid") {
-		t.Fatalf("ok=%v err=%q, want a no-pid rejection", resp.OK, resp.Error)
-	}
-
-	// An attached-but-unproven window flips pending -> active on ack.
+	// An attached-but-unproven window flips pending -> active once its channel
+	// round trip is proven (what channel-ack records via Activity.MarkProven).
 	detach := s.activity.Attach("r1", channelConsumer, 100)
 	defer detach()
 	if got := s.channelState("r1", repo, 100); got != "pending" {
 		t.Fatalf("pre-ack state = %q, want pending", got)
 	}
-	resp = s.dispatch(ctx, Request{Proto: ProtocolVersion, Op: OpChannelAck, ClaudePID: 100, Cwd: repo})
-	if !resp.OK {
-		t.Fatalf("channel-ack: %s", resp.Error)
-	}
+	s.activity.MarkProven(100)
 	if got := s.channelState("r1", repo, 100); got != "active" {
 		t.Fatalf("post-ack state = %q, want active", got)
 	}

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	ccevent "github.com/yasyf/cc-interact/event"
+
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -39,17 +41,31 @@ func startedReview(t *testing.T, s *Server, repo string) (Request, Response) {
 	return req, started
 }
 
-func eventsOfType(t *testing.T, s *Server, reviewID, typ string, excludeClaude bool) []store.Event {
+// testEvent projects a logged event with its version_number lifted out of the
+// JSON payload (the events table no longer carries a version_number column).
+type testEvent struct {
+	Origin        string
+	Type          string
+	VersionNumber int
+	Payload       json.RawMessage
+}
+
+func eventsOfType(t *testing.T, s *Server, reviewID, typ string, excludeAgent bool) []testEvent {
 	t.Helper()
-	events, err := s.store.EventsSince(context.Background(), reviewID, 0, excludeClaude)
+	events, err := s.cc.EventsSince(context.Background(), reviewID, 0, excludeAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []store.Event
+	var out []testEvent
 	for _, e := range events {
-		if e.Type == typ {
-			out = append(out, e)
+		if e.Type != typ {
+			continue
 		}
+		var p struct {
+			VersionNumber int `json:"version_number"`
+		}
+		_ = json.Unmarshal(e.Payload, &p)
+		out = append(out, testEvent{Origin: e.Origin, Type: e.Type, VersionNumber: p.VersionNumber, Payload: e.Payload})
 	}
 	return out
 }
@@ -133,7 +149,7 @@ func TestHandleFileStatesGuardsAIRequest(t *testing.T) {
 	req, started := startedReview(t, s, repo)
 
 	t.Run("foreign review", func(t *testing.T) {
-		other, err := s.store.CreateReview(ctx, "sX", 0, "/elsewhere", "main", "base0")
+		other, err := s.createReview(ctx, "sX", 0, "/elsewhere", "main", "base0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,8 +266,8 @@ func TestHandleSubmitOrganization(t *testing.T) {
 			t.Fatalf("chapters = %+v, want %+v", org.Chapters, chapters)
 		}
 		events := eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, false)
-		if len(events) != 1 || events[0].Origin != store.OriginClaude {
-			t.Fatalf("organization.updated events = %+v, want one claude-origin event", events)
+		if len(events) != 1 || events[0].Origin != ccevent.OriginAgent {
+			t.Fatalf("organization.updated events = %+v, want one agent-origin event", events)
 		}
 	})
 }
@@ -842,8 +858,8 @@ func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 	if len(updated) != 2 {
 		t.Fatalf("organization.updated events = %d, want submit + carry", len(updated))
 	}
-	if carried := updated[1]; carried.Origin != store.OriginClaude || carried.VersionNumber != 3 {
-		t.Fatalf("carried event origin=%s version=%d, want claude origin on version 3", carried.Origin, carried.VersionNumber)
+	if carried := updated[1]; carried.Origin != ccevent.OriginAgent || carried.VersionNumber != 3 {
+		t.Fatalf("carried event origin=%s version=%d, want agent origin on version 3", carried.Origin, carried.VersionNumber)
 	}
 	// Claude-origin keeps the carried event off the Claude-side stream.
 	if got := len(eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, true)); got != 0 {

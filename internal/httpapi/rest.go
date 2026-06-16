@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	ccevent "github.com/yasyf/cc-interact/event"
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/feedback"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
@@ -185,7 +188,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for tid := range turnIDSet {
 		turnIDs = append(turnIDs, tid)
 	}
-	storeTurns, err := s.store.ListTurnsByIDs(ctx, turnIDs)
+	storeTurns, err := s.turns.ListTurnsByIDs(ctx, turnIDs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -212,7 +215,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		Turns:           turns,
 		Attributions:    attributions,
 		TurnActivity:    s.turnActivity(storeTurns),
-		ClaudeConnected: s.backend.ClaudeConnected(review.ID),
+		ClaudeConnected: s.connected(review.ID),
 		LatestEventSeq:  strconv.FormatInt(latestSeq, 10),
 	})
 }
@@ -221,7 +224,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 // wire id. The ledger is shared telemetry written concurrently by other
 // cc-family tools, so a read failure degrades to an empty panel with a log
 // line instead of failing the session.
-func (s *Server) turnActivity(turns []store.Turn) map[string][]wire.Decision {
+func (s *Server) turnActivity(turns []vcs.Turn) map[string][]wire.Decision {
 	out := make(map[string][]wire.Decision, len(turns))
 	for _, t := range turns {
 		untilMs := t.EndedAt
@@ -289,7 +292,7 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	c.ID = id
 	c.CreatedAt = time.Now()
-	s.emit(ctx, version.ReviewID, store.OriginUser, store.EventCommentCreated, version.VersionNumber,
+	s.emit(ctx, version.ReviewID, ccevent.OriginHuman, store.EventCommentCreated, version.VersionNumber,
 		map[string]any{"commentId": strconv.FormatInt(id, 10), "comment": wire.ToComment(c, nil)})
 	writeJSON(w, http.StatusOK, map[string]string{"id": strconv.FormatInt(id, 10)})
 }
@@ -321,7 +324,7 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 		resolved = req.Status == "resolved"
 	}
 	if resolved {
-		s.emit(ctx, reviewID, store.OriginUser, store.EventCommentResolved, versionNumber,
+		s.emit(ctx, reviewID, ccevent.OriginHuman, store.EventCommentResolved, versionNumber,
 			map[string]any{"commentId": strconv.FormatInt(id, 10)})
 	} else {
 		s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, id)
@@ -443,7 +446,7 @@ func (s *Server) handleSetFileStates(w http.ResponseWriter, r *http.Request) {
 	// handler, same-path events can land in the opposite order of the DB
 	// applies. Accepted — the session GET is authoritative, so replay converges
 	// on the next load.
-	s.emit(ctx, review.ID, store.OriginUser, store.EventFileStates, version.VersionNumber,
+	s.emit(ctx, review.ID, ccevent.OriginHuman, store.EventFileStates, version.VersionNumber,
 		map[string]any{"states": states})
 	writeJSON(w, http.StatusOK, map[string]any{"states": out})
 }
@@ -479,10 +482,10 @@ func (s *Server) handleCreateAIRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wired := wire.ToAIRequest(ar)
-	s.emit(ctx, review.ID, store.OriginUser, store.EventAIRequestCreated, ar.VersionNumber,
+	s.emit(ctx, review.ID, ccevent.OriginHuman, store.EventAIRequestCreated, ar.VersionNumber,
 		map[string]any{"request": wired})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"request": wired, "claudeConnected": s.backend.ClaudeConnected(review.ID),
+		"request": wired, "claudeConnected": s.connected(review.ID),
 	})
 }
 
@@ -538,10 +541,10 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 		for _, c := range ar.Changes {
 			states = append(states, map[string]any{"path": c.Path, "reviewed": c.Prior.Reviewed, "hidden": c.Prior.Hidden})
 		}
-		s.emit(ctx, ar.ReviewID, store.OriginUser, store.EventFileStates, version.VersionNumber,
+		s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventFileStates, version.VersionNumber,
 			map[string]any{"states": states, "undoOf": strconv.FormatInt(id, 10)})
 	}
-	s.emit(ctx, ar.ReviewID, store.OriginUser, store.EventAIRequestUpdated, version.VersionNumber,
+	s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventAIRequestUpdated, version.VersionNumber,
 		map[string]any{"request": wire.ToAIRequest(updated)})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -580,11 +583,11 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := s.store.SetReviewStatus(ctx, review.ID, "submitted"); err != nil {
+	if err := s.subjects.SetStatus(ctx, review.ID, "submitted"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.emit(ctx, review.ID, store.OriginSystem, store.EventSubmit, version.VersionNumber,
+	s.emit(ctx, review.ID, ccevent.OriginSystem, store.EventSubmit, version.VersionNumber,
 		map[string]any{"feedbackPath": fbPath})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "feedbackPath": fbPath})
 }
@@ -592,8 +595,8 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 // --- helpers ---------------------------------------------------------------
 
 func (s *Server) emit(ctx context.Context, reviewID, origin, typ string, version int, fields map[string]any) {
-	_, _ = s.backend.AppendEvent(ctx, &store.Event{
-		ReviewID: reviewID, Origin: origin, Type: typ, VersionNumber: version, Payload: wire.Event(typ, version, fields),
+	_, _ = s.append(ctx, &ccevent.Event{
+		SubjectID: reviewID, Origin: origin, Type: typ, Payload: wire.Event(typ, version, fields),
 	})
 }
 
@@ -607,7 +610,7 @@ func (s *Server) emitComment(ctx context.Context, reviewID, typ string, version 
 	if err != nil {
 		return
 	}
-	s.emit(ctx, reviewID, store.OriginUser, typ, version,
+	s.emit(ctx, reviewID, ccevent.OriginHuman, typ, version,
 		map[string]any{"commentId": strconv.FormatInt(commentID, 10), "comment": wire.ToComment(c, replies)})
 }
 
@@ -626,7 +629,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func notFoundOr500(w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, vcs.ErrTurnNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}

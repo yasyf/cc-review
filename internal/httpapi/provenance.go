@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-interact/vcs"
 )
 
 // sliceSchema is the versioned wire schema of `cc-transcript slice` lines.
@@ -43,7 +43,7 @@ func (s *Server) handleTurnProvenance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad turn id", http.StatusBadRequest)
 		return
 	}
-	turn, err := s.store.GetTurn(r.Context(), id)
+	turn, err := s.turns.GetTurn(r.Context(), id)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
@@ -85,7 +85,7 @@ func (s *Server) warnNoSlice(sessionID string, err error) {
 
 // sliceTurn shells `cc-transcript slice` over the turn window — until now for
 // a still-open turn — and parses its JSONL stdout.
-func sliceTurn(ctx context.Context, turn store.Turn) ([]provenanceItem, error) {
+func sliceTurn(ctx context.Context, turn vcs.Turn) ([]provenanceItem, error) {
 	untilMs := turn.EndedAt
 	if untilMs == 0 {
 		untilMs = time.Now().UnixMilli()

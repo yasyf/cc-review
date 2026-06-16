@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
 )
@@ -164,8 +166,8 @@ func ToAIRequest(r store.AIRequest) AIRequest {
 	return out
 }
 
-// ToTurn converts a store turn.
-func ToTurn(t store.Turn) Turn {
+// ToTurn converts a turn-ledger turn.
+func ToTurn(t vcs.Turn) Turn {
 	return Turn{
 		ID: id(t.ID), SessionID: t.SessionID, PromptExcerpt: t.PromptExcerpt,
 		Interrupted: t.Status == "interrupted", StartedAt: t.StartedAt, EndedAt: t.EndedAt,

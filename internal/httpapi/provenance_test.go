@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -64,16 +66,17 @@ func getProvenance(t *testing.T, srv *httptest.Server, turnID int64) (provenance
 	return out, resp.StatusCode
 }
 
-func createClosedTurn(t *testing.T, st *store.Store) store.Turn {
+func createClosedTurn(t *testing.T, st *store.Store) vcs.Turn {
 	t.Helper()
 	ctx := context.Background()
-	turn, err := st.CreateTurn(ctx, store.Turn{
+	turns := vcs.NewTurnStore(st.DB())
+	turn, err := turns.CreateTurn(ctx, vcs.Turn{
 		RepoRoot: "/repo", Backend: "git", SessionID: "sess-prov", ClaudePID: 100, TreeStart: "t0",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CloseTurn(ctx, turn.ID, "t1", "closed"); err != nil {
+	if err := turns.CloseTurn(ctx, turn.ID, "t1", "closed"); err != nil {
 		t.Fatal(err)
 	}
 	return turn
@@ -114,7 +117,7 @@ func TestTurnProvenanceCachesClosedTurns(t *testing.T) {
 
 func TestTurnProvenanceDoesNotCacheOpenTurns(t *testing.T) {
 	st, _, srv := newTestServer(t)
-	turn, err := st.CreateTurn(context.Background(), store.Turn{
+	turn, err := vcs.NewTurnStore(st.DB()).CreateTurn(context.Background(), vcs.Turn{
 		RepoRoot: "/repo", Backend: "git", SessionID: "sess-prov", ClaudePID: 100, TreeStart: "t0",
 	})
 	if err != nil {

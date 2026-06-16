@@ -7,9 +7,13 @@ require (
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.46.0 // indirect
 	modernc.org/sqlite v1.52.0
 )
+
+require github.com/yasyf/cc-interact v0.0.0
+
+replace github.com/yasyf/cc-interact => ../cc-interact
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

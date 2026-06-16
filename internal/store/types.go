@@ -5,21 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yasyf/cc-review/internal/vcs"
+	"github.com/yasyf/cc-interact/vcs"
 )
-
-// Review is a code-review session keyed to a Claude window (pid) + repo root.
-type Review struct {
-	ID        string
-	Slug      string // URL name: sanitized creation-time branch + first 8 hex of ID
-	SessionID string // empty when NULL
-	RepoRoot  string
-	BaseRef   string // pinned diff base, resolved at creation; every version captures against it
-	ClaudePID int    // 0 when detached (no live window owns it)
-	Status    string // open | submitted | closed
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
 
 // Version is one snapshot of the working tree under a review.
 type Version struct {
@@ -231,16 +218,4 @@ type Reply struct {
 	AnsweredVia string     // web | askuserquestion
 	CreatedAt   time.Time
 	DedupKey    string // empty => no dedup
-}
-
-// Event is one entry in a review's append-only log, fanned out to every consumer.
-type Event struct {
-	ReviewID      string
-	Seq           int64
-	Origin        string // user | claude | system
-	Type          string
-	VersionNumber int
-	Payload       json.RawMessage
-	CreatedAt     time.Time
-	DedupKey      string // empty => no dedup
 }

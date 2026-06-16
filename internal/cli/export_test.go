@@ -8,53 +8,62 @@ import (
 	"reflect"
 	"testing"
 
+	ccstore "github.com/yasyf/cc-interact/store"
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
 const exportSession = "22222222-2222-2222-2222-222222222222"
 
-func seedActivityStore(t *testing.T) (*store.Store, store.Turn, store.Turn, store.Review) {
+func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) {
 	t.Helper()
 	ctx := context.Background()
 	t.Setenv("HOME", t.TempDir())
 	if err := paths.EnsureStateDir(); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(paths.DBPath())
+	st, err := store.Open(paths.App().DBPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 
-	closed, err := st.CreateTurn(ctx, store.Turn{
+	ts := vcs.NewTurnStore(st.DB())
+	closed, err := ts.CreateTurn(ctx, vcs.Turn{
 		RepoRoot: "/repo", Backend: "git", SessionID: exportSession, ClaudePID: 100,
 		PromptExcerpt: "add parser", TreeStart: "aaa111",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CloseTurn(ctx, closed.ID, "bbb222", "closed"); err != nil {
+	if err := ts.CloseTurn(ctx, closed.ID, "bbb222", "closed"); err != nil {
 		t.Fatal(err)
 	}
-	open, err := st.CreateTurn(ctx, store.Turn{
+	open, err := ts.CreateTurn(ctx, vcs.Turn{
 		RepoRoot: "/repo", Backend: "git", SessionID: exportSession, ClaudePID: 100,
 		PromptExcerpt: "fix tests", TreeStart: "bbb222",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateTurn(ctx, store.Turn{
+	if _, err := ts.CreateTurn(ctx, vcs.Turn{
 		RepoRoot: "/repo", Backend: "git", SessionID: "other-session", ClaudePID: 100, TreeStart: "zzz",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	review, err := st.CreateReview(ctx, exportSession, 100, "/repo", "main", "base0")
+	const branch = "main"
+	ss := ccstore.NewSubjectStore(st.DB(), []string{"open"})
+	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug(branch, store.NewSlugHash()), exportSession, "/repo", 100, "open")
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", filepath.Join(t.TempDir(), "p.patch"), "[]")
+	if err := st.SetReviewMeta(ctx, sub.ID, "base0", branch); err != nil {
+		t.Fatal(err)
+	}
+	version, err := st.CreateVersion(ctx, sub.ID, branch, "HEAD", filepath.Join(t.TempDir(), "p.patch"), "[]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +72,11 @@ func seedActivityStore(t *testing.T) (*store.Store, store.Turn, store.Turn, stor
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return st, closed, open, review
+	return st, closed, open, sub.ID
 }
 
 func TestWriteActivityDocument(t *testing.T) {
-	st, closed, open, review := seedActivityStore(t)
+	st, closed, open, reviewID := seedActivityStore(t)
 
 	var buf bytes.Buffer
 	if err := writeActivity(context.Background(), &buf, st, exportSession); err != nil {
@@ -88,7 +97,7 @@ func TestWriteActivityDocument(t *testing.T) {
 				TreeStart: "bbb222", TreeEnd: "", Status: "open"},
 		},
 		Attributions: []activityAttributed{
-			{ReviewID: review.ID, Version: 1, FilePath: "src/app.py", Ranges: []activityRange{
+			{ReviewID: reviewID, Version: 1, FilePath: "src/app.py", Ranges: []activityRange{
 				{Start: 1, End: 4, TurnID: &closed.ID},
 				{Start: 9, End: 9, TurnID: nil},
 			}},

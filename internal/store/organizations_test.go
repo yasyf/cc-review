@@ -57,10 +57,10 @@ func TestOrganizationValidate(t *testing.T) {
 func TestLatestOrganization(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
-	v1, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p1", `[{"path":"a.go","status":"M"}]`)
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	v1, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p1", `[{"path":"a.go","status":"M"}]`)
 
-	if _, _, ok, err := s.LatestOrganization(ctx, r.ID); err != nil || ok {
+	if _, _, ok, err := s.LatestOrganization(ctx, rid); err != nil || ok {
 		t.Fatalf("unorganized review: ok=%v err=%v, want absent", ok, err)
 	}
 
@@ -69,10 +69,10 @@ func TestLatestOrganization(t *testing.T) {
 		t.Fatalf("upsert v1: %v", err)
 	}
 	// An org-less newer version is skipped: v1's organization stays the latest.
-	if _, err := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M"},{"path":"b.go","status":"A"}]`); err != nil {
+	if _, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M"},{"path":"b.go","status":"A"}]`); err != nil {
 		t.Fatalf("create v2: %v", err)
 	}
-	org, owner, ok, err := s.LatestOrganization(ctx, r.ID)
+	org, owner, ok, err := s.LatestOrganization(ctx, rid)
 	if err != nil || !ok {
 		t.Fatalf("after v2: ok=%v err=%v", ok, err)
 	}
@@ -83,12 +83,12 @@ func TestLatestOrganization(t *testing.T) {
 		t.Fatalf("org = %+v, want %+v", org, v1Org)
 	}
 
-	v3, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p3", `[{"path":"a.go","status":"M"}]`)
+	v3, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p3", `[{"path":"a.go","status":"M"}]`)
 	v3Org := Organization{Chapters: []Chapter{chapter("Third", "a.go")}}
 	if err := s.UpsertOrganization(ctx, v3.ID, v3Org); err != nil {
 		t.Fatalf("upsert v3: %v", err)
 	}
-	org, owner, ok, err = s.LatestOrganization(ctx, r.ID)
+	org, owner, ok, err = s.LatestOrganization(ctx, rid)
 	if err != nil || !ok {
 		t.Fatalf("after v3 org: ok=%v err=%v", ok, err)
 	}
@@ -103,8 +103,8 @@ func TestLatestOrganization(t *testing.T) {
 func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]")
 
 	if _, ok, err := s.GetOrganization(ctx, v.ID); err != nil || ok {
 		t.Fatalf("empty get: ok=%v err=%v, want absent", ok, err)

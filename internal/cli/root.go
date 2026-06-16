@@ -1,11 +1,13 @@
-// Package cli wires the cobra command tree for cc-review: the user-facing
-// commands (start, watch, reply, feedback, status, stop) plus the hidden
-// daemon, hook, and MCP-channel entry points. Every command is a thin shell
-// around the daemon control client.
+// Package cli wires the cobra command tree for cc-review: the user-facing review
+// commands (start, reply, feedback, export, setup-channels) and the domain hooks
+// (turn-start, turn-end) layered on cc-interact's reusable substrate commands
+// (daemon, watch, status, stop, session-record, guard-edit, channel-ack, channel).
 package cli
 
 import (
 	"github.com/spf13/cobra"
+
+	"github.com/yasyf/cc-interact/cmd"
 
 	"github.com/yasyf/cc-review/internal/version"
 )
@@ -21,21 +23,24 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
+	d := deps()
 	root.AddCommand(
+		// Substrate commands from cc-interact.
+		cmd.WatchCmd(d),
+		cmd.StatusCmd(d),
+		cmd.StopCmd(d),
+		cmd.SessionRecordCmd(d),
+		cmd.GuardEditCmd(d),
+		cmd.ChannelAckCmd(d),
+		cmd.ChannelCmd(d),
+		// cc-review domain commands.
+		newDaemonCmd(),
 		newStartCmd(),
-		newWatchCmd(),
 		newReplyCmd(),
 		newFeedbackCmd(),
 		newExportCmd(),
-		newStatusCmd(),
-		newStopCmd(),
-		newDaemonCmd(),
-		newSessionRecordCmd(),
-		newChannelAckCmd(),
-		newGuardEditCmd(),
 		newTurnStartCmd(),
 		newTurnEndCmd(),
-		newMCPChannelCmd(),
 		newSetupChannelsCmd(),
 	)
 	return root

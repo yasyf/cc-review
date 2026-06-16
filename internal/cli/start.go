@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -22,21 +21,17 @@ func newStartCmd() *cobra.Command {
 		Short: "Start or resume a review of the working tree and print its URL",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
+			ctx := cmd.Context()
+			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			resp, err := daemon.NewClient().Start(daemon.Request{
-				Session: session, Cwd: mustCwd(cwd), New: fresh, Base: base,
-			})
+			started, err := daemon.NewReviewClient().Start(ctx, session, mustCwd(cwd), fresh, base)
 			if err != nil {
 				return err
 			}
-			if !resp.OK {
-				return errors.New(resp.Error)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), resp.URL)
+			fmt.Fprintln(cmd.OutOrStdout(), started.URL)
 			offer, reason, offerErr := channelsOffer()
-			for _, line := range startExtraLines(resp.ChannelState, offer, reason, offerErr, resp.AIRequests) {
+			for _, line := range startExtraLines(started.ChannelState, offer, reason, offerErr, started.AIRequests) {
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			return nil

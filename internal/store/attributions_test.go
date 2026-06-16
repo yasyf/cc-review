@@ -9,8 +9,8 @@ import (
 func TestAttributionsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]")
 
 	empty, err := s.ListAttributionsByVersion(ctx, v.ID)
 	if err != nil || len(empty) != 0 {
@@ -36,11 +36,11 @@ func TestAttributionsRoundTrip(t *testing.T) {
 func TestListAttributionsBySession(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r1, _ := s.CreateReview(ctx, "sess-a", 0, "/repo", "main", "base0")
-	v1, _ := s.CreateVersion(ctx, r1.ID, "main", "HEAD", "/p", "[]")
-	v2, _ := s.CreateVersion(ctx, r1.ID, "main", "HEAD", "/p", "[]")
-	other, _ := s.CreateReview(ctx, "sess-b", 0, "/repo2", "main", "base0")
-	vOther, _ := s.CreateVersion(ctx, other.ID, "main", "HEAD", "/p", "[]")
+	r1id := seedReview(t, s, "sess-a", 0, "/repo", "main", "base0")
+	v1, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]")
+	v2, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]")
+	otherid := seedReview(t, s, "sess-b", 0, "/repo2", "main", "base0")
+	vOther, _ := s.CreateVersion(ctx, otherid, "main", "HEAD", "/p", "[]")
 
 	if err := s.PutAttributions(ctx, v1.ID, map[string][]AttributionRange{
 		"b.go": {{Start: 2, End: 3, TurnID: 9}},
@@ -64,9 +64,9 @@ func TestListAttributionsBySession(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	want := []SessionAttribution{
-		{ReviewID: r1.ID, Version: 1, FilePath: "a.go", Ranges: []AttributionRange{{Start: 1, End: 4, TurnID: 7}, {Start: 10, End: 10}}},
-		{ReviewID: r1.ID, Version: 1, FilePath: "b.go", Ranges: []AttributionRange{{Start: 2, End: 3, TurnID: 9}}},
-		{ReviewID: r1.ID, Version: 2, FilePath: "a.go", Ranges: []AttributionRange{{Start: 5, End: 6, TurnID: 9}}},
+		{ReviewID: r1id, Version: 1, FilePath: "a.go", Ranges: []AttributionRange{{Start: 1, End: 4, TurnID: 7}, {Start: 10, End: 10}}},
+		{ReviewID: r1id, Version: 1, FilePath: "b.go", Ranges: []AttributionRange{{Start: 2, End: 3, TurnID: 9}}},
+		{ReviewID: r1id, Version: 2, FilePath: "a.go", Ranges: []AttributionRange{{Start: 5, End: 6, TurnID: 9}}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("session attributions = %+v, want %+v", got, want)
@@ -81,8 +81,8 @@ func TestListAttributionsBySession(t *testing.T) {
 func TestPutAttributionsReplacesOnConflict(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]")
 
 	if err := s.PutAttributions(ctx, v.ID, map[string][]AttributionRange{
 		"a.go": {{Start: 1, End: 4, TurnID: 7}},

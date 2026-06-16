@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -19,17 +18,15 @@ func newFeedbackCmd() *cobra.Command {
 		Short: "Print the frozen feedback JSON (threads + open questions) after Submit",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
+			ctx := cmd.Context()
+			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			resp, err := daemon.NewClient().Feedback(session, mustCwd(cwd))
+			fb, err := daemon.NewReviewClient().Feedback(ctx, session, mustCwd(cwd))
 			if err != nil {
 				return err
 			}
-			if !resp.OK {
-				return errors.New(resp.Error)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), string(resp.Feedback))
+			fmt.Fprintln(cmd.OutOrStdout(), string(fb))
 			return nil
 		},
 	}

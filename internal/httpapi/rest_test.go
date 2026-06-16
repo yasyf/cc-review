@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,25 +13,104 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-	"time"
+
+	ccevent "github.com/yasyf/cc-interact/event"
+	ccstore "github.com/yasyf/cc-interact/store"
+	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/web"
 	"github.com/yasyf/cc-review/internal/wire"
 )
+
+func newTestServer(t *testing.T) (*store.Store, *ccstore.Store, *httptest.Server) {
+	st, _, cc, srv := newTestServerWithLedger(t)
+	return st, cc, srv
+}
+
+func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *ccstore.Store, *httptest.Server) {
+	t.Helper()
+	dir := t.TempDir()
+	cc, err := ccstore.Open(filepath.Join(dir, "t.db"), store.ReviewMigrate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cc.Close() })
+	ledger, err := decisions.Open(filepath.Join(dir, "decisions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ledger.Close() })
+	st := store.New(cc.DB())
+	mux := http.NewServeMux()
+	RESTMount(mux, Deps{
+		Store: st, Decisions: ledger, Log: log.New(io.Discard, "", 0),
+		Append: cc.AppendEvent, ConsumerConnected: func(string) bool { return false }, Dist: web.Dist(),
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return st, ledger, cc, srv
+}
+
+// eventLog reads the event log a handler wrote, in seq order, advancing a
+// cursor — the test-side replacement for the old stub backend's event channel
+// now that mutations append to the real cc-interact event store.
+type eventLog struct {
+	t   *testing.T
+	cc  *ccstore.Store
+	id  string
+	seq int64
+}
+
+func newEventLog(t *testing.T, cc *ccstore.Store, reviewID string) *eventLog {
+	return &eventLog{t: t, cc: cc, id: reviewID}
+}
+
+func (e *eventLog) next() ccevent.Event {
+	e.t.Helper()
+	evs, err := e.cc.EventsSince(context.Background(), e.id, e.seq, false)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if len(evs) == 0 {
+		e.t.Fatal("no event emitted")
+	}
+	e.seq = evs[0].Seq
+	return evs[0]
+}
+
+func (e *eventLog) none() {
+	e.t.Helper()
+	evs, err := e.cc.EventsSince(context.Background(), e.id, e.seq, false)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if len(evs) > 0 {
+		e.t.Fatalf("event %s emitted, want none", evs[0].Type)
+	}
+}
 
 func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store.Review, store.Version) {
 	t.Helper()
 	ctx := context.Background()
-	review, err := st.CreateReview(ctx, "s1", 100, "/repo", "main", "base0")
+	ss := ccstore.NewSubjectStore(st.DB(), []string{"open"})
+	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug("main", store.NewSlugHash()), "s1", "/repo", 100, "open")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetReviewMeta(ctx, sub.ID, "base0", "main"); err != nil {
 		t.Fatal(err)
 	}
 	patch := filepath.Join(t.TempDir(), "p.patch")
 	if err := os.WriteFile(patch, []byte("diff --git a/a.go b/a.go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	version, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", patch, filesJSON)
+	version, err := st.CreateVersion(ctx, sub.ID, "main", "HEAD", patch, filesJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := st.GetReview(ctx, sub.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,21 +131,10 @@ func postJSON(t *testing.T, url string, body any) *http.Response {
 	return resp
 }
 
-func nextEvent(t *testing.T, backend *stubBackend) *store.Event {
-	t.Helper()
-	select {
-	case ev := <-backend.events:
-		return ev
-	case <-time.After(2 * time.Second):
-		t.Fatal("no event emitted")
-		return nil
-	}
-}
-
 func boolPtr(b bool) *bool { return &b }
 
 func TestSetFileStatesAppliesAndEmits(t *testing.T) {
-	st, backend, srv := newTestServer(t)
+	st, cc, srv := newTestServer(t)
 	review, _ := createReviewVersion(t, st,
 		`[{"path":"a.go","status":"M","fingerprint":"fp-a"},{"path":"b.go","status":"A","fingerprint":"fp-b"}]`)
 
@@ -105,13 +174,13 @@ func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 		t.Fatalf("b.go state = %+v, want hidden and unreviewed", b)
 	}
 
-	ev := nextEvent(t, backend)
-	if ev.Type != store.EventFileStates || ev.Origin != store.OriginUser || ev.VersionNumber != 1 {
-		t.Fatalf("event type=%s origin=%s version=%d, want user file.states on version 1",
-			ev.Type, ev.Origin, ev.VersionNumber)
+	ev := newEventLog(t, cc, review.ID).next()
+	if ev.Type != store.EventFileStates || ev.Origin != ccevent.OriginHuman {
+		t.Fatalf("event type=%s origin=%s, want human file.states", ev.Type, ev.Origin)
 	}
 	var payload struct {
-		States []struct {
+		VersionNumber int `json:"version_number"`
+		States        []struct {
 			Path     string `json:"path"`
 			Reviewed bool   `json:"reviewed"`
 			Hidden   bool   `json:"hidden"`
@@ -119,6 +188,9 @@ func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 	}
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		t.Fatal(err)
+	}
+	if payload.VersionNumber != 1 {
+		t.Fatalf("event version_number = %d, want 1", payload.VersionNumber)
 	}
 	if len(payload.States) != 2 ||
 		payload.States[0].Path != "a.go" || !payload.States[0].Reviewed ||
@@ -128,7 +200,7 @@ func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 }
 
 func TestCreateAIRequestEmptyPromptIs400(t *testing.T) {
-	st, backend, srv := newTestServer(t)
+	st, cc, srv := newTestServer(t)
 	review, _ := createReviewVersion(t, st, `[]`)
 
 	resp := postJSON(t, srv.URL+"/api/ai-requests", map[string]any{"reviewId": review.ID, "prompt": "   "})
@@ -138,17 +210,13 @@ func TestCreateAIRequestEmptyPromptIs400(t *testing.T) {
 	if requests, _ := st.ListAIRequests(context.Background(), review.ID); len(requests) != 0 {
 		t.Fatalf("got %d persisted requests, want 0", len(requests))
 	}
-	select {
-	case ev := <-backend.events:
-		t.Fatalf("event %s emitted for a rejected request", ev.Type)
-	default:
-	}
+	newEventLog(t, cc, review.ID).none()
 }
 
 func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 	for _, status := range []string{"pending", "working"} {
 		t.Run(status, func(t *testing.T) {
-			st, backend, srv := newTestServer(t)
+			st, cc, srv := newTestServer(t)
 			ctx := context.Background()
 			review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
 			ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark a.go")
@@ -191,17 +259,13 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 			if len(states) != 1 || !states[0].Reviewed {
 				t.Fatalf("file states = %+v, want a.go still reviewed", states)
 			}
-			select {
-			case ev := <-backend.events:
-				t.Fatalf("event %s emitted for a refused undo", ev.Type)
-			default:
-			}
+			newEventLog(t, cc, review.ID).none()
 		})
 	}
 }
 
 func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
-	st, backend, srv := newTestServer(t)
+	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
 	review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
 	ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark a.go")
@@ -245,9 +309,10 @@ func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 		t.Fatalf("status = %q, want undone", got.Status)
 	}
 
-	first := nextEvent(t, backend)
-	if first.Type != store.EventFileStates || first.Origin != store.OriginUser {
-		t.Fatalf("first event type=%s origin=%s, want user file.states before ai.request.updated",
+	events := newEventLog(t, cc, review.ID)
+	first := events.next()
+	if first.Type != store.EventFileStates || first.Origin != ccevent.OriginHuman {
+		t.Fatalf("first event type=%s origin=%s, want human file.states before ai.request.updated",
 			first.Type, first.Origin)
 	}
 	var restore struct {
@@ -268,7 +333,7 @@ func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 		t.Fatalf("restored states = %+v, want a.go unreviewed", restore.States)
 	}
 
-	second := nextEvent(t, backend)
+	second := events.next()
 	if second.Type != store.EventAIRequestUpdated {
 		t.Fatalf("second event type = %s, want ai.request.updated", second.Type)
 	}
@@ -287,7 +352,7 @@ func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 }
 
 func TestSessionCarriesLatestEventSeq(t *testing.T) {
-	st, _, srv := newTestServer(t)
+	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
 	review, _ := createReviewVersion(t, st, `[]`)
 
@@ -295,7 +360,7 @@ func TestSessionCarriesLatestEventSeq(t *testing.T) {
 		t.Fatalf("latestEventSeq = %q before any events, want \"0\"", got)
 	}
 	for range 2 {
-		if _, err := st.AppendEvent(ctx, &store.Event{ReviewID: review.ID, Origin: store.OriginUser, Type: "t"}); err != nil {
+		if _, err := cc.AppendEvent(ctx, &ccevent.Event{SubjectID: review.ID, Origin: ccevent.OriginHuman, Type: "t"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -336,19 +401,20 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 	st, _, srv := newTestServer(t)
 	ctx := context.Background()
 	review, version := createReviewVersion(t, st, `[]`)
+	turns := vcs.NewTurnStore(st.DB())
 
-	t1, err := st.CreateTurn(ctx, store.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
+	t1, err := turns.CreateTurn(ctx, vcs.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CloseTurn(ctx, t1.ID, "tree1", "closed"); err != nil {
+	if err := turns.CloseTurn(ctx, t1.ID, "tree1", "closed"); err != nil {
 		t.Fatal(err)
 	}
-	t2, err := st.CreateTurn(ctx, store.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "fix tests"})
+	t2, err := turns.CreateTurn(ctx, vcs.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "fix tests"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CloseOpenTurnsForWindow(ctx, "/repo", 100); err != nil {
+	if err := turns.CloseOpenTurnsForWindow(ctx, "/repo", 100); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutAttributions(ctx, version.ID, map[string][]store.AttributionRange{
@@ -367,7 +433,7 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stored, err := st.ListTurnsByIDs(ctx, []int64{t1.ID, t2.ID})
+	stored, err := turns.ListTurnsByIDs(ctx, []int64{t1.ID, t2.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +486,7 @@ func TestSessionCarriesTurnActivity(t *testing.T) {
 	ctx := context.Background()
 	review, version := createReviewVersion(t, st, `[]`)
 
-	turn, err := st.CreateTurn(ctx, store.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
+	turn, err := vcs.NewTurnStore(st.DB()).CreateTurn(ctx, vcs.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
 	if err != nil {
 		t.Fatal(err)
 	}

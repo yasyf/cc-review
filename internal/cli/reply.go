@@ -25,6 +25,8 @@ func newReplyCmd() *cobra.Command {
 		other       string
 		notes       string
 		answerTo    int64
+		session     string
+		cwd         string
 	)
 	cmd := &cobra.Command{
 		Use:   "reply",
@@ -38,8 +40,8 @@ func newReplyCmd() *cobra.Command {
 			if answerTo == 0 && comment == 0 {
 				return errors.New("reply requires --comment (new reply) or --answer-to (answer a question)")
 			}
-			// Cross-reject flags from the other branch: a flag that would be
-			// silently dropped is an error, not a no-op.
+			// Cross-reject flags from the other branch: a flag that would be silently
+			// dropped is an error, not a no-op.
 			changed := func(names ...string) []string {
 				var hit []string
 				for _, n := range names {
@@ -83,17 +85,11 @@ func newReplyCmd() *cobra.Command {
 					return errors.New("--header/--multi-select require --kind ask")
 				}
 			}
-			if err := daemon.EnsureCurrent(daemon.UpgradeTimeout); err != nil {
+			ctx := cmd.Context()
+			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			resp, err := daemon.NewClient().Reply([]daemon.ReplyInput{in})
-			if err != nil {
-				return err
-			}
-			if !resp.OK {
-				return errors.New(resp.Error)
-			}
-			return nil
+			return daemon.NewReviewClient().Reply(ctx, session, mustCwd(cwd), []daemon.ReplyInput{in})
 		},
 	}
 	cmd.Flags().Int64Var(&comment, "comment", 0, "comment id to reply under")
@@ -107,5 +103,7 @@ func newReplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&other, "other", "", "free-text answer outside the offered options")
 	cmd.Flags().StringVar(&notes, "notes", "", "a note riding along with the selection")
 	cmd.Flags().Int64Var(&answerTo, "answer-to", 0, "the reply id of the question or ask being answered")
+	cmd.Flags().StringVar(&session, "session", "", "Claude session id")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory)")
 	return cmd
 }

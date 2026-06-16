@@ -10,54 +10,56 @@ import (
 	"strings"
 	"time"
 
+	ccd "github.com/yasyf/cc-interact/daemon"
+	ccevent "github.com/yasyf/cc-interact/event"
+	"github.com/yasyf/cc-interact/subject"
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/store"
-	"github.com/yasyf/cc-review/internal/vcs"
 	"github.com/yasyf/cc-review/internal/wire"
 )
 
-// organizePrompt seeds the system AI request handleStart creates per version,
-// asking the live Claude session to chapter the diff.
-const organizePrompt = "Organize this review into chapters and rate per-file risk."
-
 // reviewWithLatest resolves the window's review and its latest version; a
-// non-nil Response is the failure to return as-is.
-func (s *Server) reviewWithLatest(ctx context.Context, req Request) (store.Review, store.Version, *Response) {
-	review, ok, err := s.lookupReview(ctx, req)
+// non-nil Reply is the failure to return as-is.
+func reviewWithLatest(hc ccd.HandlerCtx, st *store.Store) (subject.Subject, store.Version, *ccd.Reply) {
+	sub, ok, err := hc.Subjects.Find(hc.Ctx, hc.Window, hc.Scope)
 	if err != nil {
-		r := errResp(err.Error())
-		return store.Review{}, store.Version{}, &r
+		r := errReply(err.Error())
+		return subject.Subject{}, store.Version{}, &r
 	}
 	if !ok {
-		r := errResp("no review for this session/repo")
-		return store.Review{}, store.Version{}, &r
+		r := errReply("no review for this session/repo")
+		return subject.Subject{}, store.Version{}, &r
 	}
-	v, ok, err := s.store.LatestVersion(ctx, review.ID)
+	v, ok, err := st.LatestVersion(hc.Ctx, sub.ID)
 	if err != nil {
-		r := errResp(err.Error())
-		return store.Review{}, store.Version{}, &r
+		r := errReply(err.Error())
+		return subject.Subject{}, store.Version{}, &r
 	}
 	if !ok {
-		r := errResp("review has no versions")
-		return store.Review{}, store.Version{}, &r
+		r := errReply("review has no versions")
+		return subject.Subject{}, store.Version{}, &r
 	}
-	return review, v, nil
+	return sub, v, nil
 }
 
-func (s *Server) handleFileStates(ctx context.Context, req Request) Response {
-	if len(req.Files) == 0 {
-		return errResp("file-states requires at least one file")
+func (rv *review) handleFileStates(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	b := decodeBody(hc.Env.Body)
+	if len(b.Files) == 0 {
+		return errReply("file-states requires at least one file")
 	}
-	review, v, fail := s.reviewWithLatest(ctx, req)
+	sub, v, fail := reviewWithLatest(hc, st)
 	if fail != nil {
 		return *fail
 	}
 	fingerprints, err := versionFingerprints(v)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	var unknown []string
-	inputs := make([]store.FileStateInput, 0, len(req.Files))
-	for _, f := range req.Files {
+	inputs := make([]store.FileStateInput, 0, len(b.Files))
+	for _, f := range b.Files {
 		if _, ok := fingerprints[f.Path]; !ok {
 			unknown = append(unknown, f.Path)
 			continue
@@ -65,136 +67,135 @@ func (s *Server) handleFileStates(ctx context.Context, req Request) Response {
 		inputs = append(inputs, store.FileStateInput{Path: f.Path, Reviewed: f.Reviewed, Hidden: f.Hidden})
 	}
 	if len(unknown) > 0 {
-		return errResp(fmt.Sprintf("unknown paths (not in version %d): %s", v.VersionNumber, strings.Join(unknown, ", ")))
+		return errReply(fmt.Sprintf("unknown paths (not in version %d): %s", v.VersionNumber, strings.Join(unknown, ", ")))
 	}
-	if req.AIRequestID != 0 {
-		ar, err := s.store.GetAIRequest(ctx, req.AIRequestID)
+	if b.AIRequestID != 0 {
+		ar, err := st.GetAIRequest(hc.Ctx, b.AIRequestID)
 		if err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		if ar.ReviewID != review.ID {
-			return errResp(fmt.Sprintf("ai request %d does not belong to this review", req.AIRequestID))
+		if ar.ReviewID != sub.ID {
+			return errReply(fmt.Sprintf("ai request %d does not belong to this review", b.AIRequestID))
 		}
 		if ar.Status != "pending" && ar.Status != "working" {
-			return errResp(fmt.Sprintf("ai request %d is %q: changes are only recorded while pending or working", req.AIRequestID, ar.Status))
+			return errReply(fmt.Sprintf("ai request %d is %q: changes are only recorded while pending or working", b.AIRequestID, ar.Status))
 		}
 	}
-	results, err := s.store.ApplyFileStates(ctx, review.ID, inputs, fingerprints)
+	results, err := st.ApplyFileStates(hc.Ctx, sub.ID, inputs, fingerprints)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	if req.AIRequestID != 0 {
+	if b.AIRequestID != 0 {
 		changes := make([]store.AIChange, 0, len(results))
 		for i, res := range results {
 			changes = append(changes, store.AIChange{
-				Path: res.Path, Reason: req.Files[i].Reason, Prior: res.Prior, Applied: res.Applied,
+				Path: res.Path, Reason: b.Files[i].Reason, Prior: res.Prior, Applied: res.Applied,
 			})
 		}
-		if err := s.store.AppendAIRequestChanges(ctx, req.AIRequestID, changes); err != nil {
-			return errResp(err.Error())
+		if err := st.AppendAIRequestChanges(hc.Ctx, b.AIRequestID, changes); err != nil {
+			return errReply(err.Error())
 		}
 	}
 	states := make([]map[string]any, 0, len(results))
 	for i, res := range results {
-		st := map[string]any{"path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden}
-		if reason := req.Files[i].Reason; reason != "" {
-			st["reason"] = reason
+		s := map[string]any{"path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden}
+		if reason := b.Files[i].Reason; reason != "" {
+			s["reason"] = reason
 		}
-		states = append(states, st)
+		states = append(states, s)
 	}
 	fields := map[string]any{"states": states}
-	if req.AIRequestID != 0 {
-		fields["aiRequestId"] = strconv.FormatInt(req.AIRequestID, 10)
+	if b.AIRequestID != 0 {
+		fields["aiRequestId"] = strconv.FormatInt(b.AIRequestID, 10)
 	}
 	// Apply and emit are not atomic: racing with the REST file-states handler,
-	// same-path events can land in the opposite order of the DB applies.
-	// Accepted — the session GET is authoritative, so replay converges on the
-	// next load.
-	_, _ = s.AppendEvent(ctx, &store.Event{
-		ReviewID: review.ID, Origin: store.OriginClaude, Type: store.EventFileStates, VersionNumber: v.VersionNumber,
-		Payload: wire.Event(store.EventFileStates, v.VersionNumber, fields),
-	})
-	return Response{OK: true}
+	// same-path events can land in the opposite order of the DB applies. Accepted
+	// — the session GET is authoritative, so replay converges on the next load.
+	emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginAgent, store.EventFileStates, v.VersionNumber, fields)
+	return ccd.Reply{OK: true}
 }
 
-func (s *Server) handleUpdateAIRequest(ctx context.Context, req Request) Response {
-	switch req.AIStatus {
+func (rv *review) handleUpdateAIRequest(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	b := decodeBody(hc.Env.Body)
+	switch b.AIStatus {
 	case "working", "done", "failed":
 	default:
-		return errResp(fmt.Sprintf("update-ai-request status %q: want working | done | failed", req.AIStatus))
+		return errReply(fmt.Sprintf("update-ai-request status %q: want working | done | failed", b.AIStatus))
 	}
-	review, v, fail := s.reviewWithLatest(ctx, req)
+	sub, v, fail := reviewWithLatest(hc, st)
 	if fail != nil {
 		return *fail
 	}
-	ar, err := s.store.GetAIRequest(ctx, req.AIRequestID)
+	ar, err := st.GetAIRequest(hc.Ctx, b.AIRequestID)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	if ar.ReviewID != review.ID {
-		return errResp(fmt.Sprintf("ai request %d does not belong to this review", req.AIRequestID))
+	if ar.ReviewID != sub.ID {
+		return errReply(fmt.Sprintf("ai request %d does not belong to this review", b.AIRequestID))
 	}
-	updated, err := s.store.TransitionAIRequest(ctx, req.AIRequestID, req.AIStatus, req.Summary, req.Unmatched)
+	updated, err := st.TransitionAIRequest(hc.Ctx, b.AIRequestID, b.AIStatus, b.Summary, b.Unmatched)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	s.emitAIRequest(ctx, store.OriginClaude, store.EventAIRequestUpdated, v.VersionNumber, updated)
-	return Response{OK: true}
+	emitAIRequest(hc.Ctx, hc.Append, ccevent.OriginAgent, store.EventAIRequestUpdated, v.VersionNumber, updated)
+	return ccd.Reply{OK: true}
 }
 
-func (s *Server) handleSubmitOrganization(ctx context.Context, req Request) Response {
-	if req.Organization == nil {
-		return errResp("submit-organization requires chapters")
+func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	b := decodeBody(hc.Env.Body)
+	if b.Organization == nil {
+		return errReply("submit-organization requires chapters")
 	}
-	review, v, fail := s.reviewWithLatest(ctx, req)
+	sub, v, fail := reviewWithLatest(hc, st)
 	if fail != nil {
 		return *fail
 	}
-	if req.VersionNumber == 0 {
-		return errResp("submit-organization requires version_number — take it from get_review_files")
+	if b.VersionNumber == 0 {
+		return errReply("submit-organization requires version_number — take it from get_review_files")
 	}
-	if req.VersionNumber != v.VersionNumber {
-		return errResp(fmt.Sprintf(
+	if b.VersionNumber != v.VersionNumber {
+		return errReply(fmt.Sprintf(
 			"stale version_number %d: the current version is %d — re-run get_review_files against the latest diff and resubmit",
-			req.VersionNumber, v.VersionNumber))
+			b.VersionNumber, v.VersionNumber))
 	}
 	files, err := v.Files()
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	paths := make([]string, 0, len(files))
+	filePaths := make([]string, 0, len(files))
 	for _, f := range files {
-		paths = append(paths, f.Path)
+		filePaths = append(filePaths, f.Path)
 	}
-	if err := req.Organization.Validate(paths); err != nil {
-		return errResp(err.Error())
+	if err := b.Organization.Validate(filePaths); err != nil {
+		return errReply(err.Error())
 	}
-	if err := s.store.UpsertOrganization(ctx, v.ID, *req.Organization); err != nil {
-		return errResp(err.Error())
+	if err := st.UpsertOrganization(hc.Ctx, v.ID, *b.Organization); err != nil {
+		return errReply(err.Error())
 	}
-	_, _ = s.AppendEvent(ctx, &store.Event{
-		ReviewID: review.ID, Origin: store.OriginClaude, Type: store.EventOrganizationUpdated, VersionNumber: v.VersionNumber,
-		Payload: wire.Event(store.EventOrganizationUpdated, v.VersionNumber, map[string]any{"organization": *req.Organization}),
-	})
-	return Response{OK: true}
+	emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginAgent, store.EventOrganizationUpdated, v.VersionNumber,
+		map[string]any{"organization": *b.Organization})
+	return ccd.Reply{OK: true}
 }
 
-func (s *Server) handleReviewFiles(ctx context.Context, req Request) Response {
-	review, v, fail := s.reviewWithLatest(ctx, req)
+func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	sub, v, fail := reviewWithLatest(hc, st)
 	if fail != nil {
 		return *fail
 	}
 	files, err := v.Files()
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	states, err := s.store.ListFileStates(ctx, review.ID)
+	states, err := st.ListFileStates(hc.Ctx, sub.ID)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	byPath := make(map[string]store.FileState, len(states))
-	for _, st := range states {
-		byPath[st.Path] = st
+	for _, s := range states {
+		byPath[s.Path] = s
 	}
 	entries := make([]map[string]any, 0, len(files))
 	for _, f := range files {
@@ -207,32 +208,29 @@ func (s *Server) handleReviewFiles(ctx context.Context, req Request) Response {
 		}
 		entries = append(entries, e)
 	}
-	result := map[string]any{"version_number": v.VersionNumber, "patch_path": v.PatchPath, "files": entries}
-	if org, basis, ok, err := s.store.LatestOrganization(ctx, review.ID); err != nil {
-		return errResp(err.Error())
+	out := map[string]any{"version_number": v.VersionNumber, "patch_path": v.PatchPath, "files": entries}
+	if org, basis, ok, err := st.LatestOrganization(hc.Ctx, sub.ID); err != nil {
+		return errReply(err.Error())
 	} else if ok {
 		block, err := organizationContext(org, basis, v)
 		if err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		result["organization"] = block
+		out["organization"] = block
 	}
-	b, err := json.Marshal(result)
+	raw, err := json.Marshal(out)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	return Response{OK: true, ReviewFiles: b}
+	return okReply(result{ReviewFiles: raw})
 }
 
 // organizationContext annotates the latest organization against the current
-// version so the organize agent rebuilds incrementally instead of from
-// scratch: per file a delta mark (absent = unchanged diff), plus the current
-// paths the basis never covered. Files are joined by path first, then by base
-// origin — every version diffs the review's pinned base, so a rename's
-// old_path keys it back to the basis entry. A direct path match always wins
-// over an origin join: when a basis D+A pair flips to a rename, both org
-// entries would otherwise claim the rename target, and a literal agent would
-// submit one current path in two chapters.
+// version so the organize agent rebuilds incrementally instead of from scratch:
+// per file a delta mark (absent = unchanged diff), plus the current paths the
+// basis never covered. Files are joined by path first, then by base origin —
+// every version diffs the review's pinned base, so a rename's old_path keys it
+// back to the basis entry. A direct path match always wins over an origin join.
 func organizationContext(org store.Organization, basis, current store.Version) (map[string]any, error) {
 	basisFiles, err := basis.Files()
 	if err != nil {
@@ -303,14 +301,11 @@ func organizationContext(org store.Organization, basis, current store.Version) (
 	}, nil
 }
 
-// emitAIRequest appends an ai.request.* event carrying the full request
-// object, stamped with the review's CURRENT version — not ar.VersionNumber,
-// which is frozen at creation and goes stale once a later version lands.
-func (s *Server) emitAIRequest(ctx context.Context, origin, typ string, versionNumber int, ar store.AIRequest) {
-	_, _ = s.AppendEvent(ctx, &store.Event{
-		ReviewID: ar.ReviewID, Origin: origin, Type: typ, VersionNumber: versionNumber,
-		Payload: wire.Event(typ, versionNumber, map[string]any{"request": wire.ToAIRequest(ar)}),
-	})
+// emitAIRequest appends an ai.request.* event carrying the full request object,
+// stamped with the review's CURRENT version — not ar.VersionNumber, which is
+// frozen at creation and goes stale once a later version lands.
+func emitAIRequest(ctx context.Context, ap ccd.AppendFunc, origin, typ string, versionNumber int, ar store.AIRequest) {
+	emit(ctx, ap, ar.ReviewID, origin, typ, versionNumber, map[string]any{"request": wire.ToAIRequest(ar)})
 }
 
 // versionFingerprints maps a version's paths to their diff fingerprints.
@@ -327,12 +322,10 @@ func versionFingerprints(v store.Version) (map[string]string, error) {
 }
 
 // carryOrganizationForward copies the review's latest organization onto v when
-// v's path set and per-file fingerprints exactly match the organization's
-// owning version: identical content tells the same story, so no re-organize is
-// needed. Fingerprints hash status, old/new names, file modes, and full diff
-// content, so map equality covers renames, mode flips, and status changes too.
-func (s *Server) carryOrganizationForward(ctx context.Context, reviewID string, v store.Version, fingerprints map[string]string) (store.Organization, bool, error) {
-	org, owner, ok, err := s.store.LatestOrganization(ctx, reviewID)
+// v's path set and per-file fingerprints exactly match the organization's owning
+// version: identical content tells the same story, so no re-organize is needed.
+func carryOrganizationForward(ctx context.Context, st *store.Store, reviewID string, v store.Version, fingerprints map[string]string) (store.Organization, bool, error) {
+	org, owner, ok, err := st.LatestOrganization(ctx, reviewID)
 	if err != nil {
 		return store.Organization{}, false, err
 	}
@@ -346,17 +339,16 @@ func (s *Server) carryOrganizationForward(ctx context.Context, reviewID string, 
 	if !maps.Equal(ownerPrints, fingerprints) {
 		return store.Organization{}, false, nil
 	}
-	if err := s.store.UpsertOrganization(ctx, v.ID, org); err != nil {
+	if err := st.UpsertOrganization(ctx, v.ID, org); err != nil {
 		return store.Organization{}, false, err
 	}
 	return org, true, nil
 }
 
 // openSystemOrganize returns the review's newest open (pending or working)
-// system organize request. A working request reaching a fresh unchanged
-// resume means the dispatched agent died with the old session.
-func (s *Server) openSystemOrganize(ctx context.Context, reviewID string) (store.AIRequest, bool, error) {
-	requests, err := s.store.ListAIRequests(ctx, reviewID)
+// system organize request.
+func openSystemOrganize(ctx context.Context, st *store.Store, reviewID string) (store.AIRequest, bool, error) {
+	requests, err := st.ListAIRequests(ctx, reviewID)
 	if err != nil {
 		return store.AIRequest{}, false, err
 	}
@@ -370,11 +362,9 @@ func (s *Server) openSystemOrganize(ctx context.Context, reviewID string) (store
 
 // openAIRequestsJSON returns the review's open requests as wire JSON, each
 // byte-identical to its ai.request.created payload so the skill dedupes the
-// redelivered offer by id. /cc-review:start re-offers these so a freshly
-// attached session dispatches any request — a system organize or a human's AI
-// bar prompt — left open while no live session was watching.
-func (s *Server) openAIRequestsJSON(ctx context.Context, reviewID string, versionNumber int) ([]json.RawMessage, error) {
-	open, err := s.store.ListOpenAIRequests(ctx, reviewID, versionNumber)
+// redelivered offer by id.
+func openAIRequestsJSON(ctx context.Context, st *store.Store, reviewID string, versionNumber int) ([]json.RawMessage, error) {
+	open, err := st.ListOpenAIRequests(ctx, reviewID, versionNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -389,19 +379,16 @@ func (s *Server) openAIRequestsJSON(ctx context.Context, reviewID string, versio
 	return out, nil
 }
 
-// sweepStalePending fails user AI-bar requests left pending past
-// stalePendingTTL: no live session dispatched them, so they would otherwise
-// show "queued" forever. Only pending (never working) user requests are
-// touched — a request a just-attached agent already moved to working races out
-// via ErrInvalidTransition — and system organize requests are handled on resume.
+// sweepStalePending fails user AI-bar requests left pending past stalePendingTTL:
+// no live session dispatched them, so they would otherwise show "queued" forever.
 // before is the staleness cutoff (sweepLoop passes now-stalePendingTTL).
-func (s *Server) sweepStalePending(ctx context.Context, before time.Time) error {
-	stale, err := s.store.StalePendingUserRequests(ctx, before)
+func (rv *review) sweepStalePending(ctx context.Context, st *store.Store, ap ccd.AppendFunc, before time.Time) error {
+	stale, err := st.StalePendingUserRequests(ctx, before)
 	if err != nil {
 		return err
 	}
 	for _, ar := range stale {
-		updated, err := s.store.TransitionAIRequest(ctx, ar.ID, "failed",
+		updated, err := st.TransitionAIRequest(ctx, ar.ID, "failed",
 			"Request expired — no live review session picked it up. Resume with /cc-review:start and retry.", nil)
 		if err != nil {
 			if errors.Is(err, store.ErrInvalidTransition) {
@@ -409,23 +396,23 @@ func (s *Server) sweepStalePending(ctx context.Context, before time.Time) error 
 			}
 			return err
 		}
-		v, ok, err := s.store.LatestVersion(ctx, ar.ReviewID)
+		v, ok, err := st.LatestVersion(ctx, ar.ReviewID)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			continue
 		}
-		s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestUpdated, v.VersionNumber, updated)
+		emitAIRequest(ctx, ap, ccevent.OriginSystem, store.EventAIRequestUpdated, v.VersionNumber, updated)
 	}
 	return nil
 }
 
 // closeStaleOrganizeRequests marks the review's open system organize requests
-// done with summary: no agent is coming to close them, and an open one keeps
-// the UI's "organizing…" chip lit forever.
-func (s *Server) closeStaleOrganizeRequests(ctx context.Context, reviewID string, versionNumber int, summary string) error {
-	requests, err := s.store.ListAIRequests(ctx, reviewID)
+// done with summary: no agent is coming to close them, and an open one keeps the
+// UI's "organizing…" chip lit forever.
+func closeStaleOrganizeRequests(ctx context.Context, st *store.Store, ap ccd.AppendFunc, reviewID string, versionNumber int, summary string) error {
+	requests, err := st.ListAIRequests(ctx, reviewID)
 	if err != nil {
 		return err
 	}
@@ -433,16 +420,16 @@ func (s *Server) closeStaleOrganizeRequests(ctx context.Context, reviewID string
 		if ar.Source != store.OriginSystem || (ar.Status != "pending" && ar.Status != "working") {
 			continue
 		}
-		updated, err := s.store.TransitionAIRequest(ctx, ar.ID, "done", summary, nil)
+		updated, err := st.TransitionAIRequest(ctx, ar.ID, "done", summary, nil)
 		if err != nil {
-			// A live agent's own update_ai_request can close the request between
-			// the list above and this transition; already-closed is the goal state.
+			// A live agent's own update_ai_request can close the request between the
+			// list above and this transition; already-closed is the goal state.
 			if errors.Is(err, store.ErrInvalidTransition) {
 				continue
 			}
 			return err
 		}
-		s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestUpdated, versionNumber, updated)
+		emitAIRequest(ctx, ap, ccevent.OriginSystem, store.EventAIRequestUpdated, versionNumber, updated)
 	}
 	return nil
 }

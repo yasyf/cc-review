@@ -2,21 +2,18 @@ package daemon
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/paths"
-	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -33,7 +30,7 @@ func TestTurnLifecycle(t *testing.T) {
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "add a feature"}), "turn-start")
-	open, ok, err := s.store.LatestOpenTurn(ctx, root, 100)
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
 	if err != nil || !ok {
 		t.Fatalf("open turn: ok=%v err=%v", ok, err)
 	}
@@ -47,7 +44,7 @@ func TestTurnLifecycle(t *testing.T) {
 	writeFile(t, repo, "feat.go", "package p\nvar Feat int\n")
 	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end")
 
-	turns, err := s.store.ListAttributableTurns(ctx, root, 0)
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
 	if err != nil || len(turns) != 1 {
 		t.Fatalf("turns = %d (err %v), want 1", len(turns), err)
 	}
@@ -68,8 +65,14 @@ func TestTurnOpsOutsideRepoAreNoops(t *testing.T) {
 	s, _ := testServer(t)
 	outside := t.TempDir()
 
-	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside, Prompt: "p"}), "turn-start outside a repo")
-	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside}), "turn-end outside a repo")
+	// Outside a repo the daemon's scope resolve fails, so the turn op is rejected
+	// at the boundary; the hook swallows that error, making it a silent no-op.
+	if resp := s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside, Prompt: "p"}); resp.OK {
+		t.Fatal("turn-start outside a repo must be rejected at the scope boundary")
+	}
+	if resp := s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside}); resp.OK {
+		t.Fatal("turn-end outside a repo must be rejected at the scope boundary")
+	}
 }
 
 func TestTurnStartInterruptsDanglingTurn(t *testing.T) {
@@ -80,7 +83,7 @@ func TestTurnStartInterruptsDanglingTurn(t *testing.T) {
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "first turn-start")
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "two"}), "second turn-start")
 
-	turns, err := s.store.ListAttributableTurns(ctx, root, 0)
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
 	if err != nil || len(turns) != 2 {
 		t.Fatalf("turns = %d (err %v), want 2", len(turns), err)
 	}
@@ -95,44 +98,19 @@ func TestTurnStartInterruptsDanglingTurn(t *testing.T) {
 
 func TestTurnStartSweepsStaleScratch(t *testing.T) {
 	ctx := context.Background()
-	t.Setenv("HOME", t.TempDir())
-	dbPath := filepath.Join(t.TempDir(), "t.db")
-	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { st.Close() })
-	repo := t.TempDir()
-	gitRun(t, repo, "init", "-q", "-b", "main")
-	writeFile(t, repo, "base.go", "package p\n")
-	gitRun(t, repo, "add", "-A")
-	gitRun(t, repo, "commit", "-qm", "init")
-	s := &Server{
-		store:     st,
-		bus:       NewBus(),
-		activity:  NewActivity(),
-		alive:     func(int) bool { return false },
-		log:       log.New(io.Discard, "", 0),
-		repoLocks: make(map[string]*sync.Mutex),
-	}
-	s.resolver = session.Resolver{Store: st, Held: s.held}
+	s, repo := testServer(t)
 	root := repoRoot(t, repo)
 
-	stale, err := st.CreateTurn(ctx, store.Turn{RepoRoot: root, Backend: "git", ClaudePID: 50, TreeStart: "deadbeef"})
+	stale, err := s.turns.CreateTurn(ctx, vcs.Turn{RepoRoot: root, Backend: "git", ClaudePID: 50, TreeStart: "deadbeef"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	backdate := time.Now().Add(-attributableWindow - 24*time.Hour).UnixMilli()
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)")
-	if err != nil {
+	if _, err := s.store.DB().ExecContext(ctx, `UPDATE turns SET started_at=? WHERE id=?`, backdate, stale.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE turns SET started_at=? WHERE id=?`, backdate, stale.ID); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
 
-	scratchDir, err := paths.EnsureRepoTurnsDir(root)
+	scratchDir, err := paths.App().EnsureRepoTurnsDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,13 +131,13 @@ func TestTurnStartSweepsStaleScratch(t *testing.T) {
 	if _, err := os.Stat(dummy); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale scratch object survived the sweep: %v", err)
 	}
-	open, ok, err := s.store.LatestOpenTurn(ctx, root, 100)
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
 	if err != nil || !ok || open.TreeStart == "" {
 		t.Fatalf("snapshot after sweep: ok=%v err=%v turn=%+v", ok, err, open)
 	}
 	// Turn rows are never deleted: the swept repo's old row still backs the
 	// display of old versions.
-	rows, err := st.ListTurnsByIDs(ctx, []int64{stale.ID})
+	rows, err := s.turns.ListTurnsByIDs(ctx, []int64{stale.ID})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("stale turn row = %d (err %v), want 1", len(rows), err)
 	}
@@ -195,12 +173,12 @@ func TestTurnEndFlagsUnattributedChanges(t *testing.T) {
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
 	stubSliceBinary(t, `echo '{"schema":"cc-transcript.slice/1","event_uuid":"u1","tool_use_id":"toolu_1","ts_ms":1,"tool_name":"Bash","tool_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","file_path":null,"summary":"$ go test ./..."}'`)
-	if _, err := s.store.CreateReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
+	if _, err := s.createReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
 		t.Fatal(err)
 	}
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "p"}), "turn-start")
-	turn, ok, err := s.store.LatestOpenTurn(ctx, root, 100)
+	turn, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
 	if err != nil || !ok {
 		t.Fatalf("open turn: ok=%v err=%v", ok, err)
 	}
@@ -240,7 +218,7 @@ func TestTurnEndFullyAttributedWritesNoBypassRow(t *testing.T) {
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
 	stubSliceBinary(t, `echo '{"schema":"cc-transcript.slice/1","event_uuid":"u1","tool_use_id":"toolu_1","ts_ms":1,"tool_name":"Bash","tool_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","file_path":null,"summary":"$ sed -i s/a/b/ sneaky.go"}'`)
-	if _, err := s.store.CreateReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
+	if _, err := s.createReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -270,7 +248,7 @@ func TestHandleStartAttributesTurnLines(t *testing.T) {
 	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\nvar Manual int\nvar Turn2 int\n")
 	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end 2")
 
-	turns, err := s.store.ListAttributableTurns(ctx, root, 0)
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
 	if err != nil || len(turns) != 2 {
 		t.Fatalf("turns = %d (err %v), want 2", len(turns), err)
 	}

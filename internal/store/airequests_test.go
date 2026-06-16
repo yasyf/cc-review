@@ -11,11 +11,8 @@ import (
 func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
 	t.Helper()
 	ctx := context.Background()
-	r, err := s.CreateReview(ctx, "", 0, "/repo/"+status+t.Name(), "main", "base0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ar, err := s.CreateAIRequest(ctx, r.ID, 1, "user", "mark the easy ones")
+	reviewID := seedReview(t, s, "", 0, "/repo/"+status+t.Name(), "main", "base0")
+	ar, err := s.CreateAIRequest(ctx, reviewID, 1, "user", "mark the easy ones")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,15 +21,15 @@ func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
 			t.Fatal(err)
 		}
 	}
-	return r.ID, ar.ID
+	return reviewID, ar.ID
 }
 
 func TestCreateAIRequestDefaults(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
 
-	ar, err := s.CreateAIRequest(ctx, r.ID, 2, "system", "Organize this review into chapters and rate per-file risk.")
+	ar, err := s.CreateAIRequest(ctx, rid, 2, "system", "Organize this review into chapters and rate per-file risk.")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -173,12 +170,12 @@ func TestAppendAIRequestChangesKeepsFirstPrior(t *testing.T) {
 func TestListAIRequestsNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
 
-	older, _ := s.CreateAIRequest(ctx, r.ID, 1, "system", "organize")
-	newer, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "mark renames")
+	older, _ := s.CreateAIRequest(ctx, rid, 1, "system", "organize")
+	newer, _ := s.CreateAIRequest(ctx, rid, 1, "user", "mark renames")
 
-	got, err := s.ListAIRequests(ctx, r.ID)
+	got, err := s.ListAIRequests(ctx, rid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,12 +187,12 @@ func TestListAIRequestsNewestFirst(t *testing.T) {
 func TestListOpenAIRequestsScopedToVersion(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
 
 	// v1: a closed system organize, an open (working) user request, a done one.
-	sysV1, _ := s.CreateAIRequest(ctx, r.ID, 1, "system", "organize")
-	userV1, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "mark mechanical")
-	doneV1, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "already handled")
+	sysV1, _ := s.CreateAIRequest(ctx, rid, 1, "system", "organize")
+	userV1, _ := s.CreateAIRequest(ctx, rid, 1, "user", "mark mechanical")
+	doneV1, _ := s.CreateAIRequest(ctx, rid, 1, "user", "already handled")
 	if _, err := s.TransitionAIRequest(ctx, sysV1.ID, "done", "", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -206,16 +203,16 @@ func TestListOpenAIRequestsScopedToVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	// v2: a fresh open system organize that must not leak into a v1 query.
-	sysV2, _ := s.CreateAIRequest(ctx, r.ID, 2, "system", "organize v2")
+	sysV2, _ := s.CreateAIRequest(ctx, rid, 2, "system", "organize v2")
 
-	openV1, err := s.ListOpenAIRequests(ctx, r.ID, 1)
+	openV1, err := s.ListOpenAIRequests(ctx, rid, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(openV1) != 1 || openV1[0].ID != userV1.ID {
 		t.Fatalf("v1 open = %+v, want only the working user request %d", openV1, userV1.ID)
 	}
-	openV2, err := s.ListOpenAIRequests(ctx, r.ID, 2)
+	openV2, err := s.ListOpenAIRequests(ctx, rid, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +224,12 @@ func TestListOpenAIRequestsScopedToVersion(t *testing.T) {
 func TestStalePendingUserRequests(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r, _ := s.CreateReview(ctx, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
 
-	stale, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "stale user pending")
-	working, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "user working")
-	sysPending, _ := s.CreateAIRequest(ctx, r.ID, 1, "system", "system pending")
-	fresh, _ := s.CreateAIRequest(ctx, r.ID, 1, "user", "fresh user pending")
+	stale, _ := s.CreateAIRequest(ctx, rid, 1, "user", "stale user pending")
+	working, _ := s.CreateAIRequest(ctx, rid, 1, "user", "user working")
+	sysPending, _ := s.CreateAIRequest(ctx, rid, 1, "system", "system pending")
+	fresh, _ := s.CreateAIRequest(ctx, rid, 1, "user", "fresh user pending")
 
 	// Backdate the first three past the cutoff; leave fresh recent.
 	old := time.Now().Add(-time.Hour)

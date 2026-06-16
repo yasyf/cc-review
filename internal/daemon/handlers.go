@@ -10,444 +10,388 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/yasyf/cc-review/internal/decisions"
-	"github.com/yasyf/cc-review/internal/digest"
+	ccd "github.com/yasyf/cc-interact/daemon"
+	ccevent "github.com/yasyf/cc-interact/event"
+	"github.com/yasyf/cc-interact/subject"
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/feedback"
 	"github.com/yasyf/cc-review/internal/paths"
-	"github.com/yasyf/cc-review/internal/session"
 	"github.com/yasyf/cc-review/internal/store"
-	"github.com/yasyf/cc-review/internal/vcs"
-	"github.com/yasyf/cc-review/internal/version"
 	"github.com/yasyf/cc-review/internal/wire"
 )
 
-func win(req Request) session.Window {
-	return session.Window{SessionID: req.Session, ClaudePID: req.ClaudePID}
-}
-
-func (s *Server) handleStart(ctx context.Context, req Request) Response {
-	if req.Cwd == "" {
-		return errResp("start requires --cwd")
-	}
-	root, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return errResp(err.Error())
-	}
+func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	b := decodeBody(hc.Env.Body)
 	// The repo lock spans both the patch capture and attributeVersion's tree
 	// snapshot, so they describe the same working tree; turn-start/turn-end
 	// snapshot under the same lock.
-	mu := s.repoLock(root)
-	mu.Lock()
-	defer mu.Unlock()
+	hc.RepoLock.Lock()
+	defer hc.RepoLock.Unlock()
 	// Capture before any resolver write: a failed (e.g. empty) snapshot must
 	// create nothing — and must not let --new close the prior review. A resumed
 	// review captures against its pinned base, so the peek comes first.
 	var snap vcs.Snapshot
 	fromPin := false
-	if peeked, ok, err := s.resolver.Peek(ctx, win(req), root); err != nil {
-		return errResp(err.Error())
-	} else if ok && !req.New {
-		if peeked.BaseRef == "" {
-			return errResp(fmt.Sprintf("review %s predates pinned diff bases; pass --new to start a fresh review", peeked.Slug))
+	peeked, ok, err := hc.Subjects.Peek(hc.Ctx, hc.Window, hc.Scope)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	if ok && !b.New {
+		meta, metaOK, err := st.GetReviewMeta(hc.Ctx, peeked.ID)
+		if err != nil {
+			return errReply(err.Error())
 		}
-		if req.Base != "" {
-			return errResp(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", peeked.Slug, peeked.BaseRef))
+		if !metaOK || meta.BaseRef == "" {
+			return errReply(fmt.Sprintf("review %s predates pinned diff bases; pass --new to start a fresh review", peeked.Slug))
+		}
+		if b.Base != "" {
+			return errReply(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", peeked.Slug, meta.BaseRef))
 		}
 		fromPin = true
-		if snap, err = vcs.CaptureAt(ctx, req.Cwd, peeked.BaseRef); err != nil {
+		if snap, err = vcs.CaptureAt(hc.Ctx, hc.Scope, meta.BaseRef); err != nil {
 			if !errors.Is(err, vcs.ErrNoChanges) {
-				return errResp(err.Error() + " (pass --new to start a fresh review)")
+				return errReply(err.Error() + " (pass --new to start a fresh review)")
 			}
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
 	} else {
-		if snap, err = vcs.Capture(ctx, req.Cwd, req.Base); err != nil {
-			return errResp(err.Error())
+		if snap, err = vcs.Capture(hc.Ctx, hc.Scope, b.Base); err != nil {
+			return errReply(err.Error())
 		}
 	}
-	review, resumed, err := s.resolver.Start(ctx, win(req), snap.RepoRoot, snap.Branch, snap.BaseRef, req.New)
+	slug := store.ReviewSlug(snap.Branch, store.NewSlugHash())
+	sub, resumed, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, slug, lifecycle, b.New)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	// The peek's verdict can flip under a concurrent rebind, adopt, or submit
-	// between the read and the write phase; re-align the snapshot with the
-	// review Start actually returned.
+	// between the read and the write phase; re-align the snapshot with the review
+	// Start actually returned.
 	if resumed {
-		// Peek said create (so --base passed the gate above) but Start resumed
-		// an existing pinned review: the explicit base cannot apply.
-		if req.Base != "" {
-			return errResp(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", review.Slug, review.BaseRef))
+		meta, metaOK, err := st.GetReviewMeta(hc.Ctx, sub.ID)
+		if err != nil {
+			return errReply(err.Error())
 		}
-		if review.BaseRef != snap.BaseRef {
-			if snap, err = vcs.CaptureAt(ctx, req.Cwd, review.BaseRef); err != nil {
-				return errResp(err.Error())
+		// Peek said create (so --base passed the gate above) but Start resumed an
+		// existing pinned review: the explicit base cannot apply.
+		if b.Base != "" {
+			return errReply(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", sub.Slug, meta.BaseRef))
+		}
+		if metaOK && meta.BaseRef != snap.BaseRef {
+			if snap, err = vcs.CaptureAt(hc.Ctx, hc.Scope, meta.BaseRef); err != nil {
+				return errReply(err.Error())
 			}
 		}
-	} else if fromPin {
-		// Peek said resume but Start created: the snapshot was taken against
-		// the vanished review's pin; recapture with create semantics and re-pin
-		// the just-created (still version-less) review.
-		if snap, err = vcs.Capture(ctx, req.Cwd, ""); err != nil {
-			// Leave nothing adoptable behind: the empty review would otherwise
-			// be resumed against its stale foreign pin on the next start.
-			if cerr := s.store.SetReviewStatus(ctx, review.ID, "closed"); cerr != nil {
-				return errResp(cerr.Error())
+	} else {
+		if fromPin {
+			// Peek said resume but Start created: the snapshot was taken against the
+			// vanished review's pin; recapture with create semantics and re-pin the
+			// just-created (still version-less) review.
+			if snap, err = vcs.Capture(hc.Ctx, hc.Scope, ""); err != nil {
+				// Leave nothing adoptable behind: the empty review would otherwise be
+				// resumed against its stale foreign pin on the next start.
+				if cerr := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, "closed"); cerr != nil {
+					return errReply(cerr.Error())
+				}
+				if derr := hc.Subjects.Store.Detach(hc.Ctx, sub.ID); derr != nil {
+					return errReply(derr.Error())
+				}
+				return errReply(err.Error())
 			}
-			if derr := s.store.DetachReviewSession(ctx, review.ID); derr != nil {
-				return errResp(derr.Error())
-			}
-			return errResp(err.Error())
 		}
-		if err := s.store.SetReviewBaseRef(ctx, review.ID, snap.BaseRef); err != nil {
-			return errResp(err.Error())
+		if err := st.SetReviewMeta(hc.Ctx, sub.ID, snap.BaseRef, snap.Branch); err != nil {
+			return errReply(err.Error())
 		}
-		review.BaseRef = snap.BaseRef
 	}
 	// An unchanged worktree on resume reuses the latest version instead of
 	// stacking an identical one and re-queueing an organize request. A version
-	// whose patch file is unreadable (crash between insert and rename) just
-	// misses the dedup and gets a fresh version.
+	// whose patch file is unreadable (crash between insert and rename) just misses
+	// the dedup and gets a fresh version.
 	if resumed {
-		if latest, ok, err := s.store.LatestVersion(ctx, review.ID); err != nil {
-			return errResp(err.Error())
+		if latest, ok, err := st.LatestVersion(hc.Ctx, sub.ID); err != nil {
+			return errReply(err.Error())
 		} else if ok {
 			if prev, err := os.ReadFile(latest.PatchPath); err == nil && string(prev) == snap.PatchText {
-				// A successful start always leaves the round open: resuming a
-				// submitted review must re-block edits even when the snapshot
-				// is unchanged.
-				if review.Status != "open" {
-					if err := s.store.SetReviewStatus(ctx, review.ID, "open"); err != nil {
-						return errResp(err.Error())
+				// A successful start always leaves the round open: resuming a submitted
+				// review must re-block edits even when the snapshot is unchanged.
+				if sub.Status != statusOpen {
+					if err := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, statusOpen); err != nil {
+						return errReply(err.Error())
 					}
 				}
-				resp := Response{
-					OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: latest.VersionNumber, Resumed: true,
-					HTTPPort:     s.httpPort,
-					ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
-				}
-				// An organized version needs no organize agent: close any open
-				// system request stranded by a dead session (it would keep the
-				// UI's "organizing…" chip lit forever). An unorganized one
-				// rescues the still-open request — or queues a fresh one when
-				// the prior request finished without organizing.
-				if _, ok, err := s.store.GetOrganization(ctx, latest.ID); err != nil {
-					return errResp(err.Error())
+				cs := channelState(hc.Activity, sub.ID, hc.Scope, hc.Window.ClaudePID)
+				// An organized version needs no organize agent: close any open system
+				// request stranded by a dead session. An unorganized one rescues the
+				// still-open request — or queues a fresh one when the prior request
+				// finished without organizing.
+				if _, ok, err := st.GetOrganization(hc.Ctx, latest.ID); err != nil {
+					return errReply(err.Error())
 				} else if ok {
-					if err := s.closeStaleOrganizeRequests(ctx, review.ID, latest.VersionNumber,
+					if err := closeStaleOrganizeRequests(hc.Ctx, st, hc.Append, sub.ID, latest.VersionNumber,
 						fmt.Sprintf("diff unchanged; version %d is already organized", latest.VersionNumber)); err != nil {
-						return errResp(err.Error())
+						return errReply(err.Error())
 					}
-					// The system organize is closed; re-offer only open human AI-bar
-					// requests stranded while no session was watching.
-					reoffer, err := s.openAIRequestsJSON(ctx, review.ID, latest.VersionNumber)
+					reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, latest.VersionNumber)
 					if err != nil {
-						return errResp(err.Error())
+						return errReply(err.Error())
 					}
-					resp.AIRequests = reoffer
-					return resp
+					return rv.startReply(hc, sub, latest.VersionNumber, true, cs, reoffer)
 				}
-				ar, found, err := s.openSystemOrganize(ctx, review.ID)
+				ar, found, err := openSystemOrganize(hc.Ctx, st, sub.ID)
 				if err != nil {
-					return errResp(err.Error())
+					return errReply(err.Error())
 				}
 				if !found {
-					if ar, err = s.store.CreateAIRequest(ctx, review.ID, latest.VersionNumber, store.OriginSystem, organizePrompt); err != nil {
-						return errResp(err.Error())
+					if ar, err = st.CreateAIRequest(hc.Ctx, sub.ID, latest.VersionNumber, store.OriginSystem, organizePrompt); err != nil {
+						return errReply(err.Error())
 					}
-					s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, latest.VersionNumber, ar)
+					emitAIRequest(hc.Ctx, hc.Append, ccevent.OriginSystem, store.EventAIRequestCreated, latest.VersionNumber, ar)
 				}
-				// Re-offer the rescued/created system organize plus any open human
-				// AI-bar requests. Each is byte-identical to its ai.request.created
-				// payload, so the skill dedupes the redelivered offer by id.
-				reoffer, err := s.openAIRequestsJSON(ctx, review.ID, latest.VersionNumber)
+				reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, latest.VersionNumber)
 				if err != nil {
-					return errResp(err.Error())
+					return errReply(err.Error())
 				}
-				resp.AIRequests = reoffer
-				return resp
+				return rv.startReply(hc, sub, latest.VersionNumber, true, cs, reoffer)
 			}
 		}
 	}
-	if err := paths.EnsureReviewDir(review.ID); err != nil {
-		return errResp(err.Error())
+	if err := paths.EnsureReviewDir(sub.ID); err != nil {
+		return errReply(err.Error())
 	}
 	filesJSON, err := json.Marshal(snap.Files)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	// Write the patch to a temp file before inserting the version row, so a write
 	// failure can never leave behind a committed-but-unreadable version. The row
 	// then gets the final path after an atomic rename into place.
-	tmp, err := os.CreateTemp(paths.ReviewDir(review.ID), "snap-*.tmp")
+	tmp, err := os.CreateTemp(paths.ReviewDir(sub.ID), "snap-*.tmp")
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.WriteString(snap.PatchText); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	v, err := s.store.CreateVersion(ctx, review.ID, snap.Branch, snap.BaseRef, "", string(filesJSON))
+	v, err := st.CreateVersion(hc.Ctx, sub.ID, snap.Branch, snap.BaseRef, "", string(filesJSON))
 	if err != nil {
 		os.Remove(tmpName)
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	patchPath := paths.SnapshotPath(review.ID, v.VersionNumber)
+	patchPath := paths.SnapshotPath(sub.ID, v.VersionNumber)
 	if err := os.Rename(tmpName, patchPath); err != nil {
 		os.Remove(tmpName)
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	if err := s.store.UpdateVersionPatchPath(ctx, v.ID, patchPath); err != nil {
-		return errResp(err.Error())
+	if err := st.UpdateVersionPatchPath(hc.Ctx, v.ID, patchPath); err != nil {
+		return errReply(err.Error())
 	}
-	s.attributeVersion(ctx, root, v.ID, snap.PatchText)
+	rv.attributeVersion(hc.Ctx, st, hc.Scope, v.ID, snap.PatchText)
 	// A new version reopens the review (a prior round may have been submitted), so
 	// the edit guard blocks edits again until this round is submitted.
-	if review.Status != "open" {
-		if err := s.store.SetReviewStatus(ctx, review.ID, "open"); err != nil {
-			return errResp(err.Error())
+	if sub.Status != statusOpen {
+		if err := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, statusOpen); err != nil {
+			return errReply(err.Error())
 		}
 	}
-	// Carry review state across versions: unmark files whose diff content
-	// changed (version.created first, then the unmark batch), then queue the
-	// system organize request for the live Claude session.
+	// Carry review state across versions: unmark files whose diff content changed
+	// (version.created first, then the unmark batch), then queue the system
+	// organize request for the live Claude session.
 	fingerprints := make(map[string]string, len(snap.Files))
 	for _, f := range snap.Files {
 		fingerprints[f.Path] = f.Fingerprint
 	}
-	// The carry upsert lands before the version.created append: the SPA
-	// refetches the session on that event, and the refetch must already see the
-	// new version's organization row.
-	carried, carriedOK, err := s.carryOrganizationForward(ctx, review.ID, v, fingerprints)
+	// The carry upsert lands before the version.created append: the SPA refetches
+	// the session on that event, and the refetch must already see the new
+	// version's organization row.
+	carried, carriedOK, err := carryOrganizationForward(hc.Ctx, st, sub.ID, v, fingerprints)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	unmarked, err := s.store.UnreviewChangedFiles(ctx, review.ID, fingerprints)
+	unmarked, err := st.UnreviewChangedFiles(hc.Ctx, sub.ID, fingerprints)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	if _, err := s.AppendEvent(ctx, &store.Event{
-		ReviewID: review.ID, Origin: store.OriginSystem, Type: store.EventVersionCreated, VersionNumber: v.VersionNumber,
-		Payload: wire.Event(store.EventVersionCreated, v.VersionNumber, nil),
-	}); err != nil {
-		return errResp(err.Error())
-	}
+	emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventVersionCreated, v.VersionNumber, nil)
 	if len(unmarked) > 0 {
 		states := make([]map[string]any, 0, len(unmarked))
-		for _, st := range unmarked {
-			states = append(states, map[string]any{"path": st.Path, "reviewed": false, "hidden": st.Hidden})
+		for _, fs := range unmarked {
+			states = append(states, map[string]any{"path": fs.Path, "reviewed": false, "hidden": fs.Hidden})
 		}
-		if _, err := s.AppendEvent(ctx, &store.Event{
-			ReviewID: review.ID, Origin: store.OriginSystem, Type: store.EventFileStates, VersionNumber: v.VersionNumber,
-			Payload: wire.Event(store.EventFileStates, v.VersionNumber, map[string]any{"states": states}),
-		}); err != nil {
-			return errResp(err.Error())
-		}
+		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventFileStates, v.VersionNumber,
+			map[string]any{"states": states})
 	}
+	cs := channelState(hc.Activity, sub.ID, hc.Scope, hc.Window.ClaudePID)
 	if carriedOK {
-		// The carried organization is the agent's own authored content
-		// reattached verbatim, so the event keeps the claude origin a
-		// submit_organization would have — the channel stream filters
-		// claude-origin frames, and no organize agent is dispatched for it.
-		_, _ = s.AppendEvent(ctx, &store.Event{
-			ReviewID: review.ID, Origin: store.OriginClaude, Type: store.EventOrganizationUpdated, VersionNumber: v.VersionNumber,
-			Payload: wire.Event(store.EventOrganizationUpdated, v.VersionNumber, map[string]any{"organization": carried}),
-		})
-		if err := s.closeStaleOrganizeRequests(ctx, review.ID, v.VersionNumber,
+		// The carried organization is the agent's own authored content reattached
+		// verbatim, so the event keeps the agent origin a submit_organization would
+		// have — the channel stream filters agent-origin frames, and no organize
+		// agent is dispatched for it.
+		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginAgent, store.EventOrganizationUpdated, v.VersionNumber,
+			map[string]any{"organization": carried})
+		if err := closeStaleOrganizeRequests(hc.Ctx, st, hc.Append, sub.ID, v.VersionNumber,
 			fmt.Sprintf("diff unchanged; organization carried to version %d", v.VersionNumber)); err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		// No system organize (carried verbatim); re-offer only open human
-		// AI-bar requests stranded while no session was watching.
-		reoffer, err := s.openAIRequestsJSON(ctx, review.ID, v.VersionNumber)
+		reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, v.VersionNumber)
 		if err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		return Response{
-			OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
-			HTTPPort:     s.httpPort,
-			ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
-			AIRequests:   reoffer,
-		}
+		return rv.startReply(hc, sub, v.VersionNumber, resumed, cs, reoffer)
 	}
-	organize, err := s.store.CreateAIRequest(ctx, review.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
+	organize, err := st.CreateAIRequest(hc.Ctx, sub.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	s.emitAIRequest(ctx, store.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
-	// Re-offer the new system organize plus any open human AI-bar requests. Each
-	// is byte-identical to its ai.request.created payload, so the skill dedupes
-	// the redelivered offer by id.
-	reoffer, err := s.openAIRequestsJSON(ctx, review.ID, v.VersionNumber)
+	emitAIRequest(hc.Ctx, hc.Append, ccevent.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
+	reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, v.VersionNumber)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	return Response{
-		OK: true, URL: s.reviewURL(review.Slug), ReviewID: review.ID, Version: v.VersionNumber, Resumed: resumed,
-		HTTPPort:     s.httpPort,
-		ChannelState: s.channelState(review.ID, snap.RepoRoot, req.ClaudePID),
-		AIRequests:   reoffer,
-	}
+	return rv.startReply(hc, sub, v.VersionNumber, resumed, cs, reoffer)
 }
 
-func (s *Server) reviewURL(slug string) string {
-	return fmt.Sprintf("http://127.0.0.1:%d/s/%s", s.httpPort, slug)
+// startReply builds the start op's reply: the review id and http port on the
+// envelope, the URL, version, resume flag, channel state, and re-offered AI
+// requests in the body.
+func (rv *review) startReply(hc ccd.HandlerCtx, sub subject.Subject, version int, resumed bool, channelState string, aiRequests []json.RawMessage) ccd.Reply {
+	raw, _ := json.Marshal(result{
+		URL: reviewURL(hc.HTTPPort, sub.Slug), Version: version, Resumed: resumed,
+		ChannelState: channelState, AIRequests: aiRequests,
+	})
+	return ccd.Reply{OK: true, SubjectID: sub.ID, HTTPPort: hc.HTTPPort, Body: raw}
 }
 
-const channelConsumer = "channel"
-
-// channelPollWindow is how recent a channel resolve poll must be to count as
-// presence; it only distinguishes pending from inactive.
-const channelPollWindow = 3 * time.Second
-
-// channelState classifies this window's channel route. active requires a
-// proven round trip (the model acked a delivered channel tag) AND a channel
-// consumer currently attached to this review's SSE stream — presence alone can
-// never produce active, because Claude Code silently drops channel
-// notifications when channels are unavailable. An attached or recently-polling
-// but unproven consumer is pending; no consumer is inactive. Both non-active
-// states tell the skill to arm the Monitor. The pid key is what keeps window
-// A's signals from lighting up window B's start.
-func (s *Server) channelState(reviewID, repoRoot string, pid int) string {
-	attached := s.activity.Attached(reviewID, channelConsumer, pid)
-	if attached && s.activity.Proven(pid) {
-		return "active"
-	}
-	if attached || s.activity.PolledSince(repoRoot, channelConsumer, pid, channelPollWindow) {
-		return "pending"
-	}
-	return "inactive"
-}
-
-func (s *Server) handleChannelAck(_ context.Context, req Request) Response {
-	if req.ClaudePID == 0 {
-		return errResp("channel-ack requires a Claude window (no claude pid)")
-	}
-	s.activity.MarkProven(req.ClaudePID)
-	return Response{OK: true}
-}
-
-func (s *Server) handleResolve(ctx context.Context, req Request) Response {
-	repoRoot, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return errResp(err.Error())
-	}
-	if req.Consumer != "" {
-		s.activity.NotePoll(repoRoot, req.Consumer, req.ClaudePID)
-	}
-	resp := Response{OK: true, HTTPPort: s.httpPort}
-	review, ok, err := s.resolver.Find(ctx, win(req), repoRoot)
-	if err != nil {
-		return errResp(err.Error())
-	}
-	if ok {
-		resp.ReviewID = review.ID
-		resp.Status = review.Status
-	}
-	return resp
-}
-
-func (s *Server) handleReply(ctx context.Context, req Request) Response {
-	for _, in := range req.Replies {
+func (rv *review) handleReply(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	b := decodeBody(hc.Env.Body)
+	for _, in := range b.Replies {
 		if in.AnswerTo != 0 {
-			if resp := s.handleAnswer(ctx, in); !resp.OK {
-				return resp
+			if reply := rv.handleAnswer(hc, st, in); !reply.OK {
+				return reply
 			}
 			continue
 		}
 		if in.CommentID == 0 {
-			return errResp("reply requires comment_id or answer_to")
+			return errReply("reply requires comment_id or answer_to")
 		}
 		if err := validateReplyKind(in); err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		reviewID, versionNumber, err := s.store.ResolveCommentContext(ctx, in.CommentID)
+		reviewID, versionNumber, err := st.ResolveCommentContext(hc.Ctx, in.CommentID)
 		if err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		// Hash the daemon's own re-marshal of Ask, never the client's raw JSON,
-		// so semantically identical asks dedup regardless of key order.
+		// Hash the daemon's own re-marshal of Ask, never the client's raw JSON, so
+		// semantically identical asks dedup regardless of key order.
 		askJSON := ""
 		if in.Ask != nil {
-			b, err := json.Marshal(in.Ask)
+			j, err := json.Marshal(in.Ask)
 			if err != nil {
-				return errResp(fmt.Sprintf("encode ask: %v", err))
+				return errReply(fmt.Sprintf("encode ask: %v", err))
 			}
-			askJSON = string(b)
+			askJSON = string(j)
 		}
 		dedup := in.DedupKey
 		if dedup == "" {
 			dedup = deriveDedup(in.CommentID, in.Kind, in.Body, askJSON)
 		}
-		rid, inserted, err := s.store.CreateReply(ctx, store.Reply{
+		rid, inserted, err := st.CreateReply(hc.Ctx, store.Reply{
 			CommentID: in.CommentID, Origin: store.OriginClaude, Kind: in.Kind, Body: in.Body,
 			Ask: in.Ask, DedupKey: dedup,
 		})
 		if err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
 		if !inserted {
 			continue // a redelivered duplicate; do not re-emit
 		}
-		// Re-read the persisted row so the frame carries the stored created_at
-		// (and can never drift from a later fetch of the same reply).
-		r, err := s.store.GetReply(ctx, rid)
+		// Re-read the persisted row so the frame carries the stored created_at (and
+		// can never drift from a later fetch of the same reply).
+		r, err := st.GetReply(hc.Ctx, rid)
 		if err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
-		s.emitReply(ctx, reviewID, claudeEventType(in.Kind), versionNumber, in.CommentID, r)
+		emitReply(hc.Ctx, hc.Append, reviewID, claudeEventType(in.Kind), versionNumber, in.CommentID, r)
 	}
-	return Response{OK: true}
+	return ccd.Reply{OK: true}
 }
 
 // handleAnswer records a post-submit drain answer against a question or ask
 // reply, then emits comment.updated so an open browser flips the card to its
-// answered state. Origin claude keeps the frame out of Claude's own stream.
-func (s *Server) handleAnswer(ctx context.Context, in ReplyInput) Response {
-	target, err := s.store.GetReply(ctx, in.AnswerTo)
+// answered state. Origin agent keeps the frame out of Claude's own stream.
+func (rv *review) handleAnswer(hc ccd.HandlerCtx, st *store.Store, in ReplyInput) ccd.Reply {
+	target, err := st.GetReply(hc.Ctx, in.AnswerTo)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	switch target.Kind {
 	case "ask":
 		if in.AskAnswer == nil {
-			return errResp(fmt.Sprintf("reply %d is an ask: answer with ask_answer (select/other/notes)", in.AnswerTo))
+			return errReply(fmt.Sprintf("reply %d is an ask: answer with ask_answer (select/other/notes)", in.AnswerTo))
 		}
-		if err := s.store.AnswerAsk(ctx, in.AnswerTo, *in.AskAnswer, "askuserquestion"); err != nil {
-			return errResp(err.Error())
+		if err := st.AnswerAsk(hc.Ctx, in.AnswerTo, *in.AskAnswer, "askuserquestion"); err != nil {
+			return errReply(err.Error())
 		}
 	case "question":
 		if in.Answer == "" {
-			return errResp(fmt.Sprintf("reply %d is a question: answer with answer text", in.AnswerTo))
+			return errReply(fmt.Sprintf("reply %d is a question: answer with answer text", in.AnswerTo))
 		}
-		if err := s.store.AnswerQuestion(ctx, in.AnswerTo, in.Answer, "askuserquestion"); err != nil {
-			return errResp(err.Error())
+		if err := st.AnswerQuestion(hc.Ctx, in.AnswerTo, in.Answer, "askuserquestion"); err != nil {
+			return errReply(err.Error())
 		}
 		// Mirror the web path's visible answer bubble: wire.Reply carries no
-		// plain-answer text, so without a sibling row the drained answer would
-		// be invisible in an open browser. Origin user — the human authored it.
-		if _, _, err := s.store.CreateReply(ctx, store.Reply{
+		// plain-answer text, so without a sibling row the drained answer would be
+		// invisible in an open browser. Origin user — the human authored it.
+		if _, _, err := st.CreateReply(hc.Ctx, store.Reply{
 			CommentID: target.CommentID, Origin: store.OriginUser, Kind: "answer", Body: in.Answer,
 			DedupKey: deriveDedup(target.CommentID, "answer", in.Answer, ""),
 		}); err != nil {
-			return errResp(err.Error())
+			return errReply(err.Error())
 		}
 	default:
-		return errResp(fmt.Sprintf("reply %d is kind %q: not answerable", in.AnswerTo, target.Kind))
+		return errReply(fmt.Sprintf("reply %d is kind %q: not answerable", in.AnswerTo, target.Kind))
 	}
-	reviewID, versionNumber, err := s.store.ResolveCommentContext(ctx, target.CommentID)
+	reviewID, versionNumber, err := st.ResolveCommentContext(hc.Ctx, target.CommentID)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	s.emitThread(ctx, reviewID, versionNumber, target.CommentID)
-	return Response{OK: true}
+	emitThread(hc.Ctx, hc.Append, st, reviewID, versionNumber, target.CommentID)
+	return ccd.Reply{OK: true}
+}
+
+func (rv *review) handleFeedback(hc ccd.HandlerCtx) ccd.Reply {
+	st := store.New(hc.DB)
+	sub, ok, err := hc.Subjects.Find(hc.Ctx, hc.Window, hc.Scope)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	if !ok {
+		return errReply("no review for this session/repo")
+	}
+	v, ok, err := st.LatestVersion(hc.Ctx, sub.ID)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	if !ok {
+		return errReply("review has no versions")
+	}
+	fbPath := paths.FeedbackPath(sub.ID, v.VersionNumber)
+	fb, err := feedback.Load(fbPath)
+	if err != nil {
+		return errReply("feedback not frozen yet (review not submitted): " + err.Error())
+	}
+	raw, _ := json.Marshal(fb)
+	return okReply(result{FeedbackPath: fbPath, Feedback: raw})
 }
 
 func validateReplyKind(in ReplyInput) error {
@@ -470,158 +414,27 @@ func validateReplyKind(in ReplyInput) error {
 	}
 }
 
-func (s *Server) handleFeedback(ctx context.Context, req Request) Response {
-	review, ok, err := s.lookupReview(ctx, req)
-	if err != nil {
-		return errResp(err.Error())
-	}
-	if !ok {
-		return errResp("no review for this session/repo")
-	}
-	v, ok, err := s.store.LatestVersion(ctx, review.ID)
-	if err != nil {
-		return errResp(err.Error())
-	}
-	if !ok {
-		return errResp("review has no versions")
-	}
-	fbPath := paths.FeedbackPath(review.ID, v.VersionNumber)
-	fb, err := feedback.Load(fbPath)
-	if err != nil {
-		return errResp("feedback not frozen yet (review not submitted): " + err.Error())
-	}
-	b, _ := json.Marshal(fb)
-	return Response{OK: true, FeedbackPath: fbPath, Feedback: b}
-}
-
-func (s *Server) handleStatus(ctx context.Context, req Request) Response {
-	resp := Response{OK: true, DaemonVersion: version.String(), HTTPPort: s.httpPort}
-	if review, ok, err := s.lookupReview(ctx, req); err == nil && ok {
-		resp.ReviewID = review.ID
-		resp.Status = review.Status
-	}
-	return resp
-}
-
-func (s *Server) handleSessionRecord(ctx context.Context, req Request) Response {
-	if req.Session == "" {
-		return Response{OK: true}
-	}
-	// Session ids rotate (each resume/clear/compact is a new id), so rebind the
-	// window's open review to the new session here — this is what keeps
-	// guard-edit, feedback, and status working across rotation.
-	repoRoot, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return Response{OK: true} // not a repo: nothing to rebind
-	}
-	if err := s.resolver.Rebind(ctx, win(req), repoRoot); err != nil {
-		return errResp(err.Error())
-	}
-	return Response{OK: true}
-}
-
-func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
-	repoRoot, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return Response{OK: true, Allow: true} // not a repo: nothing to guard
-	}
-	review, ok, err := s.resolver.Find(ctx, win(req), repoRoot)
-	if err != nil {
-		// Couldn't determine status: fail closed and make the failure visible
-		// rather than silently permitting an edit that an open review should block.
-		return Response{OK: true, Allow: false, Reason: "cc-review: could not read review status (" + err.Error() + "); blocking the edit to be safe. Try `cc-review status`, or `cc-review stop` to clear the daemon."}
-	}
-	if !ok {
-		return Response{OK: true, Allow: true} // no review: nothing to guard
-	}
-	reason := ""
-	if review.Status == "open" {
-		reason = "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser."
-	}
-	s.recordGateDecision(req, review.ID, reason)
-	return Response{OK: true, Allow: reason == "", Reason: reason}
-}
-
-// recordGateDecision ledgers a resolved gate verdict in decisions_v1. A
-// deliberate deviation from fail-fast: the gate's job is the verdict, the
-// ledger row is telemetry — digest or append failures log and never affect
-// the response.
-func (s *Server) recordGateDecision(req Request, reviewID, reason string) {
-	action := "allow"
-	if reason != "" {
-		action = "block"
-	}
-	toolDigest, err := digest.Tool(req.ToolName, req.ToolInput)
-	if err != nil {
-		toolDigest = ""
-		s.log.Printf("gate decision: digest: %v", err)
-	}
-	detail := map[string]any{"review_id": reviewID}
-	if fp := toolInputFilePath(req.ToolInput); fp != "" {
-		detail["file_path"] = fp
-	}
-	detailJSON, _ := json.Marshal(detail)
-	if err := s.decisions.Append(decisions.Decision{
-		TsMs: time.Now().UnixMilli(), SessionID: req.Session, Source: "cc-review", Kind: "gate",
-		Event: "PreToolUse", Action: action, ToolName: req.ToolName, ToolDigest: toolDigest,
-		Message: reason, DetailJSON: string(detailJSON),
-	}); err != nil {
-		s.log.Printf("gate decision: append: %v", err)
-	}
-}
-
-// toolInputFilePath pulls the guarded file out of a raw tool input: file_path
-// for Edit/Write, notebook_path for NotebookEdit.
-func toolInputFilePath(input json.RawMessage) string {
-	var in struct {
-		FilePath     string `json:"file_path"`
-		NotebookPath string `json:"notebook_path"`
-	}
-	_ = json.Unmarshal(input, &in)
-	if in.FilePath != "" {
-		return in.FilePath
-	}
-	return in.NotebookPath
-}
-
-// --- helpers ---------------------------------------------------------------
-
-func (s *Server) lookupReview(ctx context.Context, req Request) (store.Review, bool, error) {
-	repoRoot, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return store.Review{}, false, err
-	}
-	return s.resolver.Find(ctx, win(req), repoRoot)
-}
-
-func (s *Server) emitReply(ctx context.Context, reviewID, typ string, version int, commentID int64, r store.Reply) {
-	_, _ = s.AppendEvent(ctx, &store.Event{
-		ReviewID: reviewID, Origin: store.OriginClaude, Type: typ, VersionNumber: version,
-		Payload: wire.Event(typ, version, map[string]any{
-			"commentId": strconv.FormatInt(commentID, 10), "reply": wire.ToReply(r),
-		}),
+// emitReply appends a claude.* reply event under the agent origin.
+func emitReply(ctx context.Context, ap ccd.AppendFunc, reviewID, typ string, version int, commentID int64, r store.Reply) {
+	emit(ctx, ap, reviewID, ccevent.OriginAgent, typ, version, map[string]any{
+		"commentId": strconv.FormatInt(commentID, 10), "reply": wire.ToReply(r),
 	})
 }
 
 // emitThread re-reads a comment with its replies and emits comment.updated.
-func (s *Server) emitThread(ctx context.Context, reviewID string, version int, commentID int64) {
-	c, err := s.store.GetComment(ctx, commentID)
+func emitThread(ctx context.Context, ap ccd.AppendFunc, st *store.Store, reviewID string, version int, commentID int64) {
+	c, err := st.GetComment(ctx, commentID)
 	if err != nil {
 		return
 	}
-	replies, err := s.store.ListRepliesByComment(ctx, commentID)
+	replies, err := st.ListRepliesByComment(ctx, commentID)
 	if err != nil {
 		return
 	}
-	_, _ = s.AppendEvent(ctx, &store.Event{
-		ReviewID: reviewID, Origin: store.OriginClaude, Type: store.EventCommentUpdated, VersionNumber: version,
-		Payload: wire.Event(store.EventCommentUpdated, version, map[string]any{
-			"commentId": strconv.FormatInt(commentID, 10), "comment": wire.ToComment(c, replies),
-		}),
+	emit(ctx, ap, reviewID, ccevent.OriginAgent, store.EventCommentUpdated, version, map[string]any{
+		"commentId": strconv.FormatInt(commentID, 10), "comment": wire.ToComment(c, replies),
 	})
 }
-
-func errResp(msg string) Response { return Response{OK: false, Error: msg} }
 
 func claudeEventType(kind string) string {
 	switch kind {

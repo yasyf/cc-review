@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/yasyf/cc-interact/vcs"
 	"github.com/yasyf/cc-review/internal/store"
-	"github.com/yasyf/cc-review/internal/vcs"
 )
 
 // Link is one tree transition in a version's snapshot chain; TurnID 0 marks an

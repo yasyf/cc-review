@@ -12,15 +12,17 @@ import (
 	"time"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	ccd "github.com/yasyf/cc-interact/daemon"
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/attrib"
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
-	"github.com/yasyf/cc-review/internal/vcs"
 )
 
-// attributableWindow bounds how far back turns participate in attribution; once
-// a repo has no turn inside it, the snapshot scratch state is swept.
+// attributableWindow bounds how far back turns participate in attribution; once a
+// repo has no turn inside it, the snapshot scratch state is swept.
 const attributableWindow = 14 * 24 * time.Hour
 
 // promptExcerptMax caps the stored prompt excerpt, in runes.
@@ -29,88 +31,83 @@ const promptExcerptMax = 1000
 // sliceSchema is the versioned wire schema of `cc-transcript slice` lines.
 const sliceSchema = "cc-transcript.slice/1"
 
-func (s *Server) handleTurnStart(ctx context.Context, req Request) Response {
-	repoRoot, err := vcs.Root(ctx, req.Cwd)
+func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
+	ts := vcs.NewTurnStore(hc.DB)
+	b := decodeBody(hc.Env.Body)
+	repoRoot := hc.Scope
+	hc.RepoLock.Lock()
+	defer hc.RepoLock.Unlock()
+	sweepStaleScratch(hc.Ctx, ts, repoRoot)
+	scratchDir, err := paths.App().EnsureRepoTurnsDir(repoRoot)
 	if err != nil {
-		return Response{OK: true} // not a repo: nothing to record
+		return errReply(err.Error())
 	}
-	mu := s.repoLock(repoRoot)
-	mu.Lock()
-	defer mu.Unlock()
-	s.sweepStaleScratch(ctx, repoRoot)
-	scratchDir, err := paths.EnsureRepoTurnsDir(repoRoot)
+	tree, err := vcs.SnapshotTree(hc.Ctx, repoRoot, scratchDir)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	tree, err := vcs.SnapshotTree(ctx, repoRoot, scratchDir)
-	if err != nil {
-		return errResp(err.Error())
+	// A still-open turn here means the prior Stop hook never fired (crash, kill):
+	// no closing snapshot exists, so it ends interrupted.
+	if err := ts.CloseOpenTurnsForWindow(hc.Ctx, repoRoot, hc.Window.ClaudePID); err != nil {
+		return errReply(err.Error())
 	}
-	// A still-open turn here means the prior Stop hook never fired (crash,
-	// kill): no closing snapshot exists, so it ends interrupted.
-	if err := s.store.CloseOpenTurnsForWindow(ctx, repoRoot, req.ClaudePID); err != nil {
-		return errResp(err.Error())
-	}
-	if _, err := s.store.CreateTurn(ctx, store.Turn{
-		RepoRoot: repoRoot, Backend: tree.Backend, SessionID: req.Session, ClaudePID: req.ClaudePID,
-		PromptExcerpt: promptExcerpt(req.Prompt), TreeStart: tree.OID,
+	if _, err := ts.CreateTurn(hc.Ctx, vcs.Turn{
+		RepoRoot: repoRoot, Backend: tree.Backend, SessionID: hc.Window.Session, ClaudePID: hc.Window.ClaudePID,
+		PromptExcerpt: promptExcerpt(b.Prompt), TreeStart: tree.OID,
 	}); err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	return Response{OK: true}
+	return ccd.Reply{OK: true}
 }
 
-func (s *Server) handleTurnEnd(ctx context.Context, req Request) Response {
-	repoRoot, err := vcs.Root(ctx, req.Cwd)
+func (rv *review) handleTurnEnd(hc ccd.HandlerCtx) ccd.Reply {
+	ts := vcs.NewTurnStore(hc.DB)
+	repoRoot := hc.Scope
+	hc.RepoLock.Lock()
+	defer hc.RepoLock.Unlock()
+	turn, ok, err := ts.LatestOpenTurn(hc.Ctx, repoRoot, hc.Window.ClaudePID)
 	if err != nil {
-		return Response{OK: true} // not a repo: nothing to record
-	}
-	mu := s.repoLock(repoRoot)
-	mu.Lock()
-	defer mu.Unlock()
-	turn, ok, err := s.store.LatestOpenTurn(ctx, repoRoot, req.ClaudePID)
-	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
 	if !ok {
-		return Response{OK: true} // no open turn (e.g. daemon booted mid-turn)
+		return ccd.Reply{OK: true} // no open turn (e.g. daemon booted mid-turn)
 	}
-	scratchDir, err := paths.EnsureRepoTurnsDir(repoRoot)
+	scratchDir, err := paths.App().EnsureRepoTurnsDir(repoRoot)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	tree, err := vcs.SnapshotTree(ctx, repoRoot, scratchDir)
+	tree, err := vcs.SnapshotTree(hc.Ctx, repoRoot, scratchDir)
 	if err != nil {
-		return errResp(err.Error())
+		return errReply(err.Error())
 	}
-	if err := s.store.CloseTurn(ctx, turn.ID, tree.OID, "closed"); err != nil {
-		return errResp(err.Error())
+	if err := ts.CloseTurn(hc.Ctx, turn.ID, tree.OID, "closed"); err != nil {
+		return errReply(err.Error())
 	}
-	s.detectBypass(ctx, req, repoRoot, scratchDir, turn, tree)
-	return Response{OK: true}
+	rv.detectBypass(hc, repoRoot, scratchDir, turn, tree)
+	return ccd.Reply{OK: true}
 }
 
-// detectBypass flags tree changes during a locked-review turn that no logged
-// tool call explains: the turn's changed files minus those a gate-allowed
-// edit named minus those a sliced Bash command mentioned. Strictly non-fatal
-// — the turn is already closed, the row is telemetry — and the wording never
-// asserts who made the change.
-func (s *Server) detectBypass(ctx context.Context, req Request, repoRoot, scratchDir string, turn store.Turn, treeEnd vcs.TreeRef) {
+// detectBypass flags tree changes during a locked-review turn that no logged tool
+// call explains: the turn's changed files minus those a gate-allowed edit named
+// minus those a sliced Bash command mentioned. Strictly non-fatal — the turn is
+// already closed, the row is telemetry — and the wording never asserts who made
+// the change.
+func (rv *review) detectBypass(hc ccd.HandlerCtx, repoRoot, scratchDir string, turn vcs.Turn, treeEnd vcs.TreeRef) {
 	if treeEnd.OID == turn.TreeStart {
 		return
 	}
-	review, ok, err := s.resolver.Find(ctx, win(req), repoRoot)
-	if err != nil || !ok || review.Status != "open" {
+	sub, ok, err := hc.Subjects.Find(hc.Ctx, hc.Window, repoRoot)
+	if err != nil || !ok || sub.Status != statusOpen {
 		return
 	}
-	changed, err := changedFiles(ctx, vcs.NewTreeDiffer(repoRoot, scratchDir, treeEnd.Backend), turn.TreeStart, treeEnd.OID)
+	changed, err := changedFiles(hc.Ctx, vcs.NewTreeDiffer(repoRoot, scratchDir, treeEnd.Backend), turn.TreeStart, treeEnd.OID)
 	if err != nil {
-		s.log.Printf("bypass check: %v", err)
+		rv.log.Printf("bypass check: %v", err)
 		return
 	}
 	nowMs := time.Now().UnixMilli()
-	allowed := s.gateAllowedFiles(turn, nowMs, repoRoot)
-	summaries := s.bashSummaries(ctx, turn.SessionID, turn.StartedAt, nowMs)
+	allowed := rv.gateAllowedFiles(turn, nowMs, repoRoot)
+	summaries := rv.bashSummaries(hc.Ctx, turn.SessionID, turn.StartedAt, nowMs)
 	var remaining, attributed []string
 	for _, f := range changed {
 		if allowed[f] || mentionedInBash(summaries, f) {
@@ -125,13 +122,13 @@ func (s *Server) detectBypass(ctx context.Context, req Request, repoRoot, scratc
 	detail, _ := json.Marshal(map[string]any{
 		"changed_files": remaining, "attributed_files": attributed, "turn_id": turn.ID,
 	})
-	if err := s.decisions.Append(decisions.Decision{
+	if err := rv.decisions.Append(decisions.Decision{
 		TsMs: nowMs, SessionID: turn.SessionID, Source: "cc-review", Kind: "bypass-detected",
 		Event: "Stop", Action: "note",
 		Message:    fmt.Sprintf("%d file(s) changed during a locked review turn with no logged tool call naming them", len(remaining)),
 		DetailJSON: string(detail),
 	}); err != nil {
-		s.log.Printf("bypass check: append: %v", err)
+		rv.log.Printf("bypass check: append: %v", err)
 	}
 }
 
@@ -157,10 +154,10 @@ func changedFiles(ctx context.Context, d vcs.TreeDiffer, from, to string) ([]str
 
 // gateAllowedFiles is the repo-relative set of files the turn's gate-allowed
 // edits named; blocked calls never ran, so they explain nothing.
-func (s *Server) gateAllowedFiles(turn store.Turn, untilMs int64, repoRoot string) map[string]bool {
-	rows, err := s.decisions.ForTurn(turn.SessionID, turn.StartedAt, untilMs)
+func (rv *review) gateAllowedFiles(turn vcs.Turn, untilMs int64, repoRoot string) map[string]bool {
+	rows, err := rv.decisions.ForTurn(turn.SessionID, turn.StartedAt, untilMs)
 	if err != nil {
-		s.log.Printf("bypass check: decisions: %v", err)
+		rv.log.Printf("bypass check: decisions: %v", err)
 		return nil
 	}
 	files := make(map[string]bool)
@@ -186,11 +183,11 @@ func relToRepo(repoRoot, path string) string {
 // returns the rendered Bash commands it saw. A missing binary, a nonzero exit
 // (1 = transcript missing), or schema skew all mean "no slice data": the Bash
 // subtraction is skipped and the degradation logged once per daemon.
-func (s *Server) bashSummaries(ctx context.Context, sessionID string, sinceMs, untilMs int64) []string {
+func (rv *review) bashSummaries(ctx context.Context, sessionID string, sinceMs, untilMs int64) []string {
 	out, err := exec.CommandContext(ctx, "cc-transcript", "slice",
 		"--session", sessionID, "--since", rfc3339Ms(sinceMs), "--until", rfc3339Ms(untilMs)).Output()
 	if err != nil {
-		s.warnNoSlice(err.Error())
+		rv.warnNoSlice(err.Error())
 		return nil
 	}
 	var summaries []string
@@ -204,7 +201,7 @@ func (s *Server) bashSummaries(ctx context.Context, sessionID string, sinceMs, u
 			Summary  string `json:"summary"`
 		}
 		if err := json.Unmarshal(line, &row); err != nil || row.Schema != sliceSchema {
-			s.warnNoSlice(fmt.Sprintf("unexpected slice line %q", line))
+			rv.warnNoSlice(fmt.Sprintf("unexpected slice line %q", line))
 			return nil
 		}
 		if row.ToolName == "Bash" {
@@ -214,9 +211,9 @@ func (s *Server) bashSummaries(ctx context.Context, sessionID string, sinceMs, u
 	return summaries
 }
 
-func (s *Server) warnNoSlice(cause string) {
-	s.sliceWarn.Do(func() {
-		s.log.Printf("bypass check: cc-transcript slice unavailable (%s); skipping Bash attribution", cause)
+func (rv *review) warnNoSlice(cause string) {
+	rv.sliceWarn.Do(func() {
+		rv.log.Printf("bypass check: cc-transcript slice unavailable (%s); skipping Bash attribution", cause)
 	})
 }
 
@@ -235,39 +232,40 @@ func rfc3339Ms(ms int64) string {
 }
 
 // sweepStaleScratch wipes a repo's snapshot scratch objects and index once no
-// turn is inside the attribution window — the orphaned objects back nothing
-// the differ will ever read, and the next snapshot reseeds from the repo's
-// real index. Turn rows are never deleted; they back display of old versions.
-func (s *Server) sweepStaleScratch(ctx context.Context, repoRoot string) {
+// turn is inside the attribution window — the orphaned objects back nothing the
+// differ will ever read, and the next snapshot reseeds from the repo's real
+// index. Turn rows are never deleted; they back display of old versions.
+func sweepStaleScratch(ctx context.Context, ts *vcs.TurnStore, repoRoot string) {
 	cutoff := time.Now().Add(-attributableWindow).UnixMilli()
-	turns, err := s.store.ListAttributableTurns(ctx, repoRoot, cutoff)
+	turns, err := ts.ListAttributableTurns(ctx, repoRoot, cutoff)
 	if err != nil || len(turns) > 0 {
 		return
 	}
-	dir := paths.RepoTurnsDir(repoRoot)
+	dir := paths.App().RepoTurnsDir(repoRoot)
 	_ = os.RemoveAll(filepath.Join(dir, "objects"))
 	_ = os.Remove(filepath.Join(dir, "index"))
 }
 
-// attributeVersion tags a fresh version's added lines with the turns that
-// wrote them. Strictly non-fatal: any failure logs and leaves the version
-// unattributed. The caller holds the repo lock, so the tree snapshotted here
-// is the one the version's patch captured.
-func (s *Server) attributeVersion(ctx context.Context, repoRoot string, versionID int64, patchText string) {
-	scratchDir, err := paths.EnsureRepoTurnsDir(repoRoot)
+// attributeVersion tags a fresh version's added lines with the turns that wrote
+// them. Strictly non-fatal: any failure logs and leaves the version
+// unattributed. The caller holds the repo lock, so the tree snapshotted here is
+// the one the version's patch captured.
+func (rv *review) attributeVersion(ctx context.Context, st *store.Store, repoRoot string, versionID int64, patchText string) {
+	ts := vcs.NewTurnStore(st.DB())
+	scratchDir, err := paths.App().EnsureRepoTurnsDir(repoRoot)
 	if err != nil {
-		s.log.Printf("attribution: %v", err)
+		rv.log.Printf("attribution: %v", err)
 		return
 	}
 	treeNow, err := vcs.SnapshotTree(ctx, repoRoot, scratchDir)
 	if err != nil {
-		s.log.Printf("attribution: snapshot tree: %v", err)
+		rv.log.Printf("attribution: snapshot tree: %v", err)
 		return
 	}
 	cutoff := time.Now().Add(-attributableWindow).UnixMilli()
-	turns, err := s.store.ListAttributableTurns(ctx, repoRoot, cutoff)
+	turns, err := ts.ListAttributableTurns(ctx, repoRoot, cutoff)
 	if err != nil {
-		s.log.Printf("attribution: %v", err)
+		rv.log.Printf("attribution: %v", err)
 		return
 	}
 	chain, tagged := snapshotChain(turns, treeNow)
@@ -276,23 +274,23 @@ func (s *Server) attributeVersion(ctx context.Context, repoRoot string, versionI
 	}
 	byFile, err := attrib.Compute(ctx, vcs.NewTreeDiffer(repoRoot, scratchDir, treeNow.Backend), chain, patchText)
 	if err != nil {
-		s.log.Printf("attribution: compute: %v", err)
+		rv.log.Printf("attribution: compute: %v", err)
 		return
 	}
 	if len(byFile) == 0 {
 		return
 	}
-	if err := s.store.PutAttributions(ctx, versionID, byFile); err != nil {
-		s.log.Printf("attribution: %v", err)
+	if err := st.PutAttributions(ctx, versionID, byFile); err != nil {
+		rv.log.Printf("attribution: %v", err)
 	}
 }
 
 // snapshotChain orders a repo's turns into a contiguous tree-transition chain
-// ending at treeNow. Untagged gap links absorb manual edits between turns and
-// the edits of interrupted turns (which have no closing snapshot); a
-// still-open turn is virtually closed at treeNow without touching the DB.
-// tagged is false when no turn link made the chain.
-func snapshotChain(turns []store.Turn, treeNow vcs.TreeRef) (chain []attrib.Link, tagged bool) {
+// ending at treeNow. Untagged gap links absorb manual edits between turns and the
+// edits of interrupted turns (which have no closing snapshot); a still-open turn
+// is virtually closed at treeNow without touching the DB. tagged is false when no
+// turn link made the chain.
+func snapshotChain(turns []vcs.Turn, treeNow vcs.TreeRef) (chain []attrib.Link, tagged bool) {
 	tip := ""
 	for _, t := range turns {
 		if t.Backend != treeNow.Backend || t.Status == "interrupted" {

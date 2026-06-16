@@ -1,42 +1,29 @@
-// Package daemon is the lazily-started local daemon: a control-plane unix-socket
-// server speaking newline-delimited JSON, plus the data/UI HTTP plane it boots.
-// Mirrors claude-pool's daemon (detached Setsid spawn, single-RPC-per-conn, wg
-// drain on shutdown, newest-wins eviction of a strictly older socket holder)
-// with a flock guarding lazy start. Every control op is fast request/response;
-// realtime delivery is the HTTP SSE stream, not a blocking socket op.
+// Package daemon wires cc-review's review domain onto cc-interact's daemon
+// substrate: it builds the daemon.Config (scope = repo root, gate = block while a
+// review is open, version-stamped channel presence), registers the review ops as
+// handlers, mounts the REST plane, and runs the stale-request sweeper. ReviewClient
+// is the typed control client the CLI and the channel tools speak through.
 package daemon
 
 import (
 	"encoding/json"
 
+	ccd "github.com/yasyf/cc-interact/daemon"
+
 	"github.com/yasyf/cc-review/internal/store"
 )
 
-// ProtocolVersion is stamped on every envelope for forward-compatibility.
-const ProtocolVersion = 2
-
-// Op is a control-plane request operation.
-type Op string
-
+// Op is a review control-plane operation, registered on the daemon by name.
 const (
-	OpHealth        Op = "health"         // liveness + version probe
-	OpShutdown      Op = "shutdown"       // step down and release the socket
-	OpStart         Op = "start"          // snapshot the tree, resolve/create the review
-	OpResolve       Op = "resolve"        // look up an existing review (no create) for a stream consumer
-	OpChannelAck    Op = "channel-ack"    // the model proves the window's channel round trip (first delivered tag seen)
-	OpReply         Op = "reply"          // Claude posts questions/options/answers
-	OpFeedback      Op = "feedback"       // read the frozen feedback + open questions
-	OpStatus        Op = "status"         // daemon + review status
-	OpSessionRecord Op = "session-record" // record SessionStart hook facts
-	OpGuardEdit     Op = "guard-edit"     // PreToolUse: allow edits only once submitted
-
-	OpFileStates         Op = "file-states"         // Claude batch-sets per-file review state
-	OpUpdateAIRequest    Op = "update-ai-request"   // Claude moves an AI request through its lifecycle
-	OpSubmitOrganization Op = "submit-organization" // Claude submits the version's chapter organization
-	OpReviewFiles        Op = "review-files"        // Claude reads the current files + states
-
-	OpTurnStart Op = "turn-start" // UserPromptSubmit hook: open a turn with a working-tree snapshot
-	OpTurnEnd   Op = "turn-end"   // Stop hook: close the open turn with a second snapshot
+	OpStart              ccd.Op = "start"
+	OpReply              ccd.Op = "reply"
+	OpFeedback           ccd.Op = "feedback"
+	OpFileStates         ccd.Op = "file-states"
+	OpUpdateAIRequest    ccd.Op = "update-ai-request"
+	OpSubmitOrganization ccd.Op = "submit-organization"
+	OpReviewFiles        ccd.Op = "review-files"
+	OpTurnStart          ccd.Op = "turn-start"
+	OpTurnEnd            ccd.Op = "turn-end"
 )
 
 // ReplyInput is one reply Claude posts. A non-zero AnswerTo answers an existing
@@ -64,49 +51,47 @@ type FileStateInput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-// Request is one control-plane RPC.
-type Request struct {
-	Proto     int          `json:"proto"`
-	Op        Op           `json:"op"`
-	Session   string       `json:"session,omitempty"`
-	ClaudePID int          `json:"claude_pid,omitempty"` // window identity: the claude ancestor pid, stamped by the client
-	Cwd       string       `json:"cwd,omitempty"`
-	Consumer  string       `json:"consumer,omitempty"` // stream consumer name on OpResolve (watch | channel)
-	New       bool         `json:"new,omitempty"`
-	Base      string       `json:"base,omitempty"` // start: explicit diff base ref for a new review (skips the trunk fallback)
-	Replies   []ReplyInput `json:"replies,omitempty"`
-
+// body is the domain payload carried in an Envelope.Body; each handler reads
+// only the fields its op uses. The window (session, pid) and scope (cwd) ride on
+// the envelope itself, never here.
+type body struct {
+	New           bool                `json:"new,omitempty"`            // start
+	Base          string              `json:"base,omitempty"`           // start
+	Replies       []ReplyInput        `json:"replies,omitempty"`        // reply
 	Files         []FileStateInput    `json:"files,omitempty"`          // file-states
 	AIRequestID   int64               `json:"ai_request_id,omitempty"`  // file-states (optional) | update-ai-request
-	AIStatus      string              `json:"ai_status,omitempty"`      // update-ai-request: working | done | failed
+	AIStatus      string              `json:"ai_status,omitempty"`      // update-ai-request
 	Summary       string              `json:"summary,omitempty"`        // update-ai-request
 	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
-	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization: required, must match the current version
-
-	Prompt string `json:"prompt,omitempty"` // turn-start: the submitted user prompt (stored as a capped excerpt)
-
-	ToolName  string          `json:"tool_name,omitempty"`  // guard-edit: the PreToolUse tool name
-	ToolInput json.RawMessage `json:"tool_input,omitempty"` // guard-edit: the raw tool input, digested into the decision ledger
+	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization
+	Prompt        string              `json:"prompt,omitempty"`         // turn-start
 }
 
-// Response is one control-plane reply.
-type Response struct {
-	Proto         int               `json:"proto"`
-	OK            bool              `json:"ok"`
-	Error         string            `json:"error,omitempty"`
-	DaemonVersion string            `json:"daemon_version,omitempty"`
-	URL           string            `json:"url,omitempty"`
-	ReviewID      string            `json:"review_id,omitempty"`
-	Version       int               `json:"version,omitempty"`
-	Resumed       bool              `json:"resumed,omitempty"`
-	HTTPPort      int               `json:"http_port,omitempty"`
-	FeedbackPath  string            `json:"feedback_path,omitempty"`
-	Feedback      json.RawMessage   `json:"feedback,omitempty"`
-	Status        string            `json:"status,omitempty"`
-	ChannelState  string            `json:"channel_state,omitempty"` // start: active|pending|inactive — active only for a proven window with the channel consumer attached
-	Allow         bool              `json:"allow,omitempty"`
-	Reason        string            `json:"reason,omitempty"`
-	ReviewFiles   json.RawMessage   `json:"review_files,omitempty"` // review-files: {version_number, files: [...], organization?: {basis_version, overview, chapters, new_paths}}
-	AIRequests    []json.RawMessage `json:"ai_requests,omitempty"`  // start: open requests to dispatch — the eager system organize plus any human AI-bar prompts left pending; the skill dispatches each, deduped by id
+// result is the domain payload a handler returns in Reply.Body. Envelope-level
+// outputs (review id, status, http port) ride on the Reply itself.
+type result struct {
+	URL          string            `json:"url,omitempty"`           // start
+	Version      int               `json:"version,omitempty"`       // start
+	Resumed      bool              `json:"resumed,omitempty"`       // start
+	ChannelState string            `json:"channel_state,omitempty"` // start
+	AIRequests   []json.RawMessage `json:"ai_requests,omitempty"`   // start
+	FeedbackPath string            `json:"feedback_path,omitempty"` // feedback
+	Feedback     json.RawMessage   `json:"feedback,omitempty"`      // feedback
+	ReviewFiles  json.RawMessage   `json:"review_files,omitempty"`  // review-files
 }
+
+func decodeBody(raw json.RawMessage) body {
+	var b body
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &b)
+	}
+	return b
+}
+
+func okReply(r result) ccd.Reply {
+	raw, _ := json.Marshal(r)
+	return ccd.Reply{OK: true, Body: raw}
+}
+
+func errReply(msg string) ccd.Reply { return ccd.Reply{OK: false, Error: msg} }

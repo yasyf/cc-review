@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-interact/vcs"
+
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
 )
@@ -74,7 +76,7 @@ func newExportActivityCmd() *cobra.Command {
 			if err := paths.EnsureStateDir(); err != nil {
 				return err
 			}
-			st, err := store.Open(paths.DBPath())
+			st, err := store.Open(paths.App().DBPath())
 			if err != nil {
 				return err
 			}
@@ -87,7 +89,7 @@ func newExportActivityCmd() *cobra.Command {
 }
 
 func writeActivity(ctx context.Context, w io.Writer, st *store.Store, session string) error {
-	turns, err := st.ListTurnsBySession(ctx, session)
+	turns, err := vcs.NewTurnStore(st.DB()).ListTurnsBySession(ctx, session)
 	if err != nil {
 		return err
 	}
