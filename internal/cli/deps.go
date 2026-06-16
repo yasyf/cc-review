@@ -34,6 +34,7 @@ func deps() cmd.Deps {
 		EnsureCurrent:          func(context.Context) error { return launcher().EnsureCurrent(ccd.UpgradeTimeout) },
 		EnsureCurrentIfRunning: func() error { return launcher().EnsureCurrentIfRunning() },
 		ClaudePID:              procs.ClaudePID,
+		WindowAlive:            procs.LiveClaude,
 		TerminalEvent:          func(t string) bool { return t == "submit" },
 		Serve:                  func(ctx context.Context) error { return daemon.Serve(ctx, 0) },
 		ChannelTools:           channelTools,

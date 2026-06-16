@@ -70,7 +70,6 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
     case 'organization.updated':
       return { ...session, organization: ev.organization };
     case 'channel.changed':
-      return { ...session, claudeConnected: ev.connected };
     case 'version.created':
     case 'notification':
       return session;
@@ -106,17 +105,14 @@ function notificationFor(ev: ReviewEvent): StreamToast | null {
   }
 }
 
-// channel.changed and ai.request.* are stamped with the review's CURRENT version
-// at emit time, but replayed historical frames carry the then-current version —
-// so they must apply regardless of the version on screen. Their reducers are
-// last-wins / id-keyed upserts, which makes that safe. Everything else only
-// patches the version it belongs to.
+// ai.request.* are stamped with the review's CURRENT version at emit time, but
+// replayed historical frames carry the then-current version — so they must apply
+// regardless of the version on screen. Their reducers are id-keyed upserts, which
+// makes that safe. Everything else only patches the version it belongs to.
+// (channel.changed drives presence via peerPresence, not the cache, so it does
+// not need to apply here.)
 function versionAgnostic(ev: ReviewEvent): boolean {
-  return (
-    ev.type === 'channel.changed' ||
-    ev.type === 'ai.request.created' ||
-    ev.type === 'ai.request.updated'
-  );
+  return ev.type === 'ai.request.created' || ev.type === 'ai.request.updated';
 }
 
 const { EventStreamProvider, useEventStream } = createEventStream<
@@ -131,6 +127,7 @@ const { EventStreamProvider, useEventStream } = createEventStream<
   appliesTo: (ev, cache) => versionAgnostic(ev) || ev.version_number === cache.version,
   highWaterSeq: (cache) => Number(cache.latestEventSeq),
   peerPresence: (ev) => (ev.type === 'channel.changed' ? ev.connected : null),
+  initialPeerPresence: (cache) => cache.claudeConnected,
   // A new version supersedes the cached session wholesale; the > guard keeps the
   // cursor-0 replay of historical versions from refetch-spamming.
   onEvent: (ev, { queryClient, cache, subject }) => {

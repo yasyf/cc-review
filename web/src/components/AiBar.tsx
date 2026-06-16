@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useCreateAiRequest, useUndoAiRequest } from '../lib/api';
+import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
 import type { AiRequest, SessionResponse } from '../lib/types';
 
@@ -80,22 +81,23 @@ export function AiBar({ session }: { session: SessionResponse }) {
   const { slug } = useReview();
   const createRequest = useCreateAiRequest(slug);
   const undoRequest = useUndoAiRequest(slug);
+  const { peerPresent } = useEventStream();
   const [prompt, setPrompt] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
-
-  if (session.review.status === 'submitted') return null;
-
-  const connected = session.claudeConnected;
-  const latest = session.aiRequests[0];
-
   // Tick a clock only while a request is queued, so the "still queued" hint can
   // appear once it has waited too long without mirroring any server state.
   const [now, setNow] = useState(() => Date.now());
+
+  const latest = session.aiRequests[0];
   useEffect(() => {
     if (latest?.status !== 'pending') return;
     const id = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(id);
   }, [latest?.status]);
+
+  if (session.review.status === 'submitted') return null;
+
+  const connected = peerPresent ?? false;
   const stalePending =
     connected &&
     latest !== undefined &&
