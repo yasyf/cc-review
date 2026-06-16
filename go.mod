@@ -11,9 +11,7 @@ require (
 	modernc.org/sqlite v1.52.0
 )
 
-require github.com/yasyf/cc-interact v0.0.0
-
-replace github.com/yasyf/cc-interact => ../cc-interact
+require github.com/yasyf/cc-interact v0.1.0
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
