@@ -395,7 +395,7 @@ func seedComment(t *testing.T, s *Server, root string) (reviewID string, comment
 
 func countEvents(t *testing.T, s *Server, reviewID, typ string) int {
 	t.Helper()
-	events, err := s.cc.EventsSince(context.Background(), reviewID, 0, false)
+	events, err := s.cc.EventsSince(context.Background(), reviewID, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

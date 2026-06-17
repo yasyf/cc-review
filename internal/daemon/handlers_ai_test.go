@@ -52,7 +52,11 @@ type testEvent struct {
 
 func eventsOfType(t *testing.T, s *Server, reviewID, typ string, excludeAgent bool) []testEvent {
 	t.Helper()
-	events, err := s.cc.EventsSince(context.Background(), reviewID, 0, excludeAgent)
+	excludeOrigin := ""
+	if excludeAgent {
+		excludeOrigin = ccevent.OriginAgent
+	}
+	events, err := s.cc.EventsSince(context.Background(), reviewID, 0, excludeOrigin)
 	if err != nil {
 		t.Fatal(err)
 	}

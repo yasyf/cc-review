@@ -69,7 +69,7 @@ func newEventLog(t *testing.T, cc *ccstore.Store, reviewID string) *eventLog {
 
 func (e *eventLog) next() ccevent.Event {
 	e.t.Helper()
-	evs, err := e.cc.EventsSince(context.Background(), e.id, e.seq, false)
+	evs, err := e.cc.EventsSince(context.Background(), e.id, e.seq, "")
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func (e *eventLog) next() ccevent.Event {
 
 func (e *eventLog) none() {
 	e.t.Helper()
-	evs, err := e.cc.EventsSince(context.Background(), e.id, e.seq, false)
+	evs, err := e.cc.EventsSince(context.Background(), e.id, e.seq, "")
 	if err != nil {
 		e.t.Fatal(err)
 	}
