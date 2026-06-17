@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -179,6 +181,11 @@ func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
 	return ccd.Reply{OK: true}
 }
 
+// reviewFilesInlineCap bounds how many file entries get_review_files inlines.
+// Past it the agent reads review_files_path instead, so a large review can't blow
+// the tool-result token budget.
+const reviewFilesInlineCap = 50
+
 func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
 	sub, v, fail := reviewWithLatest(hc, st)
@@ -197,18 +204,33 @@ func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 	for _, s := range states {
 		byPath[s.Path] = s
 	}
+	b := decodeBody(hc.Env.Body)
+	filtering := b.Status != "" || b.Reviewed != nil || b.Hidden != nil
 	entries := make([]map[string]any, 0, len(files))
+	selected := make([]map[string]any, 0)
 	for _, f := range files {
+		fs := byPath[f.Path]
 		e := map[string]any{
 			"path": f.Path, "status": f.Status,
-			"reviewed": byPath[f.Path].Reviewed, "hidden": byPath[f.Path].Hidden,
+			"reviewed": fs.Reviewed, "hidden": fs.Hidden,
 		}
 		if f.OldPath != "" {
 			e["old_path"] = f.OldPath
 		}
 		entries = append(entries, e)
+		if matchesReviewFilter(f, fs, b) {
+			selected = append(selected, e)
+		}
 	}
-	out := map[string]any{"version_number": v.VersionNumber, "patch_path": v.PatchPath, "files": entries}
+	filesPath, err := writeReviewFilesList(v.PatchPath, entries)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	out := map[string]any{
+		"version_number":    v.VersionNumber,
+		"patch_path":        v.PatchPath,
+		"review_files_path": filesPath,
+	}
 	if org, basis, ok, err := st.LatestOrganization(hc.Ctx, sub.ID); err != nil {
 		return errReply(err.Error())
 	} else if ok {
@@ -216,13 +238,69 @@ func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 		if err != nil {
 			return errReply(err.Error())
 		}
-		out["organization"] = block
+		orgPath, err := writeReviewOrganization(v.PatchPath, block)
+		if err != nil {
+			return errReply(err.Error())
+		}
+		out["organization_path"] = orgPath
+	}
+	if filtering {
+		out["match_count"] = len(selected)
+	}
+	if len(selected) <= reviewFilesInlineCap {
+		out["files"] = selected
 	}
 	raw, err := json.Marshal(out)
 	if err != nil {
 		return errReply(err.Error())
 	}
 	return okReply(result{ReviewFiles: raw})
+}
+
+// matchesReviewFilter reports whether a file passes the get_review_files filter;
+// an empty/nil dimension is unconstrained, so an empty filter matches everything.
+func matchesReviewFilter(f vcs.FileChange, fs store.FileState, b body) bool {
+	if b.Status != "" && f.Status != b.Status {
+		return false
+	}
+	if b.Reviewed != nil && fs.Reviewed != *b.Reviewed {
+		return false
+	}
+	if b.Hidden != nil && fs.Hidden != *b.Hidden {
+		return false
+	}
+	return true
+}
+
+// writeReviewFilesList writes the full file listing as JSONL (one entry per line,
+// Read-with-offset / Grep friendly) next to the version's patch, returning its path.
+func writeReviewFilesList(patchPath string, entries []map[string]any) (string, error) {
+	path := strings.TrimSuffix(patchPath, ".patch") + ".files.jsonl"
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, e := range entries {
+		if err := enc.Encode(e); err != nil {
+			return "", fmt.Errorf("encode review file entry: %w", err)
+		}
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		return "", fmt.Errorf("write review files list: %w", err)
+	}
+	return path, nil
+}
+
+// writeReviewOrganization writes the annotated organization as indented JSON next
+// to the version's patch, returning its path.
+func writeReviewOrganization(patchPath string, block map[string]any) (string, error) {
+	path := strings.TrimSuffix(patchPath, ".patch") + ".org.json"
+	data, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode organization: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("write organization: %w", err)
+	}
+	return path, nil
 }
 
 // organizationContext annotates the latest organization against the current

@@ -106,10 +106,20 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 		},
 		{
 			Name:        "get_review_files",
-			Description: "List the open cc-review's current version number, patch_path (the on-disk unified diff for the current version), and files with status and review state — the server truth bulk operations must act on. Includes the latest organization (overview + chapters) with basis_version, per-file delta (changed/moved/removed; absent = unchanged), and new_paths.",
+			Description: "List the open cc-review's current version_number and patch_path (the on-disk unified diff), plus review_files_path (the full file list as JSONL — one {path,status,reviewed,hidden} per line) and organization_path (the latest organization as JSON: overview + chapters with basis_version, per-file delta changed/moved/removed and new_paths). Read those paths from disk. A small file set — or a status/reviewed/hidden-filtered subset — is also inlined as files with match_count, so the result never overflows on a large review.",
 			InputSchema: getReviewFilesToolSchema(),
-			Handler: func(ctx context.Context, _ json.RawMessage) (string, bool) {
-				raw, err := rc.ReviewFiles(ctx, session, scope)
+			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+				var in struct {
+					Status   string `json:"status"`
+					Reviewed *bool  `json:"reviewed"`
+					Hidden   *bool  `json:"hidden"`
+				}
+				if len(args) > 0 {
+					if err := json.Unmarshal(args, &in); err != nil {
+						return "bad tool arguments: " + err.Error(), true
+					}
+				}
+				raw, err := rc.ReviewFiles(ctx, session, scope, daemon.ReviewFilesFilter{Status: in.Status, Reviewed: in.Reviewed, Hidden: in.Hidden})
 				if err != nil {
 					return err.Error(), true
 				}
@@ -261,5 +271,12 @@ func submitOrganizationToolSchema() map[string]any {
 }
 
 func getReviewFilesToolSchema() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{}}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"status":   map[string]any{"type": "string", "description": "narrow the inline files subset to this git status letter (M, A, D, R)"},
+			"reviewed": map[string]any{"type": "boolean", "description": "narrow the inline files subset to this reviewed state"},
+			"hidden":   map[string]any{"type": "boolean", "description": "narrow the inline files subset to this hidden flag"},
+		},
+	}
 }

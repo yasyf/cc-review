@@ -107,9 +107,11 @@ func (rc *ReviewClient) SubmitOrganization(ctx context.Context, session, cwd str
 	return err
 }
 
-// ReviewFiles returns the current version's files with their review states.
-func (rc *ReviewClient) ReviewFiles(ctx context.Context, session, cwd string) (json.RawMessage, error) {
-	_, res, err := rc.do(ctx, OpReviewFiles, session, cwd, body{})
+// ReviewFiles returns the current version's paths (review_files_path,
+// organization_path, patch_path) plus a slim inline files subset, optionally
+// narrowed by f.
+func (rc *ReviewClient) ReviewFiles(ctx context.Context, session, cwd string, f ReviewFilesFilter) (json.RawMessage, error) {
+	_, res, err := rc.do(ctx, OpReviewFiles, session, cwd, body{Status: f.Status, Reviewed: f.Reviewed, Hidden: f.Hidden})
 	if err != nil {
 		return nil, err
 	}

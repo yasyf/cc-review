@@ -51,6 +51,15 @@ type FileStateInput struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+// ReviewFilesFilter narrows the inline file subset get_review_files returns; the
+// on-disk review_files_path always carries the full list. A nil bool leaves that
+// dimension unfiltered.
+type ReviewFilesFilter struct {
+	Status   string
+	Reviewed *bool
+	Hidden   *bool
+}
+
 // body is the domain payload carried in an Envelope.Body; each handler reads
 // only the fields its op uses. The window (session, pid) and scope (cwd) ride on
 // the envelope itself, never here.
@@ -65,6 +74,9 @@ type body struct {
 	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
 	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization
+	Status        string              `json:"status,omitempty"`         // review-files (filter)
+	Reviewed      *bool               `json:"reviewed,omitempty"`       // review-files (filter)
+	Hidden        *bool               `json:"hidden,omitempty"`         // review-files (filter)
 	Prompt        string              `json:"prompt,omitempty"`         // turn-start
 }
 

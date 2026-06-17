@@ -938,13 +938,24 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 			t.Fatalf("review-files: %s", resp.Error)
 		}
 		var rf struct {
-			VersionNumber int    `json:"version_number"`
-			Organization  *rfOrg `json:"organization"`
+			VersionNumber    int    `json:"version_number"`
+			OrganizationPath string `json:"organization_path"`
 		}
 		if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
 			t.Fatal(err)
 		}
-		return rf.VersionNumber, rf.Organization
+		if rf.OrganizationPath == "" {
+			return rf.VersionNumber, nil
+		}
+		data, err := os.ReadFile(rf.OrganizationPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var org rfOrg
+		if err := json.Unmarshal(data, &org); err != nil {
+			t.Fatal(err)
+		}
+		return rf.VersionNumber, &org
 	}
 
 	if _, org := reviewFiles(); org != nil {

@@ -28,24 +28,23 @@ There can be **zero or more** `organize:` lines — one per request still open o
 
 ## 2. For each `organize:` line, dispatch the organize agent
 
-For **every** `organize:` line, use the **Agent** tool with `subagent_type: "cc-review:organize"`, `run_in_background: true`, and that line's JSON, verbatim, as the prompt — `source: "user"` lines carry a human's AI-bar request and the agent already handles them. Don't wait for any of them — show the user the URL and move on. The agent builds the chapters (or executes the request) and closes it itself. Remember each request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4). If an `organize:` line's `id` is one you already dispatched in this conversation — the daemon re-offers a still-open request on resume — do not dispatch it again. Dedupe by exact id only.
+For **every** `organize:` line, dispatch a `subagent_type: "cc-review:organize"` agent with that line's JSON, verbatim, as the prompt, on the **full current model** (no `model` override). **How** to dispatch depends on your route (step 3): on every route **except teams**, use the **Agent** tool with `run_in_background: true`; on the **teams** route spawn it as a `cc-review:organize` **teammate** instead — an in-process team forbids the lead from spawning background agents, so organize runs as a teammate that closes its own request. `source: "user"` lines carry a human's AI-bar request and the agent already handles them. Don't wait for any of them — show the user the URL and move on. The agent builds the chapters (or executes the request) and closes it itself. Remember each request `id`: the daemon redelivers the same request as an `ai.request.created` event, which you ignore (step 4). If an `organize:` line's `id` is one you already dispatched in this conversation — the daemon re-offers a still-open request on resume — do not dispatch it again. Dedupe by exact id only.
 
-## 3. Wire up event delivery — then keep working
+## 3. Wire up event delivery — pick exactly one route
 
-- **`channel: active`** — this window's channel is proven and streaming the review. Do **not** arm a Monitor (you would receive every event twice). Comments arrive as `<channel source="cc-review">` tags carrying the same JSON event payloads.
-- **`channel: pending`** or **`channel: inactive`** — stream `watch`. Use the first route whose tools you have:
-  - **Monitor available** — launch a **Monitor** (`persistent: true`, description `cc-review comments`) wrapping:
+Events reach you through **one** route, chosen once by the first matching condition. Open that route's reference file and follow it — each is a complete, self-contained workflow. Do not blend routes.
 
-    ```bash
-    "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" watch --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
-    ```
+| # | If… | Route | Follow |
+|---|------|-------|--------|
+| 1 | `channel: active` (from step 1) | channel tags | `reference/route-channel.md` |
+| 2 | else you have a **Monitor** tool | Monitor on `watch` | `reference/route-monitor.md` |
+| 3 | else you have a **SendMessage** tool (agent teams are on) | teams: streamer teammate | `reference/route-teams.md` |
+| 4 | else you have an **Agent** tool | one-shot streamer subagent | `reference/route-streamer.md` |
+| 5 | else | inline `watch --once` in this thread | `reference/route-inline.md` |
 
-    Each line it prints is one JSON event; each becomes a chat notification. `pending` means the channel server is wired but unproven — Claude Code may be silently dropping its notifications — so the Monitor is the route.
-  - **No Monitor tool** — run the watcher in a **background streamer subagent**, never in this thread. With `SendMessage`/teams it stays resident and messages you each event; without, it returns one event and completes and you re-spawn it per event until `submit`. Either way you only see clean event JSON. Protocol: `reference/monitor-fallback.md`.
+`channel: pending` or `inactive` (from step 1) means the channel isn't proven — fall through to row 2+. Every **non-channel** route shares one transition: if a `<channel source="cc-review">` tag arrives while it runs, channels went live — run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, tear the route down, and switch to `route-channel`. Delivery is at-least-once; dedupe any overlap by event id (replies dedupe server-side, organize dispatch dedupes by request id).
 
-If a `<channel source="cc-review">` tag arrives while the Monitor is armed or the streamer is running, channels are live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop the Monitor (**TaskStop**) or the streamer, and rely on tags from then on — dedupe the brief overlap by event id. Delivery is at-least-once: a watcher re-armed in a later session may replay events you already handled as tags; treat already-handled events as informational (replies dedupe server-side, organize dispatch dedupes by request id).
-
-Either way: **do not block waiting.** Tell the user you're watching and let their comments arrive. Events arrive on their own schedule; an event is not the user's reply.
+**Do not block waiting.** Whichever route you pick, tell the user you're watching and keep working — events arrive on their own schedule, and an event is not the user's reply.
 
 ## First run only: offer to approve the channel
 
@@ -60,8 +59,8 @@ Asked once either way. If `offer` is false, skip silently — `reason` says why.
 
 Each event (a Monitor line, a channel tag, or a streamer message/result) is a JSON object with a `type`. The ones you act on:
 
-- **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything. When a reply or answer materially changes a file's risk read, dispatch the organize agent in the background — the same **Agent** tool invocation as step 2, `run_in_background: true` — with a one-line re-rank prompt: the new fact plus the file path. Replies themselves stay in the main session.
-- **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking for review work. Dispatch exactly as in step 2 — the **Agent** tool, `subagent_type: "cc-review:organize"`, `run_in_background: true`, the event's `request` JSON as the prompt — **unless** `request.id` equals the id you already dispatched from start output (the same request redelivered): ignore it. Dedupe by exact id only.
+- **`comment.created`** / **`comment.updated`** — the human left or updated a comment. The payload's `comment` has `filePath`, `range.start`, `lineContent`, and `body`. **`Read` the referenced file for context only.** Do not edit anything. When a reply or answer materially changes a file's risk read, dispatch a re-rank organize agent the same way as step 2 (a background agent, or a `cc-review:organize` teammate on the teams route) with a one-line re-rank prompt: the new fact plus the file path. Replies themselves stay in the main session.
+- **`ai.request.created`** — the daemon (auto-organize) or the human's AI bar is asking for review work. Dispatch exactly as in step 2 (a background `cc-review:organize` agent, or a `cc-review:organize` teammate on the teams route), the event's `request` JSON as the prompt — **unless** `request.id` equals the id you already dispatched from start output (the same request redelivered): ignore it. Dedupe by exact id only.
 - **`submit`** — the human pressed Submit. Go to step 5.
 - Other types (`comment.resolved`, `status.changed`, `notification`, `file.states`, `ai.request.updated`, `version.created`) are informational — `file.states` and `ai.request.updated` carry the human's checkboxes, an undo, the daemon unmarking changed files, or the daemon closing an organize request it carried forward (`status: "done"`); events from your own tool calls are filtered out and never echo back. `organization.updated` and `channel.changed` never reach you — `organization.updated` originates from the organize agent's `submit_organization` (or the daemon carrying the organization forward onto an identical new version) and only the browser renders it; `channel.changed` drives the browser's Claude-connected indicator and only the browser receives it.
 
@@ -82,7 +81,7 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 
 ## 5. On the `submit` event — drain open questions, then proceed
 
-The submit signal is the Monitor's final line (it exits) on the Monitor path, a channel tag whose JSON `type` is `submit` on the channel path, or — on the streamer fallback — a captured line whose JSON `type` is `submit`, after which the streamer stops (resident) or completes and you don't re-spawn it. Now:
+The submit signal is the Monitor's final line on `route-monitor`, a channel tag whose `type` is `submit` on `route-channel`, or a relayed line whose `type` is `submit` on the teams/streamer/inline routes — after which you stop the streamer teammate (teams) or simply stop re-spawning/relaunching the watcher. Now:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" feedback --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"
@@ -108,9 +107,14 @@ After you make changes, the user can run `/cc-review:start` again. It resumes th
 
 ## Reference
 
+Event-delivery routes — step 3 picks exactly one:
+- `reference/route-channel.md` — events as `<channel>` tags (no Monitor).
+- `reference/route-monitor.md` — a persistent Monitor wrapping `watch`.
+- `reference/route-teams.md` — agent teams on: a streamer teammate relays; organize runs as a teammate.
+- `reference/route-streamer.md` — no teams: a one-shot Haiku streamer subagent relays.
+- `reference/route-inline.md` — floor: run `watch --once` in this thread.
+
 - `reference/cli-cheatsheet.md` — every `cc-review` command and flag.
 - `reference/event-schema.md` — the event types and payload shapes.
 - `reference/troubleshooting.md` — Monitor buffering, daemon, resume keying.
-- `reference/monitor-fallback.md` — no Monitor tool: stream `watch` from a background streamer subagent.
-- `reference/channels.md` — opt-in: receive review events as `<channel>` tags instead of via Monitor.
 - `reference/channels-setup.md` — the one-time offer that approves cc-review's channel so it loads without the dev-channels warning.
