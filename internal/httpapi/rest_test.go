@@ -213,6 +213,81 @@ func TestCreateAIRequestEmptyPromptIs400(t *testing.T) {
 	newEventLog(t, cc, review.ID).none()
 }
 
+func TestAnswerAIRequest(t *testing.T) {
+	t.Run("awaiting_input is answered and re-dispatched", func(t *testing.T) {
+		st, cc, srv := newTestServer(t)
+		ctx := context.Background()
+		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
+		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark the boring ones")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.TransitionAIRequest(ctx, ar.ID, "working", "", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.AskAIRequest(ctx, ar.ID, store.AIQuestion{Body: "which files?"}); err != nil {
+			t.Fatal(err)
+		}
+
+		resp := postJSON(t, srv.URL+"/api/ai-requests/"+strconv.FormatInt(ar.ID, 10)+"/answer",
+			map[string]any{"answer": "generated only"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		got, err := st.GetAIRequest(ctx, ar.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "answered" || got.Attempt != 1 || got.Answer == nil || got.Answer.Text != "generated only" {
+			t.Fatalf("got %+v, want answered/attempt=1/answer=generated only", got)
+		}
+		// Emitted as ai.request.created so the skill redispatches a fresh run.
+		if ev := newEventLog(t, cc, review.ID).next(); ev.Type != store.EventAIRequestCreated {
+			t.Fatalf("event type = %q, want %q", ev.Type, store.EventAIRequestCreated)
+		}
+	})
+
+	t.Run("non-awaiting request is 409", func(t *testing.T) {
+		st, _, srv := newTestServer(t)
+		ctx := context.Background()
+		review, version := createReviewVersion(t, st, `[]`)
+		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := postJSON(t, srv.URL+"/api/ai-requests/"+strconv.FormatInt(ar.ID, 10)+"/answer",
+			map[string]any{"answer": "y"})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", resp.StatusCode)
+		}
+	})
+
+	t.Run("stale-version question is 409", func(t *testing.T) {
+		st, _, srv := newTestServer(t)
+		ctx := context.Background()
+		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
+		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "q")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.TransitionAIRequest(ctx, ar.ID, "working", "", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.AskAIRequest(ctx, ar.ID, store.AIQuestion{Body: "which?"}); err != nil {
+			t.Fatal(err)
+		}
+		// A newer version supersedes the question's version.
+		if _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","fingerprint":"fp-a2"}]`); err != nil {
+			t.Fatal(err)
+		}
+		resp := postJSON(t, srv.URL+"/api/ai-requests/"+strconv.FormatInt(ar.ID, 10)+"/answer",
+			map[string]any{"answer": "y"})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", resp.StatusCode)
+		}
+	})
+}
+
 func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 	for _, status := range []string{"pending", "working"} {
 		t.Run(status, func(t *testing.T) {

@@ -29,6 +29,7 @@ type sessionResponse struct {
 	Files           json.RawMessage                    `json:"files"`
 	Patch           string                             `json:"patchText"`
 	Comments        []wire.Comment                     `json:"comments"`
+	Annotations     []wire.Annotation                  `json:"annotations"`
 	FileStates      map[string]wire.FileState          `json:"fileStates"`
 	Organization    *store.Organization                `json:"organization"`
 	AIRequests      []wire.AIRequest                   `json:"aiRequests"`
@@ -88,6 +89,11 @@ type createAIRequestReq struct {
 	Prompt   string `json:"prompt"`
 }
 
+type answerAIRequestReq struct {
+	Answer    string           `json:"answer"`
+	AskAnswer *store.AskAnswer `json:"askAnswer"`
+}
+
 // --- handlers --------------------------------------------------------------
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +136,15 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		wired = append(wired, wire.ToComment(c, replies))
+	}
+	annotations, err := s.store.ListAnnotationsByVersion(ctx, version.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	wiredAnnotations := make([]wire.Annotation, 0, len(annotations))
+	for _, a := range annotations {
+		wiredAnnotations = append(wiredAnnotations, wire.ToAnnotation(a))
 	}
 	files, err := version.Files()
 	if err != nil {
@@ -209,6 +224,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		Files:           json.RawMessage(version.FilesJSON),
 		Patch:           string(patch),
 		Comments:        wired,
+		Annotations:     wiredAnnotations,
 		FileStates:      fileStates,
 		Organization:    organization,
 		AIRequests:      aiRequests,
@@ -489,6 +505,78 @@ func (s *Server) handleCreateAIRequest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAnswerAIRequest records the reviewer's answer to a parked clarifying
+// question (awaiting_input→answered) and bumps attempt, so the daemon redelivers
+// the request to a fresh organize agent carrying the original prompt plus the
+// question and answer. A version-stale or non-awaiting request is 409.
+func (s *Server) handleAnswerAIRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad ai request id", http.StatusBadRequest)
+		return
+	}
+	var req answerAIRequestReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	ar, err := s.store.GetAIRequest(ctx, id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	if ar.Status != "awaiting_input" {
+		http.Error(w, fmt.Sprintf("ai request %d is %q, only an awaiting_input request can be answered", id, ar.Status), http.StatusConflict)
+		return
+	}
+	version, ok, err := s.store.LatestVersion(ctx, ar.ReviewID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "review has no versions", http.StatusBadRequest)
+		return
+	}
+	if ar.VersionNumber != version.VersionNumber {
+		http.Error(w, "the diff changed since this question was asked — re-ask in the AI bar", http.StatusConflict)
+		return
+	}
+	var answer store.AIAnswer
+	if ar.Question != nil && ar.Question.Ask != nil {
+		if req.AskAnswer == nil {
+			http.Error(w, "this question needs a structured answer", http.StatusBadRequest)
+			return
+		}
+		if err := ar.Question.Ask.ValidateAnswer(*req.AskAnswer); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		answer.AskAnswer = req.AskAnswer
+	} else if strings.TrimSpace(req.Answer) == "" {
+		http.Error(w, "answer required", http.StatusBadRequest)
+		return
+	} else {
+		answer.Text = req.Answer
+	}
+	updated, err := s.store.AnswerAIRequest(ctx, id, answer)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidTransition) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// EventAIRequestCreated (not updated) routes the answered request onto the
+	// skill's dispatch path so a fresh organize agent picks it up.
+	s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventAIRequestCreated, version.VersionNumber,
+		map[string]any{"request": wire.ToAIRequest(updated)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"request": wire.ToAIRequest(updated), "claudeConnected": s.connected(ar.ReviewID),
+	})
+}
+
 // handleUndoAIRequest reverts a done request's batch: the recorded priors are
 // restored first (winning over any later human changes), then the guarded
 // done→undone transition (409 otherwise) commits the undo. A failed restore
@@ -543,6 +631,24 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventFileStates, version.VersionNumber,
 			map[string]any{"states": states, "undoOf": strconv.FormatInt(id, 10)})
+	}
+	// Undo also clears any highlights the request added (comment-kind annotations
+	// are real threads and outlive undo, managed via the comment UI).
+	if deleted, err := s.store.DeleteAnnotationsByAIRequest(ctx, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if deleted > 0 {
+		list, err := s.store.ListAnnotationsByVersion(ctx, version.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		wiredAnnotations := make([]wire.Annotation, 0, len(list))
+		for _, a := range list {
+			wiredAnnotations = append(wiredAnnotations, wire.ToAnnotation(a))
+		}
+		s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventAnnotationsUpdated, version.VersionNumber,
+			map[string]any{"annotations": wiredAnnotations})
 	}
 	s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventAIRequestUpdated, version.VersionNumber,
 		map[string]any{"request": wire.ToAIRequest(updated)})

@@ -160,6 +160,21 @@ export function useUndoAiRequest(slug: string) {
   });
 }
 
+export function useAnswerAiRequest(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, answer, askAnswer }: { id: string; answer?: string; askAnswer?: AskAnswer }) =>
+      request<{ request: AiRequest; claudeConnected: boolean }>(`/api/ai-requests/${id}/answer`, {
+        method: 'POST',
+        body: JSON.stringify({ answer, askAnswer }),
+      }),
+    // The answered request streams back as ai.request.created; invalidate as a net.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
+    },
+  });
+}
+
 export function useSubmit(slug: string) {
   return useMutation({
     mutationFn: () =>

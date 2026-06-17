@@ -12,8 +12,8 @@ import (
 	"sync"
 
 	ccevent "github.com/yasyf/cc-interact/event"
-	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/sse"
+	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
 
@@ -75,6 +75,7 @@ func RESTMount(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("POST /api/replies/{commentId}", s.handleCreateReply)
 	mux.HandleFunc("POST /api/file-states", s.handleSetFileStates)
 	mux.HandleFunc("POST /api/ai-requests", s.handleCreateAIRequest)
+	mux.HandleFunc("POST /api/ai-requests/{id}/answer", s.handleAnswerAIRequest)
 	mux.HandleFunc("POST /api/ai-requests/{id}/undo", s.handleUndoAIRequest)
 	mux.HandleFunc("POST /api/submit", s.handleSubmit)
 	mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)

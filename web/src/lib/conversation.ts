@@ -21,7 +21,8 @@ function awaitsUser(comment: Comment): boolean {
 export function conversationByFile(comments: Comment[]): Map<string, FileConversation> {
   const byFile = new Map<string, FileConversation>();
   for (const comment of comments) {
-    if (comment.status !== 'open') continue;
+    // Claude-authored comments are informational annotations, not reviewer TODOs.
+    if (comment.status !== 'open' || comment.origin === 'claude') continue;
     const entry = byFile.get(comment.filePath) ?? { openCount: 0, needsReply: false };
     entry.openCount += 1;
     entry.needsReply = entry.needsReply || awaitsUser(comment);

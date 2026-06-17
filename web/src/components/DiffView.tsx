@@ -12,6 +12,7 @@ import {
   turnIdAt,
 } from '../lib/attribution';
 import type { TurnIndexEntry } from '../lib/attribution';
+import { ANNOTATION_UNSAFE_CSS, annotationsByFile, decorateAnnotations } from '../lib/annotations';
 import { buildItems, parseFiles } from '../lib/diff';
 import type { AnnotationMeta, ComposerDraft, ReviewItem } from '../lib/diff';
 import { clearDraft, composerDraftKey } from '../lib/drafts';
@@ -95,6 +96,10 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   }, [draft, items, closeDraft]);
 
   const turnIndex = useMemo(() => buildTurnIndex(session.turns), [session.turns]);
+  const annotationsForFile = useMemo(
+    () => annotationsByFile(session.annotations),
+    [session.annotations],
+  );
 
   // Attribution inputs ride through refs so the options identity stays stable
   // across turn-focus and attribution changes — an options swap would re-render
@@ -103,10 +108,12 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   const attributionsRef = useRef(session.attributions);
   const turnIndexRef = useRef(turnIndex);
   const activeTurnIdRef = useRef(activeTurnId);
+  const annotationsRef = useRef(annotationsForFile);
   useEffect(() => {
     attributionsRef.current = session.attributions;
     turnIndexRef.current = turnIndex;
     activeTurnIdRef.current = activeTurnId;
+    annotationsRef.current = annotationsForFile;
   });
 
   useEffect(() => {
@@ -119,8 +126,9 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         turnIndex,
         activeTurnId,
       );
+      decorateAnnotations(rendered.element, annotationsForFile[rendered.id] ?? []);
     }
-  }, [session.attributions, turnIndex, activeTurnId]);
+  }, [session.attributions, turnIndex, activeTurnId, annotationsForFile]);
 
   // Focusing a turn (from the legend) jumps to its first attributed line; a
   // re-fire on attribution updates alone must not re-scroll.
@@ -161,7 +169,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       // Must stay non-null: the library only routes "+" pointer-downs into
       // gutter selection when this callback exists.
       onGutterUtilityClick: () => {},
-      unsafeCSS: TURN_UNSAFE_CSS,
+      unsafeCSS: TURN_UNSAFE_CSS + ANNOTATION_UNSAFE_CSS,
       onPostRender: (
         node: HTMLElement,
         _instance: unknown,
@@ -175,6 +183,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
           turnIndexRef.current,
           activeTurnIdRef.current,
         );
+        decorateAnnotations(node, annotationsRef.current[context.item.id] ?? []);
       },
       onLineEnter: (
         props: { lineNumber: number; lineElement: HTMLElement; lineType?: LineTypes },

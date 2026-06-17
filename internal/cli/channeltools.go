@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/yasyf/cc-interact/channel"
 
@@ -17,9 +18,9 @@ import (
 // on the Claude channel.
 const channelNotifyMethod = "notifications/claude/channel"
 
-// channelTools advertises cc-review's five review tools to the agent's MCP
-// channel. The handlers round-trip to the daemon via ReviewClient because the
-// channel server is a separate stdio process and cannot touch the store directly.
+// channelTools advertises cc-review's review tools to the agent's MCP channel.
+// The handlers round-trip to the daemon via ReviewClient because the channel
+// server is a separate stdio process and cannot touch the store directly.
 func channelTools(_ context.Context, session, scope string) ([]channel.Tool, string, error) {
 	rc := daemon.NewReviewClient()
 	tools := []channel.Tool{
@@ -61,8 +62,37 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			},
 		},
 		{
+			Name:        "set_file_states_by_risk",
+			Description: "Flip every file the current organization already tags with one of the given risk levels (high|medium|low|mechanical) to reviewed/hidden in one batch — the server resolves the path set from the organization, so you never enumerate or re-read files. This is the shortcut for requests like \"mark all mechanical changes as viewed\". ai_request_id ties the batch to an AI request as one undoable unit. Returns the affected paths.",
+			InputSchema: setFileStatesByRiskToolSchema(),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+				var in struct {
+					Risk        []string `json:"risk"`
+					Reviewed    *bool    `json:"reviewed"`
+					Hidden      *bool    `json:"hidden"`
+					Reason      string   `json:"reason"`
+					AIRequestID string   `json:"ai_request_id"`
+				}
+				if err := json.Unmarshal(args, &in); err != nil {
+					return "bad tool arguments: " + err.Error(), true
+				}
+				id, err := parseAIRequestID(in.AIRequestID, false)
+				if err != nil {
+					return err.Error(), true
+				}
+				paths, err := rc.FileStatesByRisk(ctx, session, scope, in.Risk, in.Reviewed, in.Hidden, in.Reason, id)
+				if err != nil {
+					return err.Error(), true
+				}
+				if len(paths) == 0 {
+					return "no files matched those risk levels", false
+				}
+				return fmt.Sprintf("flipped %d files: %s", len(paths), strings.Join(paths, ", ")), false
+			},
+		},
+		{
 			Name:        "update_ai_request",
-			Description: "Move an AI request through its lifecycle: working when you start, done or failed when you finish (with a summary and any unmatched prompt parts).",
+			Description: "Move an AI request through its lifecycle: working when you start; done or failed when you finish (with a summary and any unmatched prompt parts); or awaiting_input when the request's INTENT is ambiguous (not merely large) and you must ask the reviewer one clarifying question. awaiting_input ends your run; the reviewer answers and the request is redispatched to you with status answered, carrying the original prompt plus your question and their answer.",
 			InputSchema: updateAIRequestToolSchema(),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
 				var in struct {
@@ -70,6 +100,8 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 					Status      string            `json:"status"`
 					Summary     string            `json:"summary"`
 					Unmatched   []store.Unmatched `json:"unmatched"`
+					Question    string            `json:"question"`
+					Ask         *store.Ask        `json:"ask"`
 				}
 				if err := json.Unmarshal(args, &in); err != nil {
 					return "bad tool arguments: " + err.Error(), true
@@ -78,7 +110,9 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 				if err != nil {
 					return err.Error(), true
 				}
-				if err := rc.UpdateAIRequest(ctx, session, scope, id, in.Status, in.Summary, in.Unmatched); err != nil {
+				if err := rc.UpdateAIRequest(ctx, session, scope, id, daemon.UpdateAIRequestInput{
+					Status: in.Status, Summary: in.Summary, Unmatched: in.Unmatched, Question: in.Question, Ask: in.Ask,
+				}); err != nil {
 					return err.Error(), true
 				}
 				return "ok", false
@@ -86,22 +120,45 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 		},
 		{
 			Name:        "submit_organization",
-			Description: "Submit the review's chapter organization: every changed file in exactly one chapter, each rated by the risk of skimming it. Chapter order is narrative; file order within a chapter is rank, scariest first. On resubmit keep every entry the new information doesn't touch byte-identical — the UI animates only what moved. A stale version_number is rejected with the current one.",
+			Description: "Submit the review's chapter organization: every changed file in exactly one chapter, each rated by the risk of skimming it. Chapter order is narrative; file order within a chapter is rank, scariest first. On resubmit keep every entry the new information doesn't touch byte-identical — the UI animates only what moved. Pass partial:true to stream an in-progress organization as you classify (files not yet placed are allowed); the reviewer watches chapters fill in. Your final submit must omit partial so full coverage is enforced. A stale version_number is rejected with the current one.",
 			InputSchema: submitOrganizationToolSchema(),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
 				var in struct {
 					Overview      *string         `json:"overview"`
 					VersionNumber int             `json:"version_number"`
 					Chapters      []store.Chapter `json:"chapters"`
+					Partial       bool            `json:"partial"`
 				}
 				if err := json.Unmarshal(args, &in); err != nil {
 					return "bad tool arguments: " + err.Error(), true
 				}
 				org := store.Organization{Overview: in.Overview, Chapters: in.Chapters}
-				if err := rc.SubmitOrganization(ctx, session, scope, org, in.VersionNumber); err != nil {
+				if err := rc.SubmitOrganization(ctx, session, scope, org, in.VersionNumber, in.Partial); err != nil {
 					return err.Error(), true
 				}
 				return "ok", false
+			},
+		},
+		{
+			Name:        "annotate",
+			Description: "Mark specific line ranges of the diff for the reviewer, on an AI-bar request (e.g. \"highlight the lines actually changed, not just copied from the old file\"). Each item is kind \"highlight\" — a non-blocking colored line-range mark with an optional label — or kind \"comment\" — a Claude-authored comment thread the reviewer can reply to. Annotations never gate the reviewer's submit. Call it per file as you work to stream marks in; ai_request_id ties highlights to the request for undo.",
+			InputSchema: annotateToolSchema(),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+				var in struct {
+					Items       []daemon.AnnotateInput `json:"items"`
+					AIRequestID string                 `json:"ai_request_id"`
+				}
+				if err := json.Unmarshal(args, &in); err != nil {
+					return "bad tool arguments: " + err.Error(), true
+				}
+				id, err := parseAIRequestID(in.AIRequestID, false)
+				if err != nil {
+					return err.Error(), true
+				}
+				if err := rc.Annotate(ctx, session, scope, in.Items, id); err != nil {
+					return err.Error(), true
+				}
+				return fmt.Sprintf("added %d annotations", len(in.Items)), false
 			},
 		},
 		{
@@ -211,13 +268,31 @@ func setFileStatesToolSchema() map[string]any {
 	}
 }
 
+func setFileStatesByRiskToolSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"risk": map[string]any{
+				"type":        "array",
+				"description": "risk levels to flip: any of high, medium, low, mechanical",
+				"items":       map[string]any{"type": "string", "enum": []string{"high", "medium", "low", "mechanical"}},
+			},
+			"reviewed":      map[string]any{"type": "boolean", "description": "reviewed state to set on every matched file"},
+			"hidden":        map[string]any{"type": "boolean", "description": "hidden state to set on every matched file"},
+			"reason":        map[string]any{"type": "string", "description": "one line recorded for every matched file"},
+			"ai_request_id": map[string]any{"type": "string", "description": "id of the AI request these changes belong to"},
+		},
+		"required": []string{"risk"},
+	}
+}
+
 func updateAIRequestToolSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"ai_request_id": map[string]any{"type": "string"},
-			"status":        map[string]any{"type": "string", "enum": []string{"working", "done", "failed"}},
-			"summary":       map[string]any{"type": "string", "description": "one sentence: what you did and why"},
+			"status":        map[string]any{"type": "string", "enum": []string{"working", "done", "failed", "awaiting_input"}},
+			"summary":       map[string]any{"type": "string", "description": "one sentence: what you did and why (done/failed)"},
 			"unmatched": map[string]any{
 				"type":        "array",
 				"description": "parts of the prompt you did not act on, and why",
@@ -229,6 +304,28 @@ func updateAIRequestToolSchema() map[string]any {
 					},
 					"required": []string{"pattern", "why"},
 				},
+			},
+			"question": map[string]any{"type": "string", "description": "required for status=awaiting_input: the one clarifying question to ask the reviewer"},
+			"ask": map[string]any{
+				"type":        "object",
+				"description": "optional structured options for the question (status=awaiting_input), mirroring AskUserQuestion",
+				"properties": map[string]any{
+					"header":      map[string]any{"type": "string", "description": "short chip, e.g. Scope"},
+					"multiSelect": map[string]any{"type": "boolean"},
+					"options": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"label":       map[string]any{"type": "string"},
+								"description": map[string]any{"type": "string"},
+								"preview":     map[string]any{"type": "string"},
+							},
+							"required": []string{"label"},
+						},
+					},
+				},
+				"required": []string{"options"},
 			},
 		},
 		"required": []string{"ai_request_id", "status"},
@@ -265,8 +362,34 @@ func submitOrganizationToolSchema() map[string]any {
 					"required": []string{"title", "summary", "files"},
 				},
 			},
+			"partial": map[string]any{"type": "boolean", "description": "true while streaming an in-progress organization; omit on the final, complete submit"},
 		},
 		"required": []string{"chapters", "version_number"},
+	}
+}
+
+func annotateToolSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"items": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"kind":       map[string]any{"type": "string", "enum": []string{"highlight", "comment"}, "description": "highlight = informational line-range mark; comment = a Claude-authored reply thread"},
+						"file_path":  map[string]any{"type": "string"},
+						"side":       map[string]any{"type": "string", "enum": []string{"additions", "deletions"}, "description": "which side of the diff the lines are on"},
+						"start_line": map[string]any{"type": "integer", "description": "1-based first line on that side"},
+						"end_line":   map[string]any{"type": "integer", "description": "1-based last line on that side (inclusive)"},
+						"body":       map[string]any{"type": "string", "description": "the highlight's label (optional) or the comment's text (required for kind=comment)"},
+					},
+					"required": []string{"kind", "file_path", "side", "start_line", "end_line"},
+				},
+			},
+			"ai_request_id": map[string]any{"type": "string", "description": "id of the AI request these annotations belong to"},
+		},
+		"required": []string{"items"},
 	}
 }
 

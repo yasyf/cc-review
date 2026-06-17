@@ -84,6 +84,20 @@ type Unmatched struct {
 	Why     string `json:"why"`
 }
 
+// AIQuestion is a clarifying question the agent parks a request on (status
+// awaiting_input): a body and, optionally, structured options mirroring an Ask.
+type AIQuestion struct {
+	Body string `json:"body"`
+	Ask  *Ask   `json:"ask,omitempty"`
+}
+
+// AIAnswer is the human's reply to an AIQuestion: free text, or a structured
+// AskAnswer when the question carried an Ask.
+type AIAnswer struct {
+	Text      string     `json:"text,omitempty"`
+	AskAnswer *AskAnswer `json:"askAnswer,omitempty"`
+}
+
 // AIRequest is one AI-bar (source=user) or auto-organize (source=system)
 // request and its lifecycle.
 type AIRequest struct {
@@ -92,10 +106,13 @@ type AIRequest struct {
 	VersionNumber int
 	Source        string // user | system
 	Prompt        string
-	Status        string // pending | working | done | failed | undone
+	Status        string // pending | working | awaiting_input | answered | done | failed | undone
 	Summary       string
 	Unmatched     []Unmatched
 	Changes       []AIChange
+	Question      *AIQuestion // set while awaiting_input
+	Answer        *AIAnswer   // set once answered
+	Attempt       int         // bumped each time an answer re-opens the request
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -137,6 +154,21 @@ type Comment struct {
 	Status      string // open | resolved
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// Annotation is a Claude-authored line-range highlight on a version's diff: an
+// informational mark (not a comment thread) the agent adds on an AI-bar request.
+// AIRequestID ties it to the request that created it, so undo can remove it.
+type Annotation struct {
+	ID          int64
+	VersionID   int64
+	FilePath    string
+	Side        string // additions | deletions
+	StartLine   int
+	EndLine     int
+	Label       string
+	AIRequestID int64
+	CreatedAt   time.Time
 }
 
 // AskOption is one selectable choice in an ask reply. Field names match Claude

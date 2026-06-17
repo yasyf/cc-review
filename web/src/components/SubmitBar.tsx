@@ -7,7 +7,10 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   const submit = useSubmit(slug);
 
   const submitted = session.review.status === 'submitted';
-  const openCount = session.comments.filter((c) => c.status === 'open').length;
+  // Claude-authored comments are informational annotations, not reviewer TODOs.
+  const openCount = session.comments.filter(
+    (c) => c.status === 'open' && c.origin !== 'claude',
+  ).length;
   const frozenPath = session.feedbackPath ?? submit.data?.feedbackPath ?? null;
   const total = session.files.length;
   const reviewedCount = session.files.filter((f) => session.fileStates[f.path]?.reviewed).length;

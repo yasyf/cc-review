@@ -69,6 +69,8 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
     }
     case 'organization.updated':
       return { ...session, organization: ev.organization };
+    case 'annotations.updated':
+      return { ...session, annotations: ev.annotations };
     case 'channel.changed':
     case 'version.created':
     case 'notification':
@@ -93,6 +95,9 @@ function notificationFor(ev: ReviewEvent): StreamToast | null {
       }
       if (ev.request.status === 'failed') {
         return { kind: 'error', text: ev.request.summary || 'AI request failed.' };
+      }
+      if (ev.request.status === 'awaiting_input') {
+        return { kind: 'info', text: `Claude needs your input: ${ev.request.question?.body ?? ''}` };
       }
       return null;
     case 'organization.updated':

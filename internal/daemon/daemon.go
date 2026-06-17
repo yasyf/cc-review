@@ -102,9 +102,11 @@ func Serve(ctx context.Context, fixedPort int) error {
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)
 	s.Register(OpFileStates, rv.handleFileStates)
+	s.Register(OpFileStatesByRisk, rv.handleFileStatesByRisk)
 	s.Register(OpUpdateAIRequest, rv.handleUpdateAIRequest)
 	s.Register(OpSubmitOrganization, rv.handleSubmitOrganization)
 	s.Register(OpReviewFiles, rv.handleReviewFiles)
+	s.Register(OpAnnotate, rv.handleAnnotate)
 	s.Register(OpTurnStart, rv.handleTurnStart)
 	s.Register(OpTurnEnd, rv.handleTurnEnd)
 

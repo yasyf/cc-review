@@ -85,6 +85,18 @@ export interface FileMeta {
   status: string; // git name-status code: A | M | D | R | C | T
 }
 
+// A Claude-authored informational line-range highlight on the diff, added on an
+// AI-bar request. Never gates submit; comment-kind annotations are plain Comments.
+export interface Annotation {
+  id: string;
+  filePath: string;
+  side: Side;
+  start: number;
+  end: number;
+  label: string;
+  createdAt: string;
+}
+
 export interface FileState {
   reviewed: boolean;
   hidden: boolean;
@@ -110,11 +122,30 @@ export interface Organization {
 }
 
 export type AiRequestSource = 'user' | 'system';
-export type AiRequestStatus = 'pending' | 'working' | 'done' | 'failed' | 'undone';
+export type AiRequestStatus =
+  | 'pending'
+  | 'working'
+  | 'awaiting_input'
+  | 'answered'
+  | 'done'
+  | 'failed'
+  | 'undone';
 
 export interface AiRequestUnmatched {
   pattern: string;
   why: string;
+}
+
+// A clarifying question the agent parked the request on, with optional structured
+// options; the reviewer answers it inline in the AI bar.
+export interface AiRequestQuestion {
+  body: string;
+  ask?: Ask;
+}
+
+export interface AiRequestAnswer {
+  text?: string;
+  askAnswer?: AskAnswer;
 }
 
 // Per-path state snapshot recorded when Claude applies a batch; `prior` powers
@@ -134,6 +165,9 @@ export interface AiRequest {
   summary: string;
   unmatched: AiRequestUnmatched[];
   changes: AiRequestChange[];
+  question?: AiRequestQuestion;
+  answer?: AiRequestAnswer;
+  attempt?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -193,6 +227,8 @@ export interface SessionResponse {
   files: FileMeta[];
   patchText: string;
   comments: Comment[];
+  // Claude-authored line-range highlights for the displayed version.
+  annotations: Annotation[];
   // Keyed by path, filtered to the displayed version's files.
   fileStates: Record<string, FileState>;
   // For the displayed version only; null until Claude submits one.
@@ -248,6 +284,7 @@ export type ReviewEvent =
   | { type: 'ai.request.created'; version_number: number; request: AiRequest }
   | { type: 'ai.request.updated'; version_number: number; request: AiRequest }
   | { type: 'organization.updated'; version_number: number; organization: Organization }
+  | { type: 'annotations.updated'; version_number: number; annotations: Annotation[] }
   | { type: 'channel.changed'; version_number: number; connected: boolean };
 
 export type ReviewEventType = ReviewEvent['type'];

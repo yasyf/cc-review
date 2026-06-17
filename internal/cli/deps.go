@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 
-	ccd "github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/cmd"
+	ccd "github.com/yasyf/cc-interact/daemon"
 
 	"github.com/yasyf/cc-review/internal/daemon"
 	"github.com/yasyf/cc-review/internal/paths"

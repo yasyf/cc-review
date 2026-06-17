@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useCreateAiRequest, useUndoAiRequest } from '../lib/api';
+import { useAnswerAiRequest, useCreateAiRequest, useUndoAiRequest } from '../lib/api';
 import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
 import type { AiRequest, SessionResponse } from '../lib/types';
@@ -7,6 +7,8 @@ import type { AiRequest, SessionResponse } from '../lib/types';
 const STATUS_LABEL: Record<AiRequest['status'], string> = {
   pending: 'queued…',
   working: 'working…',
+  awaiting_input: 'waiting on you',
+  answered: 'resuming…',
   done: 'done',
   failed: 'failed',
   undone: 'undone',
@@ -15,6 +17,89 @@ const STATUS_LABEL: Record<AiRequest['status'], string> = {
 // A request still queued this long after submission, with Claude connected,
 // most likely never reached the session; the daemon fails it shortly after.
 const STALE_PENDING_MS = 60_000;
+
+// Inline form for a request parked on a clarifying question: structured options
+// when the question carries an ask, otherwise free text. Submitting answers the
+// request, which the daemon redispatches to a fresh agent run.
+function AnswerForm({ request }: { request: AiRequest }) {
+  const { slug } = useReview();
+  const answerRequest = useAnswerAiRequest(slug);
+  const ask = request.question?.ask;
+  const multiSelect = ask?.multiSelect === true;
+  const [selected, setSelected] = useState<string[]>([]);
+  const [text, setText] = useState('');
+
+  function toggle(label: string) {
+    setSelected((cur) =>
+      multiSelect
+        ? cur.includes(label)
+          ? cur.filter((l) => l !== label)
+          : [...cur, label]
+        : cur.includes(label)
+          ? []
+          : [label],
+    );
+  }
+
+  const canSubmit = ask ? selected.length > 0 : text.trim() !== '';
+
+  function submit() {
+    if (!canSubmit || answerRequest.isPending) return;
+    if (ask) answerRequest.mutate({ id: request.id, askAnswer: { selected } });
+    else answerRequest.mutate({ id: request.id, answer: text.trim() });
+  }
+
+  return (
+    <div className="question-card">
+      {ask?.header ? <div className="qc-chip">{ask.header}</div> : null}
+      <div className="reply-body">{request.question?.body}</div>
+      {ask ? (
+        <div className="qc-options">
+          {ask.options.map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              className={`qc-option${selected.includes(option.label) ? ' qc-option-selected' : ''}`}
+              aria-pressed={selected.includes(option.label)}
+              onClick={() => toggle(option.label)}
+            >
+              <span className="qc-option-label">{option.label}</span>
+              {option.description ? (
+                <span className="qc-option-desc">{option.description}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <input
+          type="text"
+          value={text}
+          placeholder="Your answer…"
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+      )}
+      <div className="qc-actions">
+        <button
+          type="button"
+          className="primary"
+          disabled={!canSubmit || answerRequest.isPending}
+          onClick={submit}
+        >
+          {answerRequest.isPending ? 'Sending…' : 'Answer'}
+        </button>
+        {answerRequest.isError ? (
+          <div className="qc-error">{answerRequest.error.message}</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function RequestStatus({
   request,
@@ -26,7 +111,8 @@ function RequestStatus({
   undoPending: boolean;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const inFlight = request.status === 'pending' || request.status === 'working';
+  const inFlight =
+    request.status === 'pending' || request.status === 'working' || request.status === 'answered';
 
   return (
     <div className={`ai-request ai-request-${request.status}`}>
@@ -70,6 +156,9 @@ function RequestStatus({
             </li>
           ))}
         </ul>
+      ) : null}
+      {request.status === 'awaiting_input' && request.question ? (
+        <AnswerForm request={request} />
       ) : null}
     </div>
   );

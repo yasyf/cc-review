@@ -230,6 +230,11 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventFileStates, v.VersionNumber,
 			map[string]any{"states": states})
 	}
+	// A question parked on a now-superseded version can never be re-offered or
+	// answered, so fail it rather than leave the chip lit forever.
+	if err := failStrandedQuestions(hc.Ctx, st, hc.Append, sub.ID, v.VersionNumber); err != nil {
+		return errReply(err.Error())
+	}
 	cs := channelState(hc.Activity, sub.ID, hc.Scope, hc.Window.ClaudePID)
 	if carriedOK {
 		// The carried organization is the agent's own authored content reattached

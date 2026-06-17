@@ -62,6 +62,17 @@ type Comment struct {
 	Replies     []Reply   `json:"replies"`
 }
 
+// Annotation is the SPA's view of a Claude-authored line-range highlight.
+type Annotation struct {
+	ID        string `json:"id"`
+	FilePath  string `json:"filePath"`
+	Side      string `json:"side"`
+	Start     int    `json:"start"`
+	End       int    `json:"end"`
+	Label     string `json:"label"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // VersionSummary is one entry in the version list.
 type VersionSummary struct {
 	VersionID string `json:"versionId"`
@@ -86,6 +97,9 @@ type AIRequest struct {
 	Summary   string            `json:"summary"`
 	Unmatched []store.Unmatched `json:"unmatched"`
 	Changes   []store.AIChange  `json:"changes"`
+	Question  *store.AIQuestion `json:"question,omitempty"`
+	Answer    *store.AIAnswer   `json:"answer,omitempty"`
+	Attempt   int               `json:"attempt,omitempty"`
 	CreatedAt string            `json:"createdAt"`
 	UpdatedAt string            `json:"updatedAt"`
 }
@@ -150,12 +164,21 @@ func ToComment(c store.Comment, replies []store.Reply) Comment {
 	return out
 }
 
+// ToAnnotation converts a store annotation to its SPA view.
+func ToAnnotation(a store.Annotation) Annotation {
+	return Annotation{
+		ID: id(a.ID), FilePath: a.FilePath, Side: a.Side, Start: a.StartLine, End: a.EndLine,
+		Label: a.Label, CreatedAt: iso(a.CreatedAt),
+	}
+}
+
 // ToAIRequest converts a store AI request. Unmatched and Changes are always
 // non-nil arrays so the SPA can map over them unconditionally.
 func ToAIRequest(r store.AIRequest) AIRequest {
 	out := AIRequest{
 		ID: id(r.ID), Source: r.Source, Prompt: r.Prompt, Status: r.Status, Summary: r.Summary,
-		Unmatched: r.Unmatched, Changes: r.Changes, CreatedAt: iso(r.CreatedAt), UpdatedAt: iso(r.UpdatedAt),
+		Unmatched: r.Unmatched, Changes: r.Changes, Question: r.Question, Answer: r.Answer, Attempt: r.Attempt,
+		CreatedAt: iso(r.CreatedAt), UpdatedAt: iso(r.UpdatedAt),
 	}
 	if out.Unmatched == nil {
 		out.Unmatched = []store.Unmatched{}

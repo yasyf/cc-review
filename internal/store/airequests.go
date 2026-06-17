@@ -10,29 +10,33 @@ import (
 )
 
 // ErrInvalidTransition reports an AI-request status change outside the allowed
-// graph (pending→working|done|failed, working→working|done|failed, done→undone).
+// graph.
 var ErrInvalidTransition = errors.New("invalid ai request transition")
 
 // aiTransitions maps a target status to the statuses it may come from.
 // working→working is allowed so a redelivered ai.request.created or a retried
 // update_ai_request re-asserts idempotently instead of being refused.
+// awaiting_input parks a request on a clarifying question; answered (REST-only,
+// from the human) makes it re-dispatchable, so working/done/failed accept it.
 var aiTransitions = map[string][]string{
-	"working": {"pending", "working"},
-	"done":    {"pending", "working"},
-	"failed":  {"pending", "working"},
-	"undone":  {"done"},
+	"working":        {"pending", "working", "answered"},
+	"awaiting_input": {"pending", "working"},
+	"answered":       {"awaiting_input"},
+	"done":           {"pending", "working", "answered"},
+	"failed":         {"pending", "working", "answered", "awaiting_input"},
+	"undone":         {"done"},
 }
 
-const aiRequestCols = `id, review_id, version_number, source, prompt, status, summary, unmatched_json, changes_json, created_at, updated_at`
+const aiRequestCols = `id, review_id, version_number, source, prompt, status, summary, unmatched_json, changes_json, created_at, updated_at, question_json, answer_json, attempt`
 
 func scanAIRequest(row interface{ Scan(...any) error }) (AIRequest, error) {
 	var (
-		r                          AIRequest
-		unmatchedJSON, changesJSON string
-		created, updated           int64
+		r                                                    AIRequest
+		unmatchedJSON, changesJSON, questionJSON, answerJSON string
+		created, updated                                     int64
 	)
 	if err := row.Scan(&r.ID, &r.ReviewID, &r.VersionNumber, &r.Source, &r.Prompt, &r.Status,
-		&r.Summary, &unmatchedJSON, &changesJSON, &created, &updated); err != nil {
+		&r.Summary, &unmatchedJSON, &changesJSON, &created, &updated, &questionJSON, &answerJSON, &r.Attempt); err != nil {
 		return AIRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(unmatchedJSON), &r.Unmatched); err != nil {
@@ -40,6 +44,20 @@ func scanAIRequest(row interface{ Scan(...any) error }) (AIRequest, error) {
 	}
 	if err := json.Unmarshal([]byte(changesJSON), &r.Changes); err != nil {
 		return AIRequest{}, fmt.Errorf("ai request %d: decode changes: %w", r.ID, err)
+	}
+	if questionJSON != "" {
+		var q AIQuestion
+		if err := json.Unmarshal([]byte(questionJSON), &q); err != nil {
+			return AIRequest{}, fmt.Errorf("ai request %d: decode question: %w", r.ID, err)
+		}
+		r.Question = &q
+	}
+	if answerJSON != "" {
+		var a AIAnswer
+		if err := json.Unmarshal([]byte(answerJSON), &a); err != nil {
+			return AIRequest{}, fmt.Errorf("ai request %d: decode answer: %w", r.ID, err)
+		}
+		r.Answer = &a
 	}
 	r.CreatedAt = fromUnix(created)
 	r.UpdatedAt = fromUnix(updated)
@@ -102,8 +120,31 @@ func (s *Store) ListAIRequests(ctx context.Context, reviewID string) ([]AIReques
 // prior version's stale organize never leaks onto a newer start.
 func (s *Store) ListOpenAIRequests(ctx context.Context, reviewID string, versionNumber int) ([]AIRequest, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+aiRequestCols+` FROM ai_requests WHERE review_id=? AND version_number=? AND status IN ('pending','working') ORDER BY created_at DESC, id DESC`,
+		`SELECT `+aiRequestCols+` FROM ai_requests WHERE review_id=? AND version_number=? AND status IN ('pending','working','answered') ORDER BY created_at DESC, id DESC`,
 		reviewID, versionNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AIRequest
+	for rows.Next() {
+		r, err := scanAIRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// AwaitingInputRequests returns a review's user requests parked on a clarifying
+// question (awaiting_input), newest first — the new-version path fails the ones a
+// superseded version stranded, since the version-scoped open set never re-offers
+// them and the sweeper only touches pending.
+func (s *Store) AwaitingInputRequests(ctx context.Context, reviewID string) ([]AIRequest, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+aiRequestCols+` FROM ai_requests WHERE review_id=? AND status='awaiting_input' ORDER BY created_at DESC, id DESC`,
+		reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,10 +182,12 @@ func (s *Store) StalePendingUserRequests(ctx context.Context, before time.Time) 
 	return out, rows.Err()
 }
 
-// TransitionAIRequest moves a request to its next status, guarded by
-// aiTransitions (ErrInvalidTransition otherwise), and returns the updated row.
-// An empty summary keeps the stored one; nil unmatched keeps the stored list.
-func (s *Store) TransitionAIRequest(ctx context.Context, id int64, to, summary string, unmatched []Unmatched) (AIRequest, error) {
+// transitionAIRequest applies a guarded status change inside a transaction:
+// aiTransitions[to] must admit the current status (ErrInvalidTransition
+// otherwise), then updateFn writes the new status plus any side fields, and the
+// reread row is returned. Every status-changing method routes through here so the
+// transition graph is enforced in exactly one place.
+func (s *Store) transitionAIRequest(ctx context.Context, id int64, to string, updateFn func(context.Context, *sql.Tx) error) (AIRequest, error) {
 	allowed, ok := aiTransitions[to]
 	if !ok {
 		return AIRequest{}, fmt.Errorf("ai request %d: unknown status %q", id, to)
@@ -170,23 +213,8 @@ func (s *Store) TransitionAIRequest(ctx context.Context, id int64, to, summary s
 	if !from {
 		return AIRequest{}, fmt.Errorf("ai request %d is %q, cannot become %q: %w", id, current, to, ErrInvalidTransition)
 	}
-
-	query := `UPDATE ai_requests SET status=?, updated_at=?`
-	args := []any{to, unix(time.Now())}
-	if summary != "" {
-		query += `, summary=?`
-		args = append(args, summary)
-	}
-	if unmatched != nil {
-		b, err := json.Marshal(unmatched)
-		if err != nil {
-			return AIRequest{}, fmt.Errorf("encode unmatched: %w", err)
-		}
-		query += `, unmatched_json=?`
-		args = append(args, string(b))
-	}
-	if _, err := tx.ExecContext(ctx, query+` WHERE id=?`, append(args, id)...); err != nil {
-		return AIRequest{}, fmt.Errorf("transition ai request %d: %w", id, err)
+	if err := updateFn(ctx, tx); err != nil {
+		return AIRequest{}, err
 	}
 	updated, err := scanAIRequest(tx.QueryRowContext(ctx, `SELECT `+aiRequestCols+` FROM ai_requests WHERE id=?`, id))
 	if err != nil {
@@ -196,6 +224,64 @@ func (s *Store) TransitionAIRequest(ctx context.Context, id int64, to, summary s
 		return AIRequest{}, fmt.Errorf("commit transition: %w", err)
 	}
 	return updated, nil
+}
+
+// TransitionAIRequest moves a request to working, done, or failed (the agent's
+// lifecycle). An empty summary keeps the stored one; nil unmatched keeps the list.
+func (s *Store) TransitionAIRequest(ctx context.Context, id int64, to, summary string, unmatched []Unmatched) (AIRequest, error) {
+	return s.transitionAIRequest(ctx, id, to, func(ctx context.Context, tx *sql.Tx) error {
+		query := `UPDATE ai_requests SET status=?, updated_at=?`
+		args := []any{to, unix(time.Now())}
+		if summary != "" {
+			query += `, summary=?`
+			args = append(args, summary)
+		}
+		if unmatched != nil {
+			b, err := json.Marshal(unmatched)
+			if err != nil {
+				return fmt.Errorf("encode unmatched: %w", err)
+			}
+			query += `, unmatched_json=?`
+			args = append(args, string(b))
+		}
+		if _, err := tx.ExecContext(ctx, query+` WHERE id=?`, append(args, id)...); err != nil {
+			return fmt.Errorf("transition ai request %d: %w", id, err)
+		}
+		return nil
+	})
+}
+
+// AskAIRequest parks a working request on a clarifying question (→awaiting_input).
+func (s *Store) AskAIRequest(ctx context.Context, id int64, q AIQuestion) (AIRequest, error) {
+	return s.transitionAIRequest(ctx, id, "awaiting_input", func(ctx context.Context, tx *sql.Tx) error {
+		b, err := json.Marshal(q)
+		if err != nil {
+			return fmt.Errorf("encode question: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ai_requests SET status='awaiting_input', question_json=?, updated_at=? WHERE id=?`,
+			string(b), unix(time.Now()), id); err != nil {
+			return fmt.Errorf("ask ai request %d: %w", id, err)
+		}
+		return nil
+	})
+}
+
+// AnswerAIRequest records the human's answer and bumps attempt (→answered), so
+// redelivery dispatches a fresh agent run with the original prompt plus the Q&A.
+func (s *Store) AnswerAIRequest(ctx context.Context, id int64, a AIAnswer) (AIRequest, error) {
+	return s.transitionAIRequest(ctx, id, "answered", func(ctx context.Context, tx *sql.Tx) error {
+		b, err := json.Marshal(a)
+		if err != nil {
+			return fmt.Errorf("encode answer: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ai_requests SET status='answered', answer_json=?, attempt=attempt+1, updated_at=? WHERE id=?`,
+			string(b), unix(time.Now()), id); err != nil {
+			return fmt.Errorf("answer ai request %d: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // AppendAIRequestChanges merges a batch of changes into the request's

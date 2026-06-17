@@ -92,18 +92,45 @@ func (rc *ReviewClient) FileStates(ctx context.Context, session, cwd string, fil
 	return err
 }
 
-// UpdateAIRequest moves an AI request to working, done, or failed.
-func (rc *ReviewClient) UpdateAIRequest(ctx context.Context, session, cwd string, aiRequestID int64, status, summary string, unmatched []store.Unmatched) error {
+// FileStatesByRisk flips every file the organization tags with one of risks to
+// the given reviewed/hidden state in one server-resolved batch, returning the
+// affected paths. A non-zero aiRequestID ties the batch to that request.
+func (rc *ReviewClient) FileStatesByRisk(ctx context.Context, session, cwd string, risks []string, reviewed, hidden *bool, reason string, aiRequestID int64) ([]string, error) {
+	_, res, err := rc.do(ctx, OpFileStatesByRisk, session, cwd, body{
+		Risk: risks, Reviewed: reviewed, Hidden: hidden, Reason: reason, AIRequestID: aiRequestID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.Paths, nil
+}
+
+// UpdateAIRequestInput carries an AI-request lifecycle move: working/done/failed
+// with summary+unmatched, or awaiting_input with a clarifying Question (+optional
+// structured Ask) the reviewer answers over REST.
+type UpdateAIRequestInput struct {
+	Status    string
+	Summary   string
+	Unmatched []store.Unmatched
+	Question  string
+	Ask       *store.Ask
+}
+
+// UpdateAIRequest moves an AI request through its lifecycle.
+func (rc *ReviewClient) UpdateAIRequest(ctx context.Context, session, cwd string, aiRequestID int64, in UpdateAIRequestInput) error {
 	_, _, err := rc.do(ctx, OpUpdateAIRequest, session, cwd, body{
-		AIRequestID: aiRequestID, AIStatus: status, Summary: summary, Unmatched: unmatched,
+		AIRequestID: aiRequestID, AIStatus: in.Status, Summary: in.Summary, Unmatched: in.Unmatched,
+		Question: in.Question, Ask: in.Ask,
 	})
 	return err
 }
 
 // SubmitOrganization stores the chapter organization for the review's current
-// version.
-func (rc *ReviewClient) SubmitOrganization(ctx context.Context, session, cwd string, org store.Organization, versionNumber int) error {
-	_, _, err := rc.do(ctx, OpSubmitOrganization, session, cwd, body{Organization: &org, VersionNumber: versionNumber})
+// version. partial accepts an in-progress organization (files not yet placed are
+// allowed) so the agent can stream chapters as they firm up; the final submit
+// must be non-partial to enforce full coverage.
+func (rc *ReviewClient) SubmitOrganization(ctx context.Context, session, cwd string, org store.Organization, versionNumber int, partial bool) error {
+	_, _, err := rc.do(ctx, OpSubmitOrganization, session, cwd, body{Organization: &org, VersionNumber: versionNumber, Partial: partial})
 	return err
 }
 
@@ -116,6 +143,14 @@ func (rc *ReviewClient) ReviewFiles(ctx context.Context, session, cwd string, f 
 		return nil, err
 	}
 	return res.ReviewFiles, nil
+}
+
+// Annotate writes Claude-authored line annotations onto the diff: highlights
+// (informational line-range marks) and comments (Claude-authored threads). A
+// non-zero aiRequestID ties them to that request so undo can remove highlights.
+func (rc *ReviewClient) Annotate(ctx context.Context, session, cwd string, items []AnnotateInput, aiRequestID int64) error {
+	_, _, err := rc.do(ctx, OpAnnotate, session, cwd, body{Annotations: items, AIRequestID: aiRequestID})
+	return err
 }
 
 // TurnStart opens a turn with the pre-edit working-tree snapshot.

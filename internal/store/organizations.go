@@ -16,6 +16,18 @@ var risks = map[string]bool{"high": true, "medium": true, "low": true, "mechanic
 // path in exactly one chapter, no unknown paths, and a known risk per file.
 // The error enumerates every offending path so Claude can self-correct.
 func (o Organization) Validate(versionPaths []string) error {
+	return o.validate(versionPaths, false)
+}
+
+// ValidatePartial validates one streaming, in-progress submit: every submitted
+// file must be known, unique, and validly rated, but files not yet placed in a
+// chapter are allowed. The agent's final non-partial Validate enforces full
+// coverage, so the complete-organization invariant holds at the terminal state.
+func (o Organization) ValidatePartial(versionPaths []string) error {
+	return o.validate(versionPaths, true)
+}
+
+func (o Organization) validate(versionPaths []string, partial bool) error {
 	known := make(map[string]bool, len(versionPaths))
 	for _, p := range versionPaths {
 		known[p] = true
@@ -37,9 +49,11 @@ func (o Organization) Validate(versionPaths []string) error {
 		}
 	}
 	var missing []string
-	for _, p := range versionPaths {
-		if !seen[p] {
-			missing = append(missing, p)
+	if !partial {
+		for _, p := range versionPaths {
+			if !seen[p] {
+				missing = append(missing, p)
+			}
 		}
 	}
 	if len(missing) == 0 && len(unknown) == 0 && len(duplicated) == 0 {

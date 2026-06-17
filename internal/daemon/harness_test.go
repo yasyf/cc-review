@@ -50,12 +50,20 @@ type Request struct {
 	Base          string
 	Replies       []ReplyInput
 	Files         []FileStateInput
+	Annotations   []AnnotateInput
+	Risk          []string
+	Reason        string
+	Reviewed      *bool
+	Hidden        *bool
 	AIRequestID   int64
 	AIStatus      string
 	Summary       string
 	Unmatched     []store.Unmatched
+	Question      string
+	Ask           *store.Ask
 	Organization  *store.Organization
 	VersionNumber int
+	Partial       bool
 	Prompt        string
 	ToolName      string
 	ToolInput     json.RawMessage
@@ -79,6 +87,7 @@ type Response struct {
 	FeedbackPath string
 	Feedback     json.RawMessage
 	ReviewFiles  json.RawMessage
+	Paths        []string
 }
 
 // reviewRow merges a subject with its review_meta for assertions that read the
@@ -94,9 +103,11 @@ type reviewRow struct {
 func (req Request) body() json.RawMessage {
 	raw, _ := json.Marshal(body{
 		New: req.New, Base: req.Base, Replies: req.Replies, Files: req.Files,
+		Annotations: req.Annotations, Risk: req.Risk, Reason: req.Reason,
+		Reviewed: req.Reviewed, Hidden: req.Hidden,
 		AIRequestID: req.AIRequestID, AIStatus: req.AIStatus, Summary: req.Summary,
-		Unmatched: req.Unmatched, Organization: req.Organization,
-		VersionNumber: req.VersionNumber, Prompt: req.Prompt,
+		Unmatched: req.Unmatched, Question: req.Question, Ask: req.Ask, Organization: req.Organization,
+		VersionNumber: req.VersionNumber, Partial: req.Partial, Prompt: req.Prompt,
 	})
 	return raw
 }
@@ -209,7 +220,7 @@ func toResponse(reply ccd.Reply) Response {
 		HTTPPort: reply.HTTPPort, Allow: reply.Allow, Reason: reply.Reason,
 		URL: res.URL, Version: res.Version, Resumed: res.Resumed, ChannelState: res.ChannelState,
 		AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
-		ReviewFiles: res.ReviewFiles,
+		ReviewFiles: res.ReviewFiles, Paths: res.Paths,
 	}
 }
 
@@ -231,6 +242,14 @@ func (s *Server) handleUpdateAIRequest(ctx context.Context, req Request) Respons
 
 func (s *Server) handleSubmitOrganization(ctx context.Context, req Request) Response {
 	return s.run(ctx, req, (*review).handleSubmitOrganization)
+}
+
+func (s *Server) handleFileStatesByRisk(ctx context.Context, req Request) Response {
+	return s.run(ctx, req, (*review).handleFileStatesByRisk)
+}
+
+func (s *Server) handleAnnotate(ctx context.Context, req Request) Response {
+	return s.run(ctx, req, (*review).handleAnnotate)
 }
 
 func (s *Server) handleReviewFiles(ctx context.Context, req Request) Response {

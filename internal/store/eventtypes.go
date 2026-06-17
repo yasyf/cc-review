@@ -15,6 +15,7 @@ const (
 	EventAIRequestCreated    = "ai.request.created"
 	EventAIRequestUpdated    = "ai.request.updated"
 	EventOrganizationUpdated = "organization.updated"
+	EventAnnotationsUpdated  = "annotations.updated"
 	EventChannelChanged      = "channel.changed"
 )
 

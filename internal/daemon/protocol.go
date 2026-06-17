@@ -19,12 +19,27 @@ const (
 	OpReply              ccd.Op = "reply"
 	OpFeedback           ccd.Op = "feedback"
 	OpFileStates         ccd.Op = "file-states"
+	OpFileStatesByRisk   ccd.Op = "file-states-by-risk"
 	OpUpdateAIRequest    ccd.Op = "update-ai-request"
 	OpSubmitOrganization ccd.Op = "submit-organization"
 	OpReviewFiles        ccd.Op = "review-files"
+	OpAnnotate           ccd.Op = "annotate"
 	OpTurnStart          ccd.Op = "turn-start"
 	OpTurnEnd            ccd.Op = "turn-end"
 )
+
+// AnnotateInput is one annotation Claude adds to the diff: kind "highlight"
+// marks a line range as a non-blocking informational highlight; kind "comment"
+// opens a Claude-authored comment thread on the range. Body is the highlight's
+// label or the comment's text.
+type AnnotateInput struct {
+	Kind      string `json:"kind"`
+	FilePath  string `json:"file_path"`
+	Side      string `json:"side"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	Body      string `json:"body"`
+}
 
 // ReplyInput is one reply Claude posts. A non-zero AnswerTo answers an existing
 // question or ask (post-submit drain); otherwise it is a new Claude reply of
@@ -68,15 +83,21 @@ type body struct {
 	Base          string              `json:"base,omitempty"`           // start
 	Replies       []ReplyInput        `json:"replies,omitempty"`        // reply
 	Files         []FileStateInput    `json:"files,omitempty"`          // file-states
-	AIRequestID   int64               `json:"ai_request_id,omitempty"`  // file-states (optional) | update-ai-request
+	Annotations   []AnnotateInput     `json:"annotations,omitempty"`    // annotate
+	Risk          []string            `json:"risk,omitempty"`           // file-states-by-risk
+	Reason        string              `json:"reason,omitempty"`         // file-states-by-risk
+	AIRequestID   int64               `json:"ai_request_id,omitempty"`  // file-states (optional) | file-states-by-risk | update-ai-request
 	AIStatus      string              `json:"ai_status,omitempty"`      // update-ai-request
 	Summary       string              `json:"summary,omitempty"`        // update-ai-request
 	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
+	Question      string              `json:"question,omitempty"`       // update-ai-request (awaiting_input)
+	Ask           *store.Ask          `json:"ask,omitempty"`            // update-ai-request (awaiting_input)
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
 	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization
+	Partial       bool                `json:"partial,omitempty"`        // submit-organization (streaming)
 	Status        string              `json:"status,omitempty"`         // review-files (filter)
-	Reviewed      *bool               `json:"reviewed,omitempty"`       // review-files (filter)
-	Hidden        *bool               `json:"hidden,omitempty"`         // review-files (filter)
+	Reviewed      *bool               `json:"reviewed,omitempty"`       // review-files (filter) | file-states-by-risk (target)
+	Hidden        *bool               `json:"hidden,omitempty"`         // review-files (filter) | file-states-by-risk (target)
 	Prompt        string              `json:"prompt,omitempty"`         // turn-start
 }
 
@@ -91,6 +112,7 @@ type result struct {
 	FeedbackPath string            `json:"feedback_path,omitempty"` // feedback
 	Feedback     json.RawMessage   `json:"feedback,omitempty"`      // feedback
 	ReviewFiles  json.RawMessage   `json:"review_files,omitempty"`  // review-files
+	Paths        []string          `json:"paths,omitempty"`         // file-states-by-risk
 }
 
 func decodeBody(raw json.RawMessage) body {

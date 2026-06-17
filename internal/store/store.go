@@ -103,7 +103,10 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   unmatched_json TEXT NOT NULL DEFAULT '[]',
   changes_json   TEXT NOT NULL DEFAULT '[]',
   created_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL
+  updated_at     INTEGER NOT NULL,
+  question_json  TEXT NOT NULL DEFAULT '',
+  answer_json    TEXT NOT NULL DEFAULT '',
+  attempt        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_ai_requests_review ON ai_requests(review_id);
 CREATE TABLE IF NOT EXISTS organizations (
@@ -119,6 +122,18 @@ CREATE TABLE IF NOT EXISTS turn_attributions (
   created_at  INTEGER NOT NULL,
   PRIMARY KEY (version_id, file_path)
 );
+CREATE TABLE IF NOT EXISTS annotations (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_id    INTEGER NOT NULL REFERENCES review_versions(id),
+  file_path     TEXT NOT NULL,
+  side          TEXT NOT NULL,
+  start_line    INTEGER NOT NULL,
+  end_line      INTEGER NOT NULL,
+  label         TEXT NOT NULL DEFAULT '',
+  ai_request_id INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_version ON annotations(version_id);
 `
 
 // ReviewMigrate applies the turn-snapshot tables and the review domain schema on
