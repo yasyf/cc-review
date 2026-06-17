@@ -1,267 +1,286 @@
-import { useEffect, useState } from 'react';
-import { useAnswerAiRequest, useCreateAiRequest, useUndoAiRequest } from '../lib/api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent, RefObject } from 'react';
+import { recentUserCommands, isActive, resultStream } from '../lib/ai-requests';
+import { useCreateAiRequest, useSetFileStates } from '../lib/api';
+import type { FileStatePatch } from '../lib/api';
 import { useEventStream } from '../lib/events';
+import { matchFiles } from '../lib/glob';
+import { useLocalRequests } from '../lib/local-requests';
+import type { LocalRequest } from '../lib/local-requests';
 import { useReview } from '../lib/review-context';
-import type { AiRequest, SessionResponse } from '../lib/types';
+import { deriveSuggestions } from '../lib/suggestions';
+import type { Suggestion } from '../lib/suggestions';
+import type { SessionResponse } from '../lib/types';
+import { AiResultCard, LocalResultCard } from './AiResultCard';
+import { CommandMenu } from './CommandMenu';
+import type { MenuRow } from './CommandMenu';
+import type { DiffViewHandle } from './DiffView';
 
-const STATUS_LABEL: Record<AiRequest['status'], string> = {
-  pending: 'queued…',
-  working: 'working…',
-  awaiting_input: 'waiting on you',
-  answered: 'resuming…',
-  done: 'done',
-  failed: 'failed',
-  undone: 'undone',
-};
+const REORGANIZE_PROMPT = 'Re-organize this review into chapters and rate per-file risk.';
 
-// A request still queued this long after submission, with Claude connected,
-// most likely never reached the session; the daemon fails it shortly after.
-const STALE_PENDING_MS = 60_000;
-
-// Inline form for a request parked on a clarifying question: structured options
-// when the question carries an ask, otherwise free text. Submitting answers the
-// request, which the daemon redispatches to a fresh agent run.
-function AnswerForm({ request }: { request: AiRequest }) {
-  const { slug } = useReview();
-  const answerRequest = useAnswerAiRequest(slug);
-  const ask = request.question?.ask;
-  const multiSelect = ask?.multiSelect === true;
-  const [selected, setSelected] = useState<string[]>([]);
-  const [text, setText] = useState('');
-
-  function toggle(label: string) {
-    setSelected((cur) =>
-      multiSelect
-        ? cur.includes(label)
-          ? cur.filter((l) => l !== label)
-          : [...cur, label]
-        : cur.includes(label)
-          ? []
-          : [label],
-    );
-  }
-
-  const canSubmit = ask ? selected.length > 0 : text.trim() !== '';
-
-  function submit() {
-    if (!canSubmit || answerRequest.isPending) return;
-    if (ask) answerRequest.mutate({ id: request.id, askAnswer: { selected } });
-    else answerRequest.mutate({ id: request.id, answer: text.trim() });
-  }
-
-  return (
-    <div className="question-card">
-      {ask?.header ? <div className="qc-chip">{ask.header}</div> : null}
-      <div className="reply-body">{request.question?.body}</div>
-      {ask ? (
-        <div className="qc-options">
-          {ask.options.map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              className={`qc-option${selected.includes(option.label) ? ' qc-option-selected' : ''}`}
-              aria-pressed={selected.includes(option.label)}
-              onClick={() => toggle(option.label)}
-            >
-              <span className="qc-option-label">{option.label}</span>
-              {option.description ? (
-                <span className="qc-option-desc">{option.description}</span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <input
-          type="text"
-          value={text}
-          placeholder="Your answer…"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-      )}
-      <div className="qc-actions">
-        <button
-          type="button"
-          className="primary"
-          disabled={!canSubmit || answerRequest.isPending}
-          onClick={submit}
-        >
-          {answerRequest.isPending ? 'Sending…' : 'Answer'}
-        </button>
-        {answerRequest.isError ? (
-          <div className="qc-error">{answerRequest.error.message}</div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function RequestStatus({
-  request,
-  onUndo,
-  undoPending,
+// The Command Deck: a resident footer that reads this diff and offers ranked
+// one-tap chips in two lanes — ⚡ instant (client-side file-state ops, work
+// offline) and ✦ Claude (semantic asks). ⌘K / focusing the composer opens an
+// anchored menu upward. Hidden once the review is submitted.
+export function AiBar({
+  session,
+  diffRef,
 }: {
-  request: AiRequest;
-  onUndo(): void;
-  undoPending: boolean;
+  session: SessionResponse;
+  diffRef: RefObject<DiffViewHandle | null>;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const inFlight =
-    request.status === 'pending' || request.status === 'working' || request.status === 'answered';
-
-  return (
-    <div className={`ai-request ai-request-${request.status}`}>
-      <div className="ai-request-line">
-        <span className={`ai-status${inFlight ? ' ai-pulse' : ''}`}>
-          {STATUS_LABEL[request.status]}
-        </span>
-        <span className="ai-prompt" title={request.prompt}>
-          {request.prompt}
-        </span>
-        {request.status === 'done' && request.changes.length > 0 ? (
-          <>
-            <button type="button" className="ai-mini" onClick={() => setDetailsOpen(!detailsOpen)}>
-              {detailsOpen ? 'Hide' : 'Show'} {request.changes.length} files
-            </button>
-            <button type="button" className="ai-mini" disabled={undoPending} onClick={onUndo}>
-              Undo
-            </button>
-          </>
-        ) : null}
-      </div>
-      {request.summary ? (
-        <div className={`ai-summary${request.status === 'failed' ? ' ai-failed' : ''}`}>
-          {request.summary}
-        </div>
-      ) : null}
-      {detailsOpen ? (
-        <ul className="ai-changes">
-          {request.changes.map((change) => (
-            <li key={change.path}>
-              <code>{change.path}</code> — {change.reason}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {request.unmatched.length > 0 ? (
-        <ul className="ai-unmatched">
-          {request.unmatched.map((entry) => (
-            <li key={entry.pattern}>
-              <strong>{entry.pattern}</strong> — {entry.why}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {request.status === 'awaiting_input' && request.question ? (
-        <AnswerForm request={request} />
-      ) : null}
-    </div>
-  );
-}
-
-// Persistent input strip docked under the body. Hidden once the review is
-// submitted; disabled with a hint while no Claude session is attached.
-export function AiBar({ session }: { session: SessionResponse }) {
   const { slug } = useReview();
   const createRequest = useCreateAiRequest(slug);
-  const undoRequest = useUndoAiRequest(slug);
+  const setFileStates = useSetFileStates(slug, session.version);
+  const local = useLocalRequests();
   const { peerPresent } = useEventStream();
-  const [prompt, setPrompt] = useState('');
+  const [query, setQuery] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
-  // Tick a clock only while a request is queued, so the "still queued" hint can
-  // appear once it has waited too long without mirroring any server state.
-  const [now, setNow] = useState(() => Date.now());
+  const rootRef = useRef<HTMLElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const latest = session.aiRequests[0];
+  const connected = peerPresent ?? false;
+
+  // ⌘K opens and focuses the deck from anywhere; Esc (handled on the input) closes.
   useEffect(() => {
-    if (latest?.status !== 'pending') return;
-    const id = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(id);
-  }, [latest?.status]);
+    function onKey(e: globalThis.KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setMenuOpen(true);
+        inputRef.current?.focus();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // A click outside the deck dismisses the menu.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDown(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [menuOpen]);
+
+  const suggestions = useMemo(() => deriveSuggestions(session), [session]);
+  const recents = useMemo(() => recentUserCommands(session.aiRequests), [session.aiRequests]);
+
+  const runInstant = useCallback(
+    (label: string, patches: FileStatePatch[]) => {
+      if (patches.length === 0) return;
+      const prior = Object.fromEntries(
+        patches.map((p) => [p.path, session.fileStates[p.path] ?? { reviewed: false, hidden: false }]),
+      );
+      local.add(
+        label,
+        patches.map((p) => p.path),
+        prior,
+      );
+      setFileStates.mutate(patches);
+      setMenuOpen(false);
+    },
+    [local, session.fileStates, setFileStates],
+  );
+
+  const undoLocal = useCallback(
+    (req: LocalRequest) => {
+      setFileStates.mutate(
+        req.paths.map((path) => ({
+          path,
+          reviewed: req.prior[path].reviewed,
+          hidden: req.prior[path].hidden,
+        })),
+      );
+      local.remove(req.id);
+    },
+    [local, setFileStates],
+  );
+
+  const sendAgent = useCallback(
+    (prompt: string) => {
+      const text = prompt.trim();
+      if (!text || !connected) return;
+      createRequest.mutate(text);
+      setQuery('');
+      setMenuOpen(false);
+    },
+    [connected, createRequest],
+  );
+
+  const reveal = useCallback(
+    (path: string) => {
+      diffRef.current?.scrollToFile(path);
+      setMenuOpen(false);
+    },
+    [diffRef],
+  );
+
+  const runSuggestion = useCallback(
+    (s: Suggestion) => {
+      switch (s.action.kind) {
+        case 'hide':
+          runInstant(s.label, s.action.paths.map((path) => ({ path, hidden: true })));
+          break;
+        case 'review':
+          runInstant(s.label, s.action.paths.map((path) => ({ path, reviewed: true })));
+          break;
+        case 'reveal':
+          reveal(s.action.path);
+          break;
+      }
+    },
+    [runInstant, reveal],
+  );
+
+  const hidePattern = useCallback(
+    (pattern: string) => {
+      const paths = matchFiles(session.files, pattern);
+      runInstant(`Hid ${paths.length} matching ${pattern}`, paths.map((path) => ({ path, hidden: true })));
+    },
+    [session.files, runInstant],
+  );
+
+  // The flat, ordered row list backing both the menu render and ↑↓/⏎ nav.
+  const rows = useMemo<MenuRow[]>(() => {
+    const out: MenuRow[] = [];
+    const q = query.trim();
+    const matches = q ? matchFiles(session.files, q) : [];
+    if (q && matches.length > 0) {
+      out.push({
+        id: 'tgt-hide',
+        group: 'Target',
+        lane: 'instant',
+        label: `Hide ${matches.length} matching “${q}”`,
+        run: () => runInstant(`Hid ${matches.length} matching ${q}`, matches.map((path) => ({ path, hidden: true }))),
+      });
+      out.push({
+        id: 'tgt-view',
+        group: 'Target',
+        lane: 'instant',
+        label: `Mark ${matches.length} matching viewed`,
+        run: () => runInstant(`Marked ${matches.length} matching viewed`, matches.map((path) => ({ path, reviewed: true }))),
+      });
+    }
+    for (const s of suggestions) {
+      out.push({ id: `sug-${s.id}`, group: 'Suggested', lane: 'instant', label: s.label, run: () => runSuggestion(s) });
+    }
+    if (q) {
+      out.push({ id: 'ask', group: 'Commands', lane: 'agent', label: `Ask Claude: “${q}”`, run: () => sendAgent(q) });
+    }
+    out.push({ id: 'reorg', group: 'Commands', lane: 'agent', label: 'Re-organize into chapters', run: () => sendAgent(REORGANIZE_PROMPT) });
+    recents.forEach((prompt, i) => {
+      out.push({ id: `rec-${i}`, group: 'Recent', lane: 'agent', label: prompt, editText: prompt, run: () => sendAgent(prompt) });
+    });
+    return out;
+  }, [query, session.files, suggestions, recents, runInstant, runSuggestion, sendAgent]);
+
+  useEffect(() => {
+    setActiveIndex((i) => (rows.length === 0 ? 0 : Math.min(i, rows.length - 1)));
+  }, [rows.length]);
 
   if (session.review.status === 'submitted') return null;
 
-  const connected = peerPresent ?? false;
-  const stalePending =
-    connected &&
-    latest !== undefined &&
-    latest.status === 'pending' &&
-    now - new Date(latest.createdAt).getTime() > STALE_PENDING_MS;
-
-  function send() {
-    const text = prompt.trim();
-    if (!text) return;
-    createRequest.mutate(text);
-    setPrompt('');
+  function onComposerKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') {
+      setMenuOpen(false);
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setMenuOpen(true);
+      setActiveIndex((i) => Math.min(i + 1, rows.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      const row = rows[activeIndex];
+      if (menuOpen && row?.editText !== undefined) {
+        e.preventDefault();
+        setQuery(row.editText);
+      }
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const row = rows[activeIndex];
+      if (menuOpen && row) {
+        if (row.lane === 'agent' && !connected) return;
+        row.run();
+      } else {
+        sendAgent(query);
+      }
+    }
   }
 
+  const stream = resultStream(session.aiRequests, local.requests);
+  const active = stream.filter((it) => it.kind === 'ai' && isActive(it.request));
+  const rest = stream.filter((it) => !(it.kind === 'ai' && isActive(it.request)));
+  const shownRest = historyOpen ? rest : rest.slice(0, 1);
+
+  const renderItem = (it: (typeof stream)[number]) =>
+    it.kind === 'ai' ? (
+      <AiResultCard key={it.request.id} request={it.request} diffRef={diffRef} onHideMatching={hidePattern} />
+    ) : (
+      <LocalResultCard key={it.request.id} request={it.request} onUndo={() => undoLocal(it.request)} />
+    );
+
   return (
-    <footer className="ai-bar">
-      {latest ? (
-        <RequestStatus
-          key={latest.id}
-          request={latest}
-          onUndo={() => undoRequest.mutate(latest.id)}
-          undoPending={undoRequest.isPending}
-        />
-      ) : null}
-      <div className="ai-input-row">
-        <input
-          type="text"
-          value={prompt}
-          disabled={!connected}
-          placeholder='Ask Claude — e.g. "mark every import-only rename as viewed"'
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="primary"
-          disabled={!connected || !prompt.trim() || createRequest.isPending}
-          onClick={send}
-        >
-          Send
-        </button>
-        {session.aiRequests.length > 0 ? (
-          <span className="ai-history">
-            <button type="button" onClick={() => setHistoryOpen(!historyOpen)}>
-              History ({session.aiRequests.length})
+    <footer className="ai-bar deck" ref={rootRef}>
+      {active.length > 0 || shownRest.length > 0 ? (
+        <div className="deck-stream">
+          {active.map(renderItem)}
+          {shownRest.map(renderItem)}
+          {rest.length > 1 ? (
+            <button type="button" className="ai-mini deck-history-toggle" onClick={() => setHistoryOpen(!historyOpen)}>
+              {historyOpen ? 'Hide history' : `${rest.length - 1} more`}
             </button>
-            {historyOpen ? (
-              <div className="ai-history-pop">
-                {session.aiRequests.map((request) => (
-                  <RequestStatus
-                    key={request.id}
-                    request={request}
-                    onUndo={() => undoRequest.mutate(request.id)}
-                    undoPending={undoRequest.isPending}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </span>
-        ) : null}
-      </div>
-      {!connected ? (
-        <div className="ai-hint">
-          Claude is not connected — run /cc-review:start in the Claude session to enable AI actions.
+          ) : null}
         </div>
       ) : null}
-      {stalePending ? (
-        <div className="ai-hint">
-          Still queued — Claude may not have picked this up. Resume /cc-review:start in the Claude
-          session to run it; otherwise it expires shortly.
+
+      {menuOpen ? (
+        <CommandMenu rows={rows} activeIndex={activeIndex} connected={connected} onHover={setActiveIndex} />
+      ) : null}
+
+      <div className="deck-row">
+        <div className="deck-chips">
+          {suggestions.length === 0 ? (
+            <span className="deck-empty">No quick actions — ask Claude below.</span>
+          ) : (
+            suggestions.slice(0, 3).map((s) => (
+              <button key={s.id} type="button" className="deck-chip" onClick={() => runSuggestion(s)}>
+                <span className="deck-bolt">⚡</span> {s.label}
+              </button>
+            ))
+          )}
         </div>
+        <div className="deck-input">
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            placeholder="Ask Claude…   ⌘K"
+            onFocus={() => setMenuOpen(true)}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onComposerKey}
+          />
+          <span
+            className={`deck-presence${connected ? ' deck-presence-on' : ''}`}
+            title={connected ? 'Claude connected' : 'Claude not connected'}
+          />
+        </div>
+      </div>
+
+      {!connected ? (
+        <div className="ai-hint">⚡ actions work offline · run /cc-review:start to enable ✦ Claude actions.</div>
       ) : null}
     </footer>
   );

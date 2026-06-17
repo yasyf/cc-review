@@ -978,21 +978,6 @@
   border-top: 1px solid var(--border);
   background: var(--bg-soft);
 }
-.ai-input-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.ai-input-row input[type='text'] {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  padding: 0.4rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-}
 .ai-hint {
   font-size: 0.78rem;
   font-style: italic;
@@ -1062,24 +1047,185 @@
 .ai-unmatched {
   color: var(--warn);
 }
-.ai-history {
+/* Command Deck shell */
+.deck {
   position: relative;
-  flex: none;
+  gap: 0.5rem;
 }
-.ai-history-pop {
+.deck-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.deck-history-toggle {
+  align-self: flex-start;
+}
+.deck-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.deck-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.deck-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  white-space: nowrap;
+}
+.deck-chip:hover {
+  border-color: var(--accent);
+}
+.deck-bolt {
+  color: var(--accent);
+}
+.deck-empty {
+  font-size: 0.78rem;
+  color: var(--dim);
+}
+.deck-input {
+  position: relative;
+  flex: 1;
+  min-width: 8rem;
+  display: flex;
+  align-items: center;
+}
+.deck-input input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 0.4rem 1.6rem 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.deck-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.deck-presence {
   position: absolute;
+  right: 0.5rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--dim);
+}
+.deck-presence-on {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+/* Anchored command menu — grows upward over the diff, no scrim */
+.cmdk {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
   bottom: calc(100% + 0.4rem);
-  right: 0;
-  width: 28rem;
-  max-width: 80vw;
-  max-height: 20rem;
+  max-height: 22rem;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.6rem;
+  padding: 0.4rem;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+}
+.cmdk-group {
+  display: flex;
+  flex-direction: column;
+}
+.cmdk-group + .cmdk-group {
+  margin-top: 0.35rem;
+}
+.cmdk-group-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  padding: 0.2rem 0.45rem;
+}
+.cmdk-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+.cmdk-row-active {
+  background: var(--bg-soft);
+  border-color: var(--border);
+}
+.cmdk-row-disabled {
+  opacity: 0.45;
+}
+.cmdk-lane {
+  flex: none;
+  width: 1rem;
+  text-align: center;
+}
+.cmdk-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmdk-footer,
+.cmdk-empty {
+  font-size: 0.72rem;
+  color: var(--dim);
+  padding: 0.35rem 0.45rem 0.15rem;
+}
+
+/* Result-card additions: live phase, deep-link rows, instant marker */
+.ai-progress {
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 200% 100%;
+  animation: todo-shimmer 1.8s linear infinite;
+}
+.ai-phase {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--dim);
+}
+.ai-status-instant {
+  color: var(--accent);
+}
+.ai-changelink {
+  font: inherit;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+.ai-changelink:hover {
+  text-decoration: underline;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-progress {
+    animation: none;
+  }
 }

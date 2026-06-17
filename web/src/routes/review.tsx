@@ -3,6 +3,7 @@ import { getRouteApi } from '@tanstack/react-router';
 import { AppShell, NotificationsBar } from '@cc-interact/react';
 import { useSession } from '../lib/api';
 import { EventStreamProvider, useEventStream } from '../lib/events';
+import { LocalRequestsProvider } from '../lib/local-requests';
 import { ReviewProvider, useReview } from '../lib/review-context';
 import { UnreadProvider } from '../lib/unread';
 import { ViewPrefsProvider } from '../lib/view-prefs';
@@ -27,30 +28,32 @@ function ReviewContent() {
   return (
     <UnreadProvider reviewId={slug} comments={data.comments} prune={version === undefined}>
       <ViewPrefsProvider reviewId={slug} versionId={data.versionId}>
-        <AppShell
-          header={<SubmitBar session={data} />}
-          notifications={
-            <NotificationsBar
-              connected={connected}
-              notifications={notifications}
-              onDismiss={dismiss}
-            />
-          }
-          sidebar={
-            <Sidebar
-              session={data}
-              onSelectFile={(path) => diffRef.current?.scrollToFile(path)}
-              onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
-            />
-          }
-          main={
-            <>
-              <DiffToolbar session={data} />
-              <DiffView key={data.versionId} session={data} ref={diffRef} />
-            </>
-          }
-          footer={<AiBar session={data} />}
-        />
+        <LocalRequestsProvider versionId={data.versionId}>
+          <AppShell
+            header={<SubmitBar session={data} />}
+            notifications={
+              <NotificationsBar
+                connected={connected}
+                notifications={notifications}
+                onDismiss={dismiss}
+              />
+            }
+            sidebar={
+              <Sidebar
+                session={data}
+                onSelectFile={(path) => diffRef.current?.scrollToFile(path)}
+                onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
+              />
+            }
+            main={
+              <>
+                <DiffToolbar session={data} />
+                <DiffView key={data.versionId} session={data} ref={diffRef} />
+              </>
+            }
+            footer={<AiBar session={data} diffRef={diffRef} />}
+          />
+        </LocalRequestsProvider>
       </ViewPrefsProvider>
     </UnreadProvider>
   );
