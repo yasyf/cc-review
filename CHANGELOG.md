@@ -4,6 +4,34 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0]
+
+Event delivery is now a single decision tree with one reference file per route,
+the no-Monitor fallback no longer idles or blocks organize dispatch, and
+`get_review_files` can no longer overflow the tool-result limit on a large review.
+
+### Added
+- `cc-review watch --once` exits after the first event, so a background relay can
+  deliver one event and relaunch from its cursor — replacing the fifo exit-per-event
+  hack. (Requires cc-interact v0.1.2.)
+- Event delivery is a decision tree (step 3 of `/cc-review:start`): channel tags, a
+  Monitor, an agent-teams streamer teammate, a one-shot streamer subagent, or an
+  inline watcher — each documented in its own `reference/route-*.md`.
+
+### Changed
+- `get_review_files` writes the full file list (`review_files_path`, JSONL) and the
+  organization (`organization_path`, JSON) to disk and inlines only a small or
+  filtered subset, so a large review never overflows the tool-result cap. New
+  `status`/`reviewed`/`hidden` filters narrow the inline subset.
+- On the agent-teams route, organize work runs as a `cc-review:organize` teammate
+  rather than a background agent — an in-process team forbids the lead from spawning
+  background agents.
+
+### Fixed
+- The Monitor-less fallback no longer goes idle or hits the Bash 10-minute timeout:
+  the streamer relays via its completion result instead of a resident teammate,
+  keeping the lead free to dispatch background organize agents.
+
 ## [0.12.0]
 
 AI-bar requests submitted while no Claude session is attached are no longer
