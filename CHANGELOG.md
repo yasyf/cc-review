@@ -4,6 +4,49 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0]
+
+Reviewers are now guided *within* each file, not just across files: per-file
+"what to focus on" hints and per-line marks drive a gutter dot, a hover note,
+and a graded dimming of mechanical noise. This release also carries the
+organize agent's broader AI-bar powers — risk-batch flips, Claude-authored
+annotations, a clarifying-question round-trip, and streamed, fanned-out
+organization.
+
+### Added
+- Per-line review guidance. The organize agent emits, per file, a `focus` line
+  (what to scrutinize and why it carries its risk, distinct from `rationale`'s
+  why-here) and a `lines` array of new-side added-line ranges tagged `focus` or
+  `mechanical` with a hover note. Focus lines get a gutter dot and a hover
+  bubble; a three-tier opacity gradient leaves focus lines at full weight, dims
+  untagged changes, and dims mechanical lines most. A "Focus mode" toggle (on by
+  default) reverts the diff to full weight.
+- `set_file_states_by_risk`: flip every file of a given risk to reviewed/hidden
+  in one server-resolved call — the shortcut for "mark all mechanical changes as
+  viewed".
+- `annotate`: Claude-authored line marks — `highlight` (rendered on the
+  attribution decoration path) or `comment` (reuses the comment pipeline,
+  excluded from the submit gate so it never blocks the reviewer).
+- AI-bar clarifying questions: a request can park on one question
+  (`awaiting_input`); the reviewer answers in the AI bar and the request
+  redispatches carrying the answer.
+- `submit_organization` partial mode: stream chapters as they firm up; the final
+  non-partial submit still enforces full file coverage.
+- `cc-review:classify-batch` subagent so the organize agent fans a large diff out
+  across parallel reviewers instead of bailing.
+
+### Changed
+- The organize agent never bails on volume: it trusts its own risk tags, fans
+  out, streams every batch, and asks only on genuine intent ambiguity.
+- The file tree sidebar dims and strikes through reviewed files.
+
+### Notes
+- **Upgrading wipes local review state** (`~/.cc-review`) per the no-migrations
+  policy. The schema gained the annotations table and `ai_requests`
+  question/answer/attempt columns; the daemon recreates the database on its next
+  start. (Per-line focus data itself needs no schema change — it rides the
+  existing organization JSON.)
+
 ## [0.13.0]
 
 Event delivery is now a single decision tree with one reference file per route,
