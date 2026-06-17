@@ -117,8 +117,7 @@ export interface ChapterFile {
   path: string;
   risk: Risk;
   rationale: string;
-  // Absent on legacy/carry-forward orgs; absent ⇒ no per-line guidance.
-  focus?: string;
+  focus: string;
   lines?: LineNote[];
 }
 
