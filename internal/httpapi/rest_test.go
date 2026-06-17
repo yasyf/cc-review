@@ -472,6 +472,23 @@ func getSessionBody(t *testing.T, srv *httptest.Server, ref string) []byte {
 	return body
 }
 
+func TestSessionFilesPassThroughGeneratedFlag(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	review, _ := createReviewVersion(t, st,
+		`[{"path":"package-lock.json","status":"A","fingerprint":"fp-a","generated":true},`+
+			`{"path":"main.go","status":"A","fingerprint":"fp-b"}]`)
+
+	var session struct {
+		Files json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(getSessionBody(t, srv, review.ID), &session); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(session.Files, []byte(`"generated":true`)) {
+		t.Fatalf("session files JSON dropped the generated flag (raw passthrough broken): %s", session.Files)
+	}
+}
+
 func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 	st, _, srv := newTestServer(t)
 	ctx := context.Background()

@@ -1229,3 +1229,73 @@
     animation: none;
   }
 }
+
+.file-current {
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+.gen-chip {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  color: var(--dim);
+}
+.gen-chip-vendored {
+  color: var(--accent);
+}
+
+.shortcut-help {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.45);
+}
+.shortcut-help-panel {
+  min-width: 22rem;
+  max-width: 30rem;
+  padding: 1.1rem 1.3rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+  font-size: 0.85rem;
+}
+.shortcut-help-title {
+  font-weight: 600;
+  margin-bottom: 0.7rem;
+}
+.shortcut-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+}
+.shortcut-help-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.shortcut-help-row dt {
+  flex: 0 0 4.5rem;
+  margin: 0;
+}
+.shortcut-help-row dd {
+  margin: 0;
+  color: var(--dim);
+}
+.shortcut-help-row kbd {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 0.78rem;
+}

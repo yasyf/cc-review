@@ -303,6 +303,51 @@ func TestReviewFilesIncludesPatchPath(t *testing.T) {
 	}
 }
 
+func TestReviewFilesCarryGeneratedVendored(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	s.alive = aliveSet(100)
+	writeFile(t, repo, "package-lock.json", "{}\n")
+	if err := os.MkdirAll(filepath.Join(repo, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "vendor"), "x.go", "package vendor\n")
+	writeFile(t, repo, "main.go", "package main\n")
+
+	req := Request{Session: "sA", ClaudePID: 100, Cwd: repo}
+	if started := s.handleStart(ctx, req); !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+	resp := s.handleReviewFiles(ctx, req)
+	if !resp.OK {
+		t.Fatalf("review-files: %s", resp.Error)
+	}
+	var rf struct {
+		Files []struct {
+			Path      string `json:"path"`
+			Generated bool   `json:"generated"`
+			Vendored  bool   `json:"vendored"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
+		t.Fatal(err)
+	}
+	type flags struct{ gen, ven bool }
+	byPath := make(map[string]flags, len(rf.Files))
+	for _, f := range rf.Files {
+		byPath[f.Path] = flags{f.Generated, f.Vendored}
+	}
+	if got := byPath["package-lock.json"]; !got.gen || got.ven {
+		t.Errorf("package-lock.json entry = %+v, want generated only", got)
+	}
+	if got := byPath["vendor/x.go"]; got.gen || !got.ven {
+		t.Errorf("vendor/x.go entry = %+v, want vendored only", got)
+	}
+	if got := byPath["main.go"]; got.gen || got.ven {
+		t.Errorf("main.go entry = %+v, want neither flag", got)
+	}
+}
+
 func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)

@@ -41,8 +41,10 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
 //
 // Hidden files (and reviewed files when hideReviewed, unless explicitly peeked
 // via expandOverrides) drop out entirely; the rest sort by the view-mode order
-// map. A reviewed-and-not-peeked file renders collapsed — unless it hosts the
-// open composer, which must never fold away mid-composition.
+// map. A reviewed or auto-collapsed (generated/vendored, via `autoCollapse`)
+// file that isn't peeked renders collapsed — unless it hosts the open composer,
+// which must never fold away mid-composition. Auto-collapsed files stay present
+// (only `hideReviewed` ever hides), so they remain peek-expandable.
 //
 // `version` only changes when the annotation set or collapse state changes
 // (replies and body edits re-render the thread component via its own cache
@@ -61,6 +63,7 @@ export function buildItems(
   order: ReadonlyMap<string, number>,
   hideReviewed: boolean,
   expandOverrides: ReadonlySet<string>,
+  autoCollapse: ReadonlySet<string>,
 ): ReviewItem[] {
   const byFile = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
   for (const comment of comments) {
@@ -94,7 +97,9 @@ export function buildItems(
         ]
       : threads;
     const collapsed =
-      !fileDraft && (fileStates[file.name]?.reviewed ?? false) && !expandOverrides.has(file.name);
+      !fileDraft &&
+      ((fileStates[file.name]?.reviewed ?? false) || autoCollapse.has(file.name)) &&
+      !expandOverrides.has(file.name);
     const base = fileDraft ? 2 * (threads.length + fileDraft.seq) + 1 : 2 * threads.length;
     return {
       id: file.name,

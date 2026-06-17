@@ -83,6 +83,8 @@ export interface FileMeta {
   path: string;
   old_path?: string;
   status: string; // git name-status code: A | M | D | R | C | T
+  generated?: boolean;
+  vendored?: boolean;
 }
 
 // A Claude-authored informational line-range highlight on the diff, added on an

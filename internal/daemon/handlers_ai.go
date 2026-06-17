@@ -394,7 +394,7 @@ func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 	if fail != nil {
 		return *fail
 	}
-	files, err := v.Files()
+	files, err := v.FileFlags()
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -415,12 +415,13 @@ func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 		e := map[string]any{
 			"path": f.Path, "status": f.Status,
 			"reviewed": fs.Reviewed, "hidden": fs.Hidden,
+			"generated": f.Generated, "vendored": f.Vendored,
 		}
 		if f.OldPath != "" {
 			e["old_path"] = f.OldPath
 		}
 		entries = append(entries, e)
-		if matchesReviewFilter(f, fs, b) {
+		if matchesReviewFilter(f.FileChange, fs, b) {
 			selected = append(selected, e)
 		}
 	}

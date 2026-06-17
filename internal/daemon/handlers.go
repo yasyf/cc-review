@@ -17,6 +17,7 @@ import (
 	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/feedback"
+	"github.com/yasyf/cc-review/internal/generated"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/wire"
@@ -161,7 +162,13 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	if err := paths.EnsureReviewDir(sub.ID); err != nil {
 		return errReply(err.Error())
 	}
-	filesJSON, err := json.Marshal(snap.Files)
+	classified := generated.Classify(hc.Ctx, snap.RepoRoot, snap.Files)
+	cfiles := make([]store.ClassifiedFile, len(snap.Files))
+	for i, f := range snap.Files {
+		flags := classified[f.Path]
+		cfiles[i] = store.ClassifiedFile{FileChange: f, Generated: flags.Generated, Vendored: flags.Vendored}
+	}
+	filesJSON, err := json.Marshal(cfiles)
 	if err != nil {
 		return errReply(err.Error())
 	}

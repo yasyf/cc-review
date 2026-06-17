@@ -1,13 +1,6 @@
 import { riskOf } from './order';
 import type { SessionResponse } from './types';
 
-// Lockfiles, snapshots, minified/sourcemap output, and generated code — the noise
-// a reviewer almost always wants hidden. Matched on the basename only.
-const NOISE =
-  /(?:[^/]*-lock\.\w+|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|[^/]*\.snap|[^/]*\.min\.\w+|[^/]*\.map|[^/]*\.gen\.\w+|[^/]*\.pb\.go|[^/]*_pb2\.py)$/i;
-
-const isNoise = (path: string) => NOISE.test(path.split('/').pop() ?? '');
-
 export type SuggestionAction =
   | { kind: 'hide'; paths: string[] }
   | { kind: 'review'; paths: string[] }
@@ -52,7 +45,7 @@ export function deriveSuggestions(session: SessionResponse): Suggestion[] {
     });
   }
 
-  const noise = files.filter((f) => !stateOf(f.path).hidden && isNoise(f.path));
+  const noise = files.filter((f) => !stateOf(f.path).hidden && (f.generated || f.vendored));
   if (noise.length > 0) {
     out.push({
       id: 'hide-noise',

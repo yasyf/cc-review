@@ -29,6 +29,27 @@ func (v Version) Files() ([]vcs.FileChange, error) {
 	return files, nil
 }
 
+// ClassifiedFile is a version file widened with advisory generated/vendored
+// flags. It embeds vcs.FileChange so the path/old_path/status/fingerprint tags
+// pass through unchanged; omitempty keeps the files_json bytes identical to the
+// plain FileChange encoding when both flags are false.
+type ClassifiedFile struct {
+	vcs.FileChange
+	Generated bool `json:"generated,omitempty"`
+	Vendored  bool `json:"vendored,omitempty"`
+}
+
+// FileFlags decodes files_json as the classified superset, reading the
+// generated/vendored flags alongside the base file fields. A key-less blob
+// (written before classification existed) yields zero-value flags.
+func (v Version) FileFlags() ([]ClassifiedFile, error) {
+	var files []ClassifiedFile
+	if err := json.Unmarshal([]byte(v.FilesJSON), &files); err != nil {
+		return nil, fmt.Errorf("version %d: decode file flags: %w", v.ID, err)
+	}
+	return files, nil
+}
+
 // FileState is one file's review-scoped state: hidden persists across
 // versions; reviewed survives exactly while ReviewedFingerprint matches the
 // file's current diff fingerprint.

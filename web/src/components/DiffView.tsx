@@ -38,7 +38,19 @@ import { TurnPopover } from './TurnPopover';
 export interface DiffViewHandle {
   scrollToFile(path: string): void;
   scrollToComment(comment: Comment): void;
+  focusNextFile(): void;
+  focusPrevFile(): void;
+  toggleViewedCurrent(): void;
+  toggleCollapseCurrent(): void;
+  focusNextComment(): void;
+  focusPrevComment(): void;
 }
+
+type CodeViewInstance = NonNullable<ReturnType<CodeViewHandle<AnnotationMeta>['getInstance']>>;
+
+// The current file switches when the next file's top crosses the viewport top
+// (under the sticky header); +1px keeps the boundary inclusive.
+const CURRENT_FILE_OFFSET_PX = 1;
 
 type PendingScroll = { kind: 'file'; path: string } | { kind: 'comment'; comment: Comment };
 
@@ -51,10 +63,30 @@ type Hover =
 // after this many items changes without the target appearing.
 const MAX_PENDING_SCROLL_MISSES = 5;
 
+// Index of the first ordered comment below the current scroll, file-granular
+// (only file tops are exposed, not per-line offsets). `n` targets it, `p` the
+// one before.
+function commentIndexNearScroll(viewer: CodeViewInstance, comments: readonly Comment[]): number {
+  const scrollTop = viewer.getScrollTop();
+  let index = 0;
+  for (let i = 0; i < comments.length; i++) {
+    const top = viewer.getTopForItem(comments[i].filePath);
+    if (top !== undefined && top <= scrollTop + CURRENT_FILE_OFFSET_PX) index = i + 1;
+  }
+  return index;
+}
+
 export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref<DiffViewHandle> }) {
   const { slug, version } = useReview();
-  const { viewMode, hideReviewed, focusMode, expandOverrides, toggleExpandOverride, activeTurnId } =
-    useViewPrefs();
+  const {
+    viewMode,
+    hideReviewed,
+    focusMode,
+    expandOverrides,
+    toggleExpandOverride,
+    clearExpandOverride,
+    activeTurnId,
+  } = useViewPrefs();
   const { mutate: mutateStates } = useSetFileStates(slug, version);
   const codeView = useRef<CodeViewHandle<AnnotationMeta>>(null);
   const seqRef = useRef(0);
@@ -69,6 +101,12 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
 
   const files = useMemo(() => parseFiles(session.patchText), [session.patchText]);
   const order = useMemo(() => fileOrder(session, viewMode), [session, viewMode]);
+  // Generated/vendored files fold by default (peekable), keyed off session.files
+  // so a Viewed toggle never rethrashes the set.
+  const autoCollapse = useMemo(
+    () => new Set(session.files.filter((f) => f.generated || f.vendored).map((f) => f.path)),
+    [session.files],
+  );
   const items = useMemo(
     () =>
       buildItems(
@@ -79,9 +117,39 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         order,
         hideReviewed,
         expandOverrides,
+        autoCollapse,
       ),
-    [files, session.comments, draft, session.fileStates, order, hideReviewed, expandOverrides],
+    [
+      files,
+      session.comments,
+      draft,
+      session.fileStates,
+      order,
+      hideReviewed,
+      expandOverrides,
+      autoCollapse,
+    ],
   );
+
+  // Comments in display order (file rank, then anchor line) — the cursor `n`/`p`
+  // walk. Never derived from getRenderedItems(): off-screen comments must count.
+  const orderedComments = useMemo(
+    () =>
+      [...session.comments].sort((a, b) => {
+        const ra = order.get(a.filePath) ?? Infinity;
+        const rb = order.get(b.filePath) ?? Infinity;
+        if (ra !== rb) return ra - rb;
+        return a.range.end - b.range.end;
+      }),
+    [session.comments, order],
+  );
+
+  // Current-file tracking is DOM-only (a `.file-current` class); routing it
+  // through items/version would re-collapse on every scroll.
+  const currentPathRef = useRef<string | null>(null);
+  const itemsRef = useRef(items);
+  const orderedCommentsRef = useRef(orderedComments);
+  const fileStatesRef = useRef(session.fileStates);
 
   // The draft's typed text is intentionally NOT cleared here: replacing the
   // draft (new selection, other file) carries the in-progress comment along.
@@ -133,6 +201,9 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     annotationsRef.current = annotationsForFile;
     importanceIndexRef.current = importanceIndex;
     focusModeRef.current = focusMode;
+    itemsRef.current = items;
+    orderedCommentsRef.current = orderedComments;
+    fileStatesRef.current = session.fileStates;
   });
 
   useEffect(() => {
@@ -215,6 +286,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
           activeTurnIdRef.current,
         );
         decorateAnnotations(node, annotationsRef.current[context.item.id] ?? []);
+        node.classList.toggle('file-current', context.item.id === currentPathRef.current);
       },
       onLineEnter: (
         props: { lineNumber: number; lineElement: HTMLElement; lineType?: LineTypes },
@@ -284,10 +356,65 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       if (state?.hidden) {
         mutateStates([{ path, hidden: false }], { onError: () => setPendingScroll(null) });
       }
-      if (state?.reviewed && !expandOverrides.has(path)) toggleExpandOverride(path);
+      if ((state?.reviewed || autoCollapse.has(path)) && !expandOverrides.has(path)) {
+        toggleExpandOverride(path);
+      }
     },
-    [session.fileStates, expandOverrides, toggleExpandOverride, mutateStates],
+    [session.fileStates, expandOverrides, toggleExpandOverride, mutateStates, autoCollapse],
   );
+
+  // Repaint the `.file-current` class on what's mounted now; onPostRender covers
+  // rows rendered afterwards (recycled or scrolled into view).
+  const applyCurrentPath = useCallback((path: string | null) => {
+    if (currentPathRef.current === path) return;
+    currentPathRef.current = path;
+    const viewer = codeView.current?.getInstance();
+    if (!viewer) return;
+    for (const rendered of viewer.getRenderedItems()) {
+      rendered.element.classList.toggle('file-current', rendered.id === path);
+    }
+  }, []);
+
+  // Topmost file whose measured top sits at/above the viewport top — the file
+  // the sticky header currently represents. Walks the full in-memory order.
+  const syncCurrentFromScroll = useCallback(
+    (viewer: CodeViewInstance) => {
+      const scrollTop = viewer.getScrollTop();
+      const list = itemsRef.current;
+      let currentId: string | null = list.length > 0 ? list[0].id : null;
+      for (const item of list) {
+        const top = viewer.getTopForItem(item.id);
+        if (top === undefined) continue;
+        if (top <= scrollTop + CURRENT_FILE_OFFSET_PX) currentId = item.id;
+        else break;
+      }
+      applyCurrentPath(currentId);
+    },
+    [applyCurrentPath],
+  );
+
+  // j/k glide: scroll to a file without peeking it open (no reveal()).
+  const goToFile = useCallback(
+    (path: string) => {
+      codeView.current?.scrollTo({ type: 'item', id: path, align: 'start', behavior: 'smooth' });
+      applyCurrentPath(path);
+    },
+    [applyCurrentPath],
+  );
+
+  const scrollToCommentImpl = useCallback(
+    (comment: Comment) => {
+      reveal(comment.filePath);
+      pendingScrollMisses.current = 0;
+      setPendingScroll({ kind: 'comment', comment });
+    },
+    [reveal],
+  );
+
+  useEffect(() => {
+    const viewer = codeView.current?.getInstance();
+    if (viewer) syncCurrentFromScroll(viewer);
+  }, [items, syncCurrentFromScroll]);
 
   useImperativeHandle(
     ref,
@@ -298,12 +425,56 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         setPendingScroll({ kind: 'file', path });
       },
       scrollToComment(comment: Comment) {
-        reveal(comment.filePath);
-        pendingScrollMisses.current = 0;
-        setPendingScroll({ kind: 'comment', comment });
+        scrollToCommentImpl(comment);
+      },
+      focusNextFile() {
+        const list = itemsRef.current;
+        if (list.length === 0) return;
+        const idx = list.findIndex((item) => item.id === currentPathRef.current);
+        goToFile(list[idx < 0 ? 0 : Math.min(idx + 1, list.length - 1)].id);
+      },
+      focusPrevFile() {
+        const list = itemsRef.current;
+        if (list.length === 0) return;
+        const idx = list.findIndex((item) => item.id === currentPathRef.current);
+        goToFile(list[idx < 0 ? 0 : Math.max(idx - 1, 0)].id);
+      },
+      toggleViewedCurrent() {
+        const path = currentPathRef.current;
+        if (!path) return;
+        const reviewed = fileStatesRef.current[path]?.reviewed ?? false;
+        if (reviewed) {
+          mutateStates([{ path, reviewed: false }]);
+          return;
+        }
+        // Capture the next file before mutating: with hideReviewed on, the just-
+        // viewed file leaves `items` and the indices shift under us.
+        const list = itemsRef.current;
+        const nextId = list[list.findIndex((item) => item.id === path) + 1]?.id ?? null;
+        clearExpandOverride(path);
+        mutateStates([{ path, reviewed: true }]);
+        if (nextId) goToFile(nextId);
+      },
+      toggleCollapseCurrent() {
+        const path = currentPathRef.current;
+        if (path) toggleExpandOverride(path);
+      },
+      focusNextComment() {
+        const comments = orderedCommentsRef.current;
+        const viewer = codeView.current?.getInstance();
+        if (comments.length === 0 || !viewer) return;
+        const i = commentIndexNearScroll(viewer, comments);
+        scrollToCommentImpl(comments[Math.min(i, comments.length - 1)]);
+      },
+      focusPrevComment() {
+        const comments = orderedCommentsRef.current;
+        const viewer = codeView.current?.getInstance();
+        if (comments.length === 0 || !viewer) return;
+        const i = commentIndexNearScroll(viewer, comments);
+        scrollToCommentImpl(comments[Math.max(i - 1, 0)]);
       },
     }),
-    [reveal],
+    [reveal, scrollToCommentImpl, goToFile, mutateStates, toggleExpandOverride, clearExpandOverride],
   );
 
   useEffect(() => {
@@ -340,6 +511,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         className="codeview"
         items={items}
         options={options}
+        onScroll={(_, viewer) => syncCurrentFromScroll(viewer)}
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
       />

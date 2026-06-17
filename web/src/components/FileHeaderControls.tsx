@@ -15,7 +15,11 @@ export function FileHeaderControls({ path }: { path: string }) {
 
   const state = data.fileStates[path] ?? { reviewed: false, hidden: false };
   const cf = chapterFileOf(data.organization, path);
-  const expanded = !state.reviewed || expandOverrides.has(path);
+  const meta = data.files.find((f) => f.path === path);
+  const generated = meta?.generated;
+  const vendored = meta?.vendored;
+  const collapsible = state.reviewed || !!generated || !!vendored;
+  const expanded = expandOverrides.has(path) || !collapsible;
 
   function setReviewed(reviewed: boolean) {
     // A fresh "Viewed" always re-collapses, even after an earlier peek.
@@ -26,6 +30,11 @@ export function FileHeaderControls({ path }: { path: string }) {
   return (
     <span className="file-controls">
       {cf?.risk ? <span className={`risk-chip risk-${cf.risk}`}>{cf.risk}</span> : null}
+      {generated ? (
+        <span className="gen-chip gen-chip-generated">generated</span>
+      ) : vendored ? (
+        <span className="gen-chip gen-chip-vendored">vendored</span>
+      ) : null}
       {cf?.focus ? (
         <span className="file-focus" title={cf.focus}>
           Focus: {cf.focus}
@@ -36,7 +45,7 @@ export function FileHeaderControls({ path }: { path: string }) {
           {cf.rationale}
         </span>
       ) : null}
-      {state.reviewed ? (
+      {collapsible ? (
         <button
           type="button"
           className="file-expand"

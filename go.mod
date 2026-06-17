@@ -11,11 +11,15 @@ require (
 	modernc.org/sqlite v1.52.0
 )
 
-require github.com/yasyf/cc-interact v0.1.4
+require (
+	github.com/go-enry/go-enry/v2 v2.9.6
+	github.com/yasyf/cc-interact v0.1.4
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
+	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
