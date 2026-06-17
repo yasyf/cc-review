@@ -6,6 +6,7 @@ export interface RowFile {
   path: string;
   risk?: Risk;
   rationale?: string;
+  focus?: string;
 }
 
 export function FileRow({
@@ -25,7 +26,10 @@ export function FileRow({
 }) {
   const name = file.path.split('/').pop();
   return (
-    <div className={`chapter-row${reviewed ? ' chapter-row-reviewed' : ''}`} title={file.rationale}>
+    <div
+      className={`chapter-row${reviewed ? ' chapter-row-reviewed' : ''}`}
+      title={[file.focus && `Focus: ${file.focus}`, file.rationale].filter(Boolean).join('\n')}
+    >
       <input type="checkbox" checked={reviewed} onChange={onToggle} aria-label="Viewed" />
       <button type="button" className="chapter-row-path" onClick={onSelect}>
         {name}

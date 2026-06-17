@@ -1,5 +1,5 @@
 import { useSession, useSetFileStates } from '../lib/api';
-import { riskOf } from '../lib/order';
+import { chapterFileOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import { useViewPrefs } from '../lib/view-prefs';
 
@@ -14,7 +14,7 @@ export function FileHeaderControls({ path }: { path: string }) {
   if (!data) return null;
 
   const state = data.fileStates[path] ?? { reviewed: false, hidden: false };
-  const risk = riskOf(data.organization, path);
+  const cf = chapterFileOf(data.organization, path);
   const expanded = !state.reviewed || expandOverrides.has(path);
 
   function setReviewed(reviewed: boolean) {
@@ -25,7 +25,17 @@ export function FileHeaderControls({ path }: { path: string }) {
 
   return (
     <span className="file-controls">
-      {risk ? <span className={`risk-chip risk-${risk}`}>{risk}</span> : null}
+      {cf?.risk ? <span className={`risk-chip risk-${cf.risk}`}>{cf.risk}</span> : null}
+      {cf?.focus ? (
+        <span className="file-focus" title={cf.focus}>
+          Focus: {cf.focus}
+        </span>
+      ) : null}
+      {cf?.rationale ? (
+        <span className="file-rationale" title={cf.rationale}>
+          {cf.rationale}
+        </span>
+      ) : null}
       {state.reviewed ? (
         <button
           type="button"

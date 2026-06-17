@@ -556,6 +556,52 @@
   color: var(--dim);
 }
 
+.focus-popover {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 24rem;
+  padding: 0.45rem 0.55rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+  font-size: 0.78rem;
+}
+.focus-popover-chip {
+  align-self: flex-start;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+.focus-popover-focus .focus-popover-chip {
+  color: #e0a000;
+}
+.focus-popover-mechanical .focus-popover-chip {
+  color: var(--dim);
+}
+.focus-popover-note {
+  line-height: 1.4;
+}
+
+.file-focus,
+.file-rationale {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-rationale {
+  color: var(--dim);
+}
+
 .turn-activity-panel {
   flex: 1;
   min-height: 0;

@@ -1,6 +1,6 @@
 ---
 name: organize
-description: Organize the open cc-review into a reviewable story — chapters of files with per-file risk and rationale — and execute AI-bar requests from the reviewer (bulk-mark files reviewed or by risk tag, hide noise, re-organize, annotate the diff, ask a clarifying question when intent is unclear). Dispatched in the background by /cc-review:start with one AI request JSON as the prompt. Fans large diffs out across cc-review:classify-batch subagents and streams results live.
+description: Organize the open cc-review into a reviewable story — chapters of files with per-file risk, rationale, and per-line focus — and execute AI-bar requests from the reviewer (bulk-mark files reviewed or by risk tag, hide noise, re-organize, annotate the diff, ask a clarifying question when intent is unclear). Dispatched in the background by /cc-review:start with one AI request JSON as the prompt. Fans large diffs out across cc-review:classify-batch subagents and streams results live.
 tools: mcp__plugin_cc-review_cc-review__get_review_files, mcp__plugin_cc-review_cc-review__submit_organization, mcp__plugin_cc-review_cc-review__set_file_states, mcp__plugin_cc-review_cc-review__set_file_states_by_risk, mcp__plugin_cc-review_cc-review__annotate, mcp__plugin_cc-review_cc-review__update_ai_request, mcp__plugin_cc-review_cc-review__reply, Task, Read, Grep, Glob
 ---
 
@@ -20,8 +20,16 @@ Open the request with `update_ai_request {ai_request_id: <id>, status: "working"
    submit_organization {
      overview,        // 2-4 sentences, non-engineer language: motivation + outcome. null if you cannot state the motivation honestly.
      version_number,  // from get_review_files — stale submissions are rejected; re-run against the latest diff.
-     chapters: [{ title, summary, files: [{ path, risk, rationale }] }]
+     chapters: [{ title, summary, files: [{
+       path,
+       risk,          // high | medium | low | mechanical
+       rationale,     // one line: why this file is in this chapter
+       focus,         // one line: what to scrutinize in this file and why it carries that risk — distinct from rationale
+       lines          // [] or new-side ranges worth flagging: [{ start, end, level, note }]
+     }] }]
    }
+
+   `lines` anchors to NEW-SIDE file line numbers — the right-hand column of the unified diff. Count from each hunk's `@@ … +N` header: advance on context and added lines, skip deletions, tag only added (`+`) lines. `start`/`end` are an inclusive span; one line → `start == end`. `level: "focus"` marks the 1-3 lines most worth scrutiny — `note` is the one-clause hint the reviewer reads on hover. `level: "mechanical"` marks obvious noise: generated, renamed, reformatted, boilerplate, log/print. Tag signal and obvious noise only; leave ordinary changed lines untagged; `lines: []` when nothing stands out. Do not pad.
 
    The tool validates that every changed file appears in exactly one chapter and rejects with the missing/unknown paths on mismatch. Fix and resubmit.
 
@@ -29,14 +37,14 @@ Open the request with `update_ai_request {ai_request_id: <id>, status: "working"
 
 ### Fan out a large diff, stream as you go
 
-A diff too large to rate file-by-file in one read: fan it out. Split the `review_files_path` list into batches of ~25–40 files and dispatch a `cc-review:classify-batch` subagent per batch with `Task` — in parallel, several `Task` calls in one message — each handed `patch_path` and its slice of paths. Each returns `[{path, risk, rationale}]`. **Stream as the batches land:** fold each returned batch into the organization and `submit_organization {partial: true, …}` with the chapters built so far, so the reviewer watches the review materialize. When the last batch is in, send one final `submit_organization` (omit `partial`) covering every changed file, then close the request — the final submit's full-coverage check is what guarantees nothing was dropped. If `Task` is unavailable here, work the patch in sequential batches yourself, still streaming each partial submit; never collapse to a refusal.
+A diff too large to rate file-by-file in one read: fan it out. Split the `review_files_path` list into batches of ~25–40 files and dispatch a `cc-review:classify-batch` subagent per batch with `Task` — in parallel, several `Task` calls in one message — each handed `patch_path` and its slice of paths. Each returns `[{path, risk, rationale, focus, lines}]`. **Stream as the batches land:** fold each returned batch into the organization and `submit_organization {partial: true, …}` with the chapters built so far, so the reviewer watches the review materialize. When the last batch is in, send one final `submit_organization` (omit `partial`) covering every changed file, then close the request — the final submit's full-coverage check is what guarantees nothing was dropped. If `Task` is unavailable here, work the patch in sequential batches yourself, still streaming each partial submit; never collapse to a refusal.
 
 ### Rebuild from a prior organization
 
 When `get_review_files` returns `organization_path`, `Read` it: the last submitted `overview` and chapters with `basis_version`, per-file `delta` marks, and `new_paths`. Start from it — never re-chapter from scratch.
 
-- No `delta` → copy the file verbatim: same chapter, risk, rationale.
-- `delta: "changed"` → re-read its diff; re-rate risk and rewrite the rationale. A stale rationale is worse than none.
+- No `delta` → copy the file verbatim: same chapter, risk, rationale, focus, lines.
+- `delta: "changed"` → re-read its diff; re-rate risk, rewrite rationale and focus, and recompute lines against the new diff. A stale rationale or a stale line number is worse than none.
 - `delta: "moved"` → submit `now` as the path; re-read like changed.
 - `delta: "removed"` → drop the file; drop the chapter when it empties.
 - `new_paths` → put each in the chapter its change causally belongs to; open a new chapter only when none fits.
@@ -65,7 +73,7 @@ When the dispatch prompt is a re-rank fact — one line, the new fact plus a fil
 - Title: action-oriented verb phrase, 8 words max. "Add per-file review state to the store", not "Store changes".
 - Summary: 2-3 sentences. Lead with impact, then the causal link to prior chapters — "Now that file states persist, the SSE bus broadcasts them." Talk like a coworker walking someone through the PR. Never "this change introduces".
 - End a summary with at most one question, and only when a human must decide something a linter or CI cannot: product intent, a convention, a naming choice. Most chapters end with none.
-- rationale, per file, one line: why it is in this chapter and what to verify. "New DDL — confirm the reviewed_fingerprint semantics match the unmark rule."
+- rationale, per file, one line: why it is in this chapter — "New DDL for the reviewed-state carry-forward." What to scrutinize is the focus's job (below), not the rationale's.
 
 ### Per-file risk
 
@@ -75,6 +83,12 @@ Rate the danger of skimming the file, not its size. When torn between two levels
 - medium — behavior change with real callers; reversible; partially tested.
 - low — localized logic, covered by tests, trivially revertable.
 - mechanical — safe to skim: import-only renames, generated files, lockfiles, pure formatting, tool-driven mass renames. Mark these honestly; the reviewer's time is the budget. The `mechanical` tag is load-bearing — the reviewer flips every mechanical file to "viewed" in one click, trusting that none hides a real edit. A file that *looks* like a bulk rename but slips in a logic change (a new branch, a changed default, an added skip-rule) is **not** mechanical — rate it `low` or `medium`. When in doubt, it is not mechanical.
+
+### Per-file focus and line notes
+
+- focus, one line: where in this file the reviewer should look and why it carries the risk you rated — "unbounded retry loop; confirm it can't spin forever". rationale says why the file is here; focus says what to distrust. A mechanical file still gets one: "rename only, nothing to scrutinize."
+- lines: the 1-3 added lines most worth scrutiny → `{ start, end, level: "focus", note }`, where note is the hover hint. Obvious noise — generated code, renamed symbols, pure formatting, boilerplate, log/print → `{ start, end, level: "mechanical", note }`. Number against the new side (the diff's right-hand column); ranges are inclusive and tight. Flag signal and obvious noise only — never line-by-line. Nothing to flag → `lines: []`.
+- Any line note switches the whole file into the focus gradient: its untagged changes dim and the flagged lines stand out. A file with no line notes renders normally. So flag the few lines that carry the file, or flag none — never one trivial line that dims everything around it.
 
 ## Handle an AI bar request (source: "user")
 

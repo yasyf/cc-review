@@ -11,13 +11,20 @@ export interface TodoGroup {
   files: ChapterFile[];
 }
 
-export function riskOf(organization: Organization | null, path: string): Risk | null {
+export function chapterFileOf(
+  organization: Organization | null,
+  path: string,
+): ChapterFile | null {
   if (!organization) return null;
   for (const chapter of organization.chapters) {
     const file = chapter.files.find((f) => f.path === path);
-    if (file) return file.risk;
+    if (file) return file;
   }
   return null;
+}
+
+export function riskOf(organization: Organization | null, path: string): Risk | null {
+  return chapterFileOf(organization, path)?.risk ?? null;
 }
 
 // Chapters ranked scariest-first: best (lowest) risk rank, then high count,

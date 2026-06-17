@@ -119,9 +119,21 @@ type AIRequest struct {
 
 // ChapterFile is one file within a chapter, rated by the danger of skimming it.
 type ChapterFile struct {
-	Path      string `json:"path"`
-	Risk      string `json:"risk"` // high | medium | low | mechanical
-	Rationale string `json:"rationale"`
+	Path      string     `json:"path"`
+	Risk      string     `json:"risk"`      // high | medium | low | mechanical
+	Rationale string     `json:"rationale"` // why this file is here
+	Focus     string     `json:"focus"`     // what to scrutinize here and why it carries this risk
+	Lines     []LineNote `json:"lines"`     // importance ranges over NEW-side added lines; empty => renders normally
+}
+
+// LineNote marks an importance range of added (NEW-side) lines within a file,
+// anchored 1-based like comments and turn attributions: focus lines get full
+// weight plus a gutter dot, mechanical lines are dimmed most.
+type LineNote struct {
+	Start int    `json:"start"` // first added line (NEW-side, 1-based), inclusive
+	End   int    `json:"end"`   // last added line, inclusive
+	Level string `json:"level"` // focus | mechanical
+	Note  string `json:"note"`  // hover-bubble hint
 }
 
 // Chapter is one ordered story beat of a review.

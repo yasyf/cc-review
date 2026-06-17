@@ -11,7 +11,8 @@ const MODES: { id: ViewMode; label: string }[] = [
 ];
 
 export function DiffToolbar({ session }: { session: SessionResponse }) {
-  const { viewMode, setViewMode, hideReviewed, setHideReviewed } = useViewPrefs();
+  const { viewMode, setViewMode, hideReviewed, setHideReviewed, focusMode, setFocusMode } =
+    useViewPrefs();
 
   const hasOrganization = session.organization !== null;
   const organizing = isOrganizing(session.aiRequests);
@@ -35,6 +36,14 @@ export function DiffToolbar({ session }: { session: SessionResponse }) {
       </div>
       {organizing ? <span className="organizing-chip">organizing…</span> : null}
       <TurnLegend turns={session.turns} />
+      <label className="hide-reviewed">
+        <input
+          type="checkbox"
+          checked={focusMode}
+          onChange={(e) => setFocusMode(e.target.checked)}
+        />
+        Focus mode
+      </label>
       <label className="hide-reviewed">
         <input
           type="checkbox"

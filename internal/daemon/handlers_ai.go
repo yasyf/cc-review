@@ -542,7 +542,7 @@ func organizationContext(org store.Organization, basis, current store.Version) (
 	for _, ch := range org.Chapters {
 		files := make([]map[string]any, 0, len(ch.Files))
 		for _, f := range ch.Files {
-			entry := map[string]any{"path": f.Path, "risk": f.Risk, "rationale": f.Rationale}
+			entry := map[string]any{"path": f.Path, "risk": f.Risk, "rationale": f.Rationale, "focus": f.Focus}
 			bf := basisByPath[f.Path]
 			origin := bf.OldPath
 			if origin == "" {
@@ -559,6 +559,11 @@ func organizationContext(org store.Organization, basis, current store.Version) (
 				entry["now"] = cf.Path
 			} else {
 				entry["delta"] = "removed"
+			}
+			// New-side line numbers only hold for files whose diff is unchanged; for
+			// changed/moved/removed files they are stale, so omit them.
+			if _, hasDelta := entry["delta"]; !hasDelta && len(f.Lines) > 0 {
+				entry["lines"] = f.Lines
 			}
 			files = append(files, entry)
 		}

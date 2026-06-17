@@ -917,11 +917,13 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 	req, started := startedReview(t, s, repo)
 
 	type rfFile struct {
-		Path      string `json:"path"`
-		Risk      string `json:"risk"`
-		Rationale string `json:"rationale"`
-		Delta     string `json:"delta"`
-		Now       string `json:"now"`
+		Path      string           `json:"path"`
+		Risk      string           `json:"risk"`
+		Rationale string           `json:"rationale"`
+		Focus     string           `json:"focus"`
+		Lines     []store.LineNote `json:"lines"`
+		Delta     string           `json:"delta"`
+		Now       string           `json:"now"`
 	}
 	type rfOrg struct {
 		BasisVersion int `json:"basis_version"`
@@ -962,15 +964,32 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 		t.Fatalf("unorganized review returned organization %+v", org)
 	}
 
-	submitOrg(t, s, req, started.Version, "a.go", "b.go", "lib.go")
+	// lib.go carries a NEW-side line note; every file carries a focus string.
+	libLines := []store.LineNote{{Start: 22, End: 22, Level: "focus", Note: "the added func"}}
+	annotated := store.Organization{Chapters: []store.Chapter{{Title: "All", Summary: "s", Files: []store.ChapterFile{
+		{Path: "a.go", Risk: "low", Rationale: "r", Focus: "the a"},
+		{Path: "b.go", Risk: "low", Rationale: "r", Focus: "the b"},
+		{Path: "lib.go", Risk: "low", Rationale: "r", Focus: "the lib", Lines: libLines},
+	}}}}
+	sr := req
+	sr.Organization = &annotated
+	sr.VersionNumber = started.Version
+	if resp := s.handleSubmitOrganization(ctx, sr); !resp.OK {
+		t.Fatalf("submit organization: %s", resp.Error)
+	}
 	version, org := reviewFiles()
 	if org == nil || org.BasisVersion != version {
 		t.Fatalf("live organization = %+v at version %d, want basis == version", org, version)
 	}
+	live := make(map[string]rfFile, len(org.Chapters[0].Files))
 	for _, f := range org.Chapters[0].Files {
 		if f.Delta != "" {
 			t.Fatalf("live organization annotated %s as %q", f.Path, f.Delta)
 		}
+		live[f.Path] = f
+	}
+	if f := live["lib.go"]; f.Focus != "the lib" || !reflect.DeepEqual(f.Lines, libLines) {
+		t.Fatalf("live lib.go focus = %q lines = %v, want focus + lines carried on the unchanged file", f.Focus, f.Lines)
 	}
 	if len(org.NewPaths) != 0 {
 		t.Fatalf("live organization new_paths = %v, want none", org.NewPaths)
@@ -1003,6 +1022,14 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 	}
 	if f := deltas["lib.go"]; f.Delta != "moved" || f.Now != "moved.go" {
 		t.Fatalf("lib.go delta = %q now = %q, want moved to moved.go", f.Delta, f.Now)
+	}
+	// focus rides along regardless of delta, but moved-file line numbers are stale
+	// and must be suppressed.
+	if f := deltas["lib.go"]; f.Focus != "the lib" {
+		t.Fatalf("lib.go focus = %q, want carried through the move", f.Focus)
+	}
+	if f := deltas["lib.go"]; len(f.Lines) != 0 {
+		t.Fatalf("lib.go lines = %v, want suppressed for the moved file", f.Lines)
 	}
 	if !reflect.DeepEqual(org.NewPaths, []string{"c.go"}) {
 		t.Fatalf("new_paths = %v, want [c.go]", org.NewPaths)

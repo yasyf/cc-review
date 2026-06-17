@@ -104,10 +104,22 @@ export interface FileState {
 
 export type Risk = 'high' | 'medium' | 'low' | 'mechanical';
 
+export type LineLevel = 'focus' | 'mechanical';
+
+export interface LineNote {
+  start: number;
+  end: number;
+  level: LineLevel;
+  note: string;
+}
+
 export interface ChapterFile {
   path: string;
   risk: Risk;
   rationale: string;
+  // Absent on legacy/carry-forward orgs; absent ⇒ no per-line guidance.
+  focus?: string;
+  lines?: LineNote[];
 }
 
 export interface Chapter {

@@ -6,6 +6,7 @@ export type ViewMode = 'default' | 'story' | 'todo';
 interface StoredPrefs {
   viewMode: ViewMode;
   hideReviewed: boolean;
+  focusMode: boolean;
 }
 
 const storageKey = (reviewId: string) => `cc-review:view:${reviewId}`;
@@ -16,9 +17,18 @@ function sanitizeViewMode(stored: unknown): ViewMode {
 
 function readPrefs(reviewId: string): StoredPrefs {
   const raw = localStorage.getItem(storageKey(reviewId));
-  if (!raw) return { viewMode: 'default', hideReviewed: false };
-  const stored = JSON.parse(raw) as { viewMode?: unknown; hideReviewed?: unknown };
-  return { viewMode: sanitizeViewMode(stored.viewMode), hideReviewed: stored.hideReviewed === true };
+  if (!raw) return { viewMode: 'default', hideReviewed: false, focusMode: true };
+  const stored = JSON.parse(raw) as {
+    viewMode?: unknown;
+    hideReviewed?: unknown;
+    focusMode?: unknown;
+  };
+  return {
+    viewMode: sanitizeViewMode(stored.viewMode),
+    hideReviewed: stored.hideReviewed === true,
+    // Default-on: only an explicit stored `false` disables focus mode.
+    focusMode: stored.focusMode !== false,
+  };
 }
 
 interface ViewPrefsValue extends StoredPrefs {
@@ -30,6 +40,7 @@ interface ViewPrefsValue extends StoredPrefs {
   activeTurnId: string | null;
   setViewMode(mode: ViewMode): void;
   setHideReviewed(hide: boolean): void;
+  setFocusMode(focus: boolean): void;
   toggleExpandOverride(path: string): void;
   clearExpandOverride(path: string): void;
   setActiveTurnId(id: string | null): void;
@@ -76,6 +87,10 @@ export function ViewPrefsProvider({
     setPrefs((prev) => ({ ...prev, hideReviewed }));
   }, []);
 
+  const setFocusMode = useCallback((focusMode: boolean) => {
+    setPrefs((prev) => ({ ...prev, focusMode }));
+  }, []);
+
   const toggleExpandOverride = useCallback((path: string) => {
     setExpandOverrides((prev) => {
       const next = new Set(prev);
@@ -102,6 +117,7 @@ export function ViewPrefsProvider({
         activeTurnId,
         setViewMode,
         setHideReviewed,
+        setFocusMode,
         toggleExpandOverride,
         clearExpandOverride,
         setActiveTurnId,

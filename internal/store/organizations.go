@@ -12,6 +12,8 @@ import (
 
 var risks = map[string]bool{"high": true, "medium": true, "low": true, "mechanical": true}
 
+var lineLevels = map[string]bool{"focus": true, "mechanical": true}
+
 // Validate enforces exact coverage against a version's changed paths: every
 // path in exactly one chapter, no unknown paths, and a known risk per file.
 // The error enumerates every offending path so Claude can self-correct.
@@ -38,6 +40,14 @@ func (o Organization) validate(versionPaths []string, partial bool) error {
 		for _, f := range ch.Files {
 			if !risks[f.Risk] {
 				return fmt.Errorf("organization: file %s has unknown risk %q (want high | medium | low | mechanical)", f.Path, f.Risk)
+			}
+			for _, ln := range f.Lines {
+				if !lineLevels[ln.Level] {
+					return fmt.Errorf("organization: file %s line note has unknown level %q (want focus | mechanical)", f.Path, ln.Level)
+				}
+				if ln.Start < 1 || ln.Start > ln.End {
+					return fmt.Errorf("organization: file %s has invalid line range %d-%d (want 1 <= start <= end)", f.Path, ln.Start, ln.End)
+				}
 			}
 			switch {
 			case !known[f.Path]:

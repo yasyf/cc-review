@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +11,16 @@ import (
 func chapter(title string, paths ...string) Chapter {
 	files := make([]ChapterFile, 0, len(paths))
 	for _, p := range paths {
+		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r"})
+	}
+	return Chapter{Title: title, Summary: "s", Files: files}
+}
+
+// chapterWithLines covers path (carrying focus + line notes) plus rest, so a
+// Validate case can exercise a line note while still satisfying 1:1 coverage.
+func chapterWithLines(title, path string, lines []LineNote, rest ...string) Chapter {
+	files := []ChapterFile{{Path: path, Risk: "low", Rationale: "r", Focus: "f", Lines: lines}}
+	for _, p := range rest {
 		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r"})
 	}
 	return Chapter{Title: title, Summary: "s", Files: files}
@@ -33,6 +44,17 @@ func TestOrganizationValidate(t *testing.T) {
 			[]string{"missing paths: b.go, c.go", "unknown paths: zzz.go"}},
 		{"unknown risk", Organization{Chapters: []Chapter{{Title: "one", Files: []ChapterFile{{Path: "a.go", Risk: "scary"}}}}},
 			[]string{`unknown risk "scary"`}},
+		{"focus and lines pass", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+			[]LineNote{{Start: 1, End: 3, Level: "focus", Note: "n"}, {Start: 5, End: 5, Level: "mechanical"}}, "b.go", "c.go")}}, nil},
+		{"unknown line level", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+			[]LineNote{{Start: 1, End: 2, Level: "scary"}}, "b.go", "c.go")}},
+			[]string{`unknown level "scary"`}},
+		{"line range starts below one", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+			[]LineNote{{Start: 0, End: 3, Level: "focus"}}, "b.go", "c.go")}},
+			[]string{"invalid line range 0-3"}},
+		{"line range start past end", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+			[]LineNote{{Start: 5, End: 2, Level: "focus"}}, "b.go", "c.go")}},
+			[]string{"invalid line range 5-2"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.org.Validate(versionPaths)
@@ -133,5 +155,47 @@ func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	got, _, _ = s.GetOrganization(ctx, v.ID)
 	if got.Overview != nil || len(got.Chapters) != 1 || got.Chapters[0].Title != "Everything" {
 		t.Fatalf("replacement = %+v", got)
+	}
+}
+
+// A legacy blob written before focus/lines existed decodes with zero values, so
+// older organizations keep loading without a migration.
+func TestOrganizationDecodeLegacyBlob(t *testing.T) {
+	const legacy = `{"overview":"o","chapters":[{"title":"t","summary":"s","files":[{"path":"a.go","risk":"low","rationale":"r"}]}]}`
+	var org Organization
+	if err := json.Unmarshal([]byte(legacy), &org); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f := org.Chapters[0].Files[0]
+	if f.Focus != "" {
+		t.Fatalf("focus = %q, want empty", f.Focus)
+	}
+	if f.Lines != nil {
+		t.Fatalf("lines = %v, want nil", f.Lines)
+	}
+}
+
+func TestOrganizationUpsertRoundTripWithLines(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]")
+
+	org := Organization{Chapters: []Chapter{{Title: "Store", Summary: "s", Files: []ChapterFile{
+		{Path: "annotated.go", Risk: "high", Rationale: "r", Focus: "scrutinize the new guard", Lines: []LineNote{
+			{Start: 1, End: 4, Level: "focus", Note: "the guard"},
+			{Start: 10, End: 12, Level: "mechanical"},
+		}},
+		{Path: "plain.go", Risk: "low", Rationale: "r"},
+	}}}}
+	if err := s.UpsertOrganization(ctx, v.ID, org); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, ok, err := s.GetOrganization(ctx, v.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if !reflect.DeepEqual(got, org) {
+		t.Fatalf("round-trip = %+v, want %+v", got, org)
 	}
 }

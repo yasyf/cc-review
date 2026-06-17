@@ -12,17 +12,24 @@ import {
   turnIdAt,
 } from '../lib/attribution';
 import type { TurnIndexEntry } from '../lib/attribution';
+import {
+  IMPORTANCE_UNSAFE_CSS,
+  buildImportanceIndex,
+  decorateImportance,
+  noteAt,
+} from '../lib/importance';
 import { ANNOTATION_UNSAFE_CSS, annotationsByFile, decorateAnnotations } from '../lib/annotations';
 import { buildItems, parseFiles } from '../lib/diff';
 import type { AnnotationMeta, ComposerDraft, ReviewItem } from '../lib/diff';
 import { clearDraft, composerDraftKey } from '../lib/drafts';
 import { fileOrder } from '../lib/order';
 import { useReview } from '../lib/review-context';
-import type { Comment, SessionResponse } from '../lib/types';
+import type { Comment, LineLevel, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import { themes } from '../worker';
 import { CommentThread } from './CommentThread';
 import { FileHeaderControls } from './FileHeaderControls';
+import { FocusPopover } from './FocusPopover';
 import { InlineComposer } from './InlineComposer';
 import { TurnPopover } from './TurnPopover';
 
@@ -35,6 +42,10 @@ export interface DiffViewHandle {
 
 type PendingScroll = { kind: 'file'; path: string } | { kind: 'comment'; comment: Comment };
 
+type Hover =
+  | { kind: 'turn'; entry: TurnIndexEntry; x: number; y: number }
+  | { kind: 'focus'; note: string; level: LineLevel; x: number; y: number };
+
 // A pending scroll whose target never re-enters `items` (e.g. its reveal
 // mutation failed) must not fire a surprise scrollTo minutes later; drop it
 // after this many items changes without the target appearing.
@@ -42,7 +53,7 @@ const MAX_PENDING_SCROLL_MISSES = 5;
 
 export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref<DiffViewHandle> }) {
   const { slug, version } = useReview();
-  const { viewMode, hideReviewed, expandOverrides, toggleExpandOverride, activeTurnId } =
+  const { viewMode, hideReviewed, focusMode, expandOverrides, toggleExpandOverride, activeTurnId } =
     useViewPrefs();
   const { mutate: mutateStates } = useSetFileStates(slug, version);
   const codeView = useRef<CodeViewHandle<AnnotationMeta>>(null);
@@ -50,9 +61,9 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   const [draft, setDraft] = useState<ComposerDraft | null>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScroll | null>(null);
   const pendingScrollMisses = useRef(0);
-  const [hoverTurn, setHoverTurn] = useState<{ entry: TurnIndexEntry; x: number; y: number } | null>(
-    null,
-  );
+  // One hover popover, two sources: a focus note wins over turn attribution on
+  // the same addition row (focus owns opacity when no turn is selected).
+  const [hover, setHover] = useState<Hover | null>(null);
 
   const readOnly = session.review.status === 'submitted';
 
@@ -96,6 +107,10 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   }, [draft, items, closeDraft]);
 
   const turnIndex = useMemo(() => buildTurnIndex(session.turns), [session.turns]);
+  const importanceIndex = useMemo(
+    () => buildImportanceIndex(session.organization),
+    [session.organization],
+  );
   const annotationsForFile = useMemo(
     () => annotationsByFile(session.annotations),
     [session.annotations],
@@ -109,11 +124,15 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   const turnIndexRef = useRef(turnIndex);
   const activeTurnIdRef = useRef(activeTurnId);
   const annotationsRef = useRef(annotationsForFile);
+  const importanceIndexRef = useRef(importanceIndex);
+  const focusModeRef = useRef(focusMode);
   useEffect(() => {
     attributionsRef.current = session.attributions;
     turnIndexRef.current = turnIndex;
     activeTurnIdRef.current = activeTurnId;
     annotationsRef.current = annotationsForFile;
+    importanceIndexRef.current = importanceIndex;
+    focusModeRef.current = focusMode;
   });
 
   useEffect(() => {
@@ -126,9 +145,15 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         turnIndex,
         activeTurnId,
       );
+      decorateImportance(
+        rendered.element,
+        importanceIndex.get(rendered.id) ?? null,
+        focusMode,
+        activeTurnId,
+      );
       decorateAnnotations(rendered.element, annotationsForFile[rendered.id] ?? []);
     }
-  }, [session.attributions, turnIndex, activeTurnId, annotationsForFile]);
+  }, [session.attributions, turnIndex, activeTurnId, importanceIndex, focusMode, annotationsForFile]);
 
   // Focusing a turn (from the legend) jumps to its first attributed line; a
   // re-fire on attribution updates alone must not re-scroll.
@@ -169,7 +194,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       // Must stay non-null: the library only routes "+" pointer-downs into
       // gutter selection when this callback exists.
       onGutterUtilityClick: () => {},
-      unsafeCSS: TURN_UNSAFE_CSS + ANNOTATION_UNSAFE_CSS,
+      unsafeCSS: TURN_UNSAFE_CSS + IMPORTANCE_UNSAFE_CSS + ANNOTATION_UNSAFE_CSS,
       onPostRender: (
         node: HTMLElement,
         _instance: unknown,
@@ -183,6 +208,12 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
           turnIndexRef.current,
           activeTurnIdRef.current,
         );
+        decorateImportance(
+          node,
+          importanceIndexRef.current.get(context.item.id) ?? null,
+          focusModeRef.current,
+          activeTurnIdRef.current,
+        );
         decorateAnnotations(node, annotationsRef.current[context.item.id] ?? []);
       },
       onLineEnter: (
@@ -190,19 +221,32 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         context: { item: { id: string } },
       ) => {
         if (props.lineType !== 'change-addition') {
-          setHoverTurn(null);
+          setHover(null);
+          return;
+        }
+        const rect = props.lineElement.getBoundingClientRect();
+        const x = rect.left + 8;
+        const y = rect.bottom + 4;
+        // A focus note (when no turn is selected) owns the popover, mirroring
+        // how decorateImportance owns opacity on the same row.
+        const notes = importanceIndexRef.current.get(context.item.id);
+        const note =
+          focusModeRef.current && activeTurnIdRef.current === null && notes
+            ? noteAt(notes, props.lineNumber)
+            : undefined;
+        if (note) {
+          setHover({ kind: 'focus', note: note.note, level: note.level, x, y });
           return;
         }
         const turnId = turnIdAt(attributionsRef.current[context.item.id] ?? [], props.lineNumber);
         const entry = turnId ? turnIndexRef.current.get(turnId) : undefined;
         if (!entry) {
-          setHoverTurn(null);
+          setHover(null);
           return;
         }
-        const rect = props.lineElement.getBoundingClientRect();
-        setHoverTurn({ entry, x: rect.left + 8, y: rect.bottom + 4 });
+        setHover({ kind: 'turn', entry, x, y });
       },
-      onLineLeave: () => setHoverTurn(null),
+      onLineLeave: () => setHover(null),
     }),
     [readOnly, openDraft, closeDraft],
   );
@@ -299,7 +343,10 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
       />
-      {hoverTurn ? <TurnPopover entry={hoverTurn.entry} x={hoverTurn.x} y={hoverTurn.y} /> : null}
+      {hover?.kind === 'turn' ? <TurnPopover entry={hover.entry} x={hover.x} y={hover.y} /> : null}
+      {hover?.kind === 'focus' ? (
+        <FocusPopover note={hover.note} level={hover.level} x={hover.x} y={hover.y} />
+      ) : null}
     </div>
   );
 }

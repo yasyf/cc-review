@@ -14,12 +14,12 @@ Your final message is the return value — raw JSON, no prose around it. One obj
 
 ```json
 [
-  { "path": "internal/store/store.go", "risk": "high", "rationale": "New DDL column; confirm the wipe-not-migrate rule holds." },
-  { "path": "web/src/lib/order.ts", "risk": "low", "rationale": "Pure sort helper, covered by order tests." }
+  { "path": "internal/store/store.go", "risk": "high", "rationale": "New DDL column.", "focus": "confirm the wipe-not-migrate rule holds before trusting carry-forward", "lines": [{ "start": 42, "end": 44, "level": "focus", "note": "the new column + its default" }] },
+  { "path": "web/src/lib/order.ts", "risk": "low", "rationale": "Pure sort helper, covered by order tests.", "focus": "nothing to distrust; the comparator is total", "lines": [] }
 ]
 ```
 
-Every file you were given appears exactly once. `risk` is one of `high | medium | low | mechanical`. `rationale` is one line: why this risk, and what to verify.
+Every file you were given appears exactly once. `risk` is one of `high | medium | low | mechanical`. `rationale` is one line: why the file is here. `focus` is one line: what to scrutinize and why it carries that risk (a mechanical file still gets one — "rename only, nothing to scrutinize"). `lines` flags the 1-3 added lines most worth scrutiny as `{ start, end, level: "focus", note }` and obvious noise (generated, renamed, reformatted, boilerplate, log/print) as `{ start, end, level: "mechanical", note }`; `[]` when nothing stands out. Anchor `start`/`end` to NEW-side file line numbers — count from each hunk's `@@ … +N` header, advancing on context and added lines, skipping deletions, tagging only `+` lines; ranges are inclusive and tight. Flag signal and obvious noise only — never line-by-line, never one trivial line.
 
 ## Rating
 
