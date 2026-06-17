@@ -4,6 +4,45 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0]
+
+The AI bar becomes the Command Deck — a footer that reads the diff and offers
+ranked one-tap actions instead of a blank input — and the organize agent streams
+a live working phase as it goes. A `--channels` agent also learns in-band that
+the channel handshake is status, not a request, so it no longer wakes to an
+empty session and asks what to do.
+
+### Added
+- The Command Deck replaces the AI bar's blank footer: it reads the current diff
+  and surfaces ranked one-tap chips split into an instant lane (file-state ops
+  that run client-side and keep working while Claude is disconnected) and a
+  Claude lane for semantic asks. Focus or Cmd-K opens an anchored menu with live
+  glob preflight, recents, and keyboard nav. Result cards stream the working
+  phase, deep-link change rows into the diff, fold in the `awaiting_input`
+  answer, and offer one-click undo (server-side for agent edits, client-side for
+  instant ops).
+- A live working-phase label: the organize agent sets an optional free-text
+  `phase` via `update_ai_request` (e.g. "reading 8 files…"), shown live on the
+  request card and carried on `ai.request.updated` with no new event type.
+- Channel-server instructions. The MCP channel now advertises `instructions` at
+  initialize, so every `--channels` session — even one that never ran
+  `/cc-review:start` — knows a `channel.hello` or `channel.changed` tag is a
+  connection handshake, not a user request. The eager hello payload also carries
+  a "system handshake; no reply needed" note as a backstop. (Requires
+  cc-interact v0.1.4.)
+
+### Changed
+- The Command Deck drops the History popover and the stale-pending clock; the
+  daemon already fails stranded requests.
+- `ChapterFile.focus` is required on the wire (the daemon always serializes it),
+  and the AI bar's answer form now shares the comment thread's Ask-options
+  picker.
+
+### Notes
+- **Upgrading wipes local review state** (`~/.cc-review`) per the no-migrations
+  policy: the `ai_requests` table gained a `phase` column, so the daemon
+  recreates the database on its next start.
+
 ## [0.14.0]
 
 Reviewers are now guided *within* each file, not just across files: per-file
