@@ -95,6 +95,7 @@ type AIRequest struct {
 	Prompt    string            `json:"prompt"`
 	Status    string            `json:"status"`
 	Summary   string            `json:"summary"`
+	Phase     string            `json:"phase"`
 	Unmatched []store.Unmatched `json:"unmatched"`
 	Changes   []store.AIChange  `json:"changes"`
 	Question  *store.AIQuestion `json:"question,omitempty"`
@@ -176,7 +177,7 @@ func ToAnnotation(a store.Annotation) Annotation {
 // non-nil arrays so the SPA can map over them unconditionally.
 func ToAIRequest(r store.AIRequest) AIRequest {
 	out := AIRequest{
-		ID: id(r.ID), Source: r.Source, Prompt: r.Prompt, Status: r.Status, Summary: r.Summary,
+		ID: id(r.ID), Source: r.Source, Prompt: r.Prompt, Status: r.Status, Summary: r.Summary, Phase: r.Phase,
 		Unmatched: r.Unmatched, Changes: r.Changes, Question: r.Question, Answer: r.Answer, Attempt: r.Attempt,
 		CreatedAt: iso(r.CreatedAt), UpdatedAt: iso(r.UpdatedAt),
 	}

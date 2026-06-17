@@ -99,6 +99,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 					AIRequestID string            `json:"ai_request_id"`
 					Status      string            `json:"status"`
 					Summary     string            `json:"summary"`
+					Phase       string            `json:"phase"`
 					Unmatched   []store.Unmatched `json:"unmatched"`
 					Question    string            `json:"question"`
 					Ask         *store.Ask        `json:"ask"`
@@ -111,7 +112,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 					return err.Error(), true
 				}
 				if err := rc.UpdateAIRequest(ctx, session, scope, id, daemon.UpdateAIRequestInput{
-					Status: in.Status, Summary: in.Summary, Unmatched: in.Unmatched, Question: in.Question, Ask: in.Ask,
+					Status: in.Status, Summary: in.Summary, Phase: in.Phase, Unmatched: in.Unmatched, Question: in.Question, Ask: in.Ask,
 				}); err != nil {
 					return err.Error(), true
 				}
@@ -293,6 +294,7 @@ func updateAIRequestToolSchema() map[string]any {
 			"ai_request_id": map[string]any{"type": "string"},
 			"status":        map[string]any{"type": "string", "enum": []string{"working", "done", "failed", "awaiting_input"}},
 			"summary":       map[string]any{"type": "string", "description": "one sentence: what you did and why (done/failed)"},
+			"phase":         map[string]any{"type": "string", "description": "short present-tense progress label shown live while working, e.g. \"reading 8 files…\""},
 			"unmatched": map[string]any{
 				"type":        "array",
 				"description": "parts of the prompt you did not act on, and why",

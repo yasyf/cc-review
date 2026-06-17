@@ -87,8 +87,9 @@ type body struct {
 	Risk          []string            `json:"risk,omitempty"`           // file-states-by-risk
 	Reason        string              `json:"reason,omitempty"`         // file-states-by-risk
 	AIRequestID   int64               `json:"ai_request_id,omitempty"`  // file-states (optional) | file-states-by-risk | update-ai-request
-	AIStatus      string              `json:"ai_status,omitempty"`      // update-ai-request
+	AIStatus      string              `json:"ai_status,omitempty"`      // update-ai-request (tool param "status"; not the review-files Status filter below)
 	Summary       string              `json:"summary,omitempty"`        // update-ai-request
+	Phase         string              `json:"phase,omitempty"`          // update-ai-request
 	Unmatched     []store.Unmatched   `json:"unmatched,omitempty"`      // update-ai-request
 	Question      string              `json:"question,omitempty"`       // update-ai-request (awaiting_input)
 	Ask           *store.Ask          `json:"ask,omitempty"`            // update-ai-request (awaiting_input)

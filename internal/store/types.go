@@ -108,6 +108,7 @@ type AIRequest struct {
 	Prompt        string
 	Status        string // pending | working | awaiting_input | answered | done | failed | undone
 	Summary       string
+	Phase         string // free-text working-step label streamed live, e.g. "reading 8 files…"
 	Unmatched     []Unmatched
 	Changes       []AIChange
 	Question      *AIQuestion // set while awaiting_input

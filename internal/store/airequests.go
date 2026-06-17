@@ -27,7 +27,7 @@ var aiTransitions = map[string][]string{
 	"undone":         {"done"},
 }
 
-const aiRequestCols = `id, review_id, version_number, source, prompt, status, summary, unmatched_json, changes_json, created_at, updated_at, question_json, answer_json, attempt`
+const aiRequestCols = `id, review_id, version_number, source, prompt, status, summary, unmatched_json, changes_json, created_at, updated_at, question_json, answer_json, attempt, phase`
 
 func scanAIRequest(row interface{ Scan(...any) error }) (AIRequest, error) {
 	var (
@@ -36,7 +36,7 @@ func scanAIRequest(row interface{ Scan(...any) error }) (AIRequest, error) {
 		created, updated                                     int64
 	)
 	if err := row.Scan(&r.ID, &r.ReviewID, &r.VersionNumber, &r.Source, &r.Prompt, &r.Status,
-		&r.Summary, &unmatchedJSON, &changesJSON, &created, &updated, &questionJSON, &answerJSON, &r.Attempt); err != nil {
+		&r.Summary, &unmatchedJSON, &changesJSON, &created, &updated, &questionJSON, &answerJSON, &r.Attempt, &r.Phase); err != nil {
 		return AIRequest{}, err
 	}
 	if err := json.Unmarshal([]byte(unmatchedJSON), &r.Unmatched); err != nil {
@@ -224,6 +224,24 @@ func (s *Store) transitionAIRequest(ctx context.Context, id int64, to string, up
 		return AIRequest{}, fmt.Errorf("commit transition: %w", err)
 	}
 	return updated, nil
+}
+
+// MarkWorking moves a request to working and records an optional progress phase
+// label (empty keeps the stored one). The working→working self-transition lets a
+// live agent stream successive phase labels without clobbering summary or unmatched.
+func (s *Store) MarkWorking(ctx context.Context, id int64, phase string) (AIRequest, error) {
+	return s.transitionAIRequest(ctx, id, "working", func(ctx context.Context, tx *sql.Tx) error {
+		query := `UPDATE ai_requests SET status='working', updated_at=?`
+		args := []any{unix(time.Now())}
+		if phase != "" {
+			query += `, phase=?`
+			args = append(args, phase)
+		}
+		if _, err := tx.ExecContext(ctx, query+` WHERE id=?`, append(args, id)...); err != nil {
+			return fmt.Errorf("mark working ai request %d: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // TransitionAIRequest moves a request to working, done, or failed (the agent's

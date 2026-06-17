@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   prompt         TEXT NOT NULL,
   status         TEXT NOT NULL DEFAULT 'pending',
   summary        TEXT NOT NULL DEFAULT '',
+  phase          TEXT NOT NULL DEFAULT '',
   unmatched_json TEXT NOT NULL DEFAULT '[]',
   changes_json   TEXT NOT NULL DEFAULT '[]',
   created_at     INTEGER NOT NULL,

@@ -111,6 +111,7 @@ func (rc *ReviewClient) FileStatesByRisk(ctx context.Context, session, cwd strin
 type UpdateAIRequestInput struct {
 	Status    string
 	Summary   string
+	Phase     string
 	Unmatched []store.Unmatched
 	Question  string
 	Ask       *store.Ask
@@ -119,7 +120,7 @@ type UpdateAIRequestInput struct {
 // UpdateAIRequest moves an AI request through its lifecycle.
 func (rc *ReviewClient) UpdateAIRequest(ctx context.Context, session, cwd string, aiRequestID int64, in UpdateAIRequestInput) error {
 	_, _, err := rc.do(ctx, OpUpdateAIRequest, session, cwd, body{
-		AIRequestID: aiRequestID, AIStatus: in.Status, Summary: in.Summary, Unmatched: in.Unmatched,
+		AIRequestID: aiRequestID, AIStatus: in.Status, Summary: in.Summary, Phase: in.Phase, Unmatched: in.Unmatched,
 		Question: in.Question, Ask: in.Ask,
 	})
 	return err

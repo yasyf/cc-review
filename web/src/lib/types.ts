@@ -174,6 +174,8 @@ export interface AiRequest {
   prompt: string;
   status: AiRequestStatus;
   summary: string;
+  // Live progress label while working (e.g. "reading 8 files…"); set by the agent.
+  phase?: string;
   unmatched: AiRequestUnmatched[];
   changes: AiRequestChange[];
   question?: AiRequestQuestion;

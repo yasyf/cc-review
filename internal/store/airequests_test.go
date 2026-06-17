@@ -129,6 +129,38 @@ func TestTransitionAIRequestSummaryAndUnmatched(t *testing.T) {
 	}
 }
 
+func TestMarkWorkingRecordsPhase(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	_, id := seedAIRequest(t, s, "pending")
+
+	working, err := s.MarkWorking(ctx, id, "reading 8 files…")
+	if err != nil {
+		t.Fatalf("mark working: %v", err)
+	}
+	if working.Status != "working" || working.Phase != "reading 8 files…" {
+		t.Fatalf("got status=%q phase=%q, want working/\"reading 8 files…\"", working.Status, working.Phase)
+	}
+
+	// The working→working self-transition swaps in the next phase label.
+	advanced, err := s.MarkWorking(ctx, id, "applying changes…")
+	if err != nil {
+		t.Fatalf("re-mark working: %v", err)
+	}
+	if advanced.Phase != "applying changes…" {
+		t.Fatalf("phase = %q, want \"applying changes…\"", advanced.Phase)
+	}
+
+	// An empty phase keeps the stored one.
+	kept, err := s.MarkWorking(ctx, id, "")
+	if err != nil {
+		t.Fatalf("mark working empty phase: %v", err)
+	}
+	if kept.Phase != "applying changes…" {
+		t.Fatalf("empty phase wiped the label: %q", kept.Phase)
+	}
+}
+
 func TestAppendAIRequestChangesKeepsFirstPrior(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

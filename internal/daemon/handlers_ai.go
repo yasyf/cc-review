@@ -228,9 +228,12 @@ func (rv *review) handleUpdateAIRequest(hc ccd.HandlerCtx) ccd.Reply {
 		return errReply(fmt.Sprintf("ai request %d does not belong to this review", b.AIRequestID))
 	}
 	var updated store.AIRequest
-	if b.AIStatus == "awaiting_input" {
+	switch b.AIStatus {
+	case "awaiting_input":
 		updated, err = st.AskAIRequest(hc.Ctx, b.AIRequestID, store.AIQuestion{Body: b.Question, Ask: b.Ask})
-	} else {
+	case "working":
+		updated, err = st.MarkWorking(hc.Ctx, b.AIRequestID, b.Phase)
+	default:
 		updated, err = st.TransitionAIRequest(hc.Ctx, b.AIRequestID, b.AIStatus, b.Summary, b.Unmatched)
 	}
 	if err != nil {
