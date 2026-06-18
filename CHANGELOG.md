@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0]
+
+Reviews now feed the cc-family's shared correction memory.
+
+### Added
+- On Submit, every inline comment thread is written to cc-transcript's shared
+  corrections ledger via `cc-transcript corrections add` (source `cc-review`,
+  origin `review`, anchor `review:<reviewID>:<commentID>`). Additive and
+  best-effort — a shell-out failure is logged, never strands the frozen feedback.
+  The cc-transcript binary is configurable via `CC_TRANSCRIPT_BIN`.
+- The session id is persisted onto a review's version so a frozen review can
+  anchor its corrections to its session.
+
+### Changed
+- The shared decision ledger table is renamed `decisions_v1` → `decisions`
+  (vendored DDL byte-identical with cc-transcript v4.1.0). No in-place migration —
+  delete `~/.cc-transcript/decisions.db*` and let it rebuild.
+
 ## [0.16.0]
 
 The review UI learns the keyboard, and generated files get out of the way.
