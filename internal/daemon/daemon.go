@@ -141,7 +141,7 @@ func (rv *review) gate(_ context.Context, sub subject.Subject, _ ccd.ToolCall) (
 	return true, ""
 }
 
-// gateObserve ledgers a resolved gate verdict in decisions_v1. A deliberate
+// gateObserve ledgers a resolved gate verdict in decisions. A deliberate
 // deviation from fail-fast: the verdict is the gate's job, the ledger row is
 // telemetry — digest or append failures log and never affect the response.
 func (rv *review) gateObserve(_ context.Context, sub subject.Subject, tool ccd.ToolCall, allow bool, reason string) {

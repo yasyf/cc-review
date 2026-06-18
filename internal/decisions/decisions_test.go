@@ -39,10 +39,10 @@ func TestOpenAppliesSchemaAndCreatesParents(t *testing.T) {
 
 	var name string
 	if err := log.db.QueryRow(
-		`SELECT name FROM sqlite_master WHERE type='table' AND name='decisions_v1'`).Scan(&name); err != nil {
-		t.Fatalf("decisions_v1 table missing: %v", err)
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='decisions'`).Scan(&name); err != nil {
+		t.Fatalf("decisions table missing: %v", err)
 	}
-	for _, idx := range []string{"idx_decisions_v1_session_ts", "idx_decisions_v1_tool_digest", "idx_decisions_v1_source_file"} {
+	for _, idx := range []string{"idx_decisions_session_ts", "idx_decisions_tool_digest", "idx_decisions_source_file"} {
 		if err := log.db.QueryRow(
 			`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&name); err != nil {
 			t.Fatalf("index %s missing: %v", idx, err)
@@ -107,7 +107,7 @@ func TestNullRoundTrip(t *testing.T) {
 
 	var n int
 	if err := log.db.QueryRow(
-		`SELECT count(*) FROM decisions_v1
+		`SELECT count(*) FROM decisions
 		 WHERE tool_name IS NULL AND tool_digest IS NULL AND event_uuid IS NULL AND message IS NULL
 		   AND source_file = '' AND detail_json = '{}'`).Scan(&n); err != nil {
 		t.Fatalf("count nulls: %v", err)
@@ -204,12 +204,12 @@ func TestInterleavedWriters(t *testing.T) {
 }
 
 func TestVendoredDDLMatchesEmbedAndApplies(t *testing.T) {
-	vendored, err := os.ReadFile("decisions_v1.sql")
+	vendored, err := os.ReadFile("decisions.sql")
 	if err != nil {
 		t.Fatalf("read vendored DDL: %v", err)
 	}
 	if string(vendored) != ddl {
-		t.Fatalf("embedded DDL diverges from decisions_v1.sql")
+		t.Fatalf("embedded DDL diverges from decisions.sql")
 	}
 
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "fresh.db"))
@@ -221,7 +221,7 @@ func TestVendoredDDLMatchesEmbedAndApplies(t *testing.T) {
 		t.Fatalf("vendored DDL failed to apply: %v", err)
 	}
 	if _, err := db.Exec(
-		`INSERT INTO decisions_v1 (` + decisionCols + `) VALUES (1, 's', 'cc-review', 'k', '', 'PreToolUse', 'allow', NULL, NULL, NULL, NULL, '{}')`); err != nil {
+		`INSERT INTO decisions (` + decisionCols + `) VALUES (1, 's', 'cc-review', 'k', '', 'PreToolUse', 'allow', NULL, NULL, NULL, NULL, '{}')`); err != nil {
 		t.Fatalf("insert into fresh schema: %v", err)
 	}
 }

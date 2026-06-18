@@ -1,5 +1,5 @@
 // Package decisions writes and reads the cc-family decision ledger: the
-// decisions_v1 SQLite table at ~/.cc-transcript/decisions.db, shared with
+// decisions SQLite table at ~/.cc-transcript/decisions.db, shared with
 // cc-transcript's Python DecisionLog, which writes the same file concurrently
 // (hence WAL + busy_timeout on open). The DDL is vendored byte-identical from
 // the Python source of truth and executed verbatim; rows are append-only and
@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed decisions_v1.sql
+//go:embed decisions.sql
 var ddl string
 
 const decisionCols = `ts_ms, session_id, source, kind, source_file, event, action, tool_name, tool_digest, event_uuid, message, detail_json`
@@ -41,7 +41,7 @@ type Decision struct {
 	DetailJSON string // structured extras; '' written as {}
 }
 
-// Log is the decisions_v1 ledger on a single serialized connection.
+// Log is the decisions ledger on a single serialized connection.
 type Log struct {
 	db *sql.DB
 }
@@ -71,7 +71,7 @@ func Open(path string) (*Log, error) {
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(ddl); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply decisions_v1 ddl: %w", err)
+		return nil, fmt.Errorf("apply decisions ddl: %w", err)
 	}
 	return &Log{db: db}, nil
 }
@@ -88,7 +88,7 @@ func (l *Log) Append(d Decision) error {
 		detail = "{}"
 	}
 	if _, err := l.db.Exec(
-		`INSERT OR IGNORE INTO decisions_v1 (`+decisionCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR IGNORE INTO decisions (`+decisionCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.TsMs, d.SessionID, d.Source, d.Kind, d.SourceFile, d.Event, d.Action,
 		nullString(d.ToolName), nullString(d.ToolDigest), nullString(d.EventUUID), nullString(d.Message), detail,
 	); err != nil {
@@ -102,7 +102,7 @@ func (l *Log) Append(d Decision) error {
 // the bypass check.
 func (l *Log) ForTurn(sessionID string, sinceMs, untilMs int64) ([]Decision, error) {
 	rows, err := l.db.Query(
-		`SELECT `+decisionCols+` FROM decisions_v1 WHERE session_id = ? AND ts_ms BETWEEN ? AND ? ORDER BY ts_ms, id`,
+		`SELECT `+decisionCols+` FROM decisions WHERE session_id = ? AND ts_ms BETWEEN ? AND ? ORDER BY ts_ms, id`,
 		sessionID, sinceMs, untilMs)
 	if err != nil {
 		return nil, fmt.Errorf("decisions for turn: %w", err)
