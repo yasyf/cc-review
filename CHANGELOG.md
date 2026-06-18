@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0]
+
+The review UI learns the keyboard, and generated files get out of the way.
+Lockfiles, vendored code, and generated sources now fold away by default —
+peek-expandable, the way GitHub does it — so the diff that matters stands out.
+
+### Added
+- Keyboard shortcuts for the review UI: `j`/`k` move between files, `v` marks
+  the current file Viewed and advances, `c` collapses or expands it, `n`/`p`
+  jump between comments, and `?` opens a shortcuts overlay. A guarded global
+  handler yields to text inputs and the Command Deck and never binds Cmd-K; the
+  current file is tracked from scroll position and highlighted in place.
+- Auto-collapse of generated and vendored files, badged and peek-expandable. A
+  new daemon-side detector uses go-enry (a github-linguist port) to find
+  unmarked generated/vendored files — lockfiles, minified output, `*.pb.go`,
+  `vendor/`, `node_modules/` — and honors `.gitattributes`
+  `linguist-generated`/`linguist-vendored` marks via `git check-attr`, where
+  `=false` un-marks a file. The flags ride through `files_json` with no schema
+  change.
+
+### Changed
+- The "Hide generated files" command and the new auto-collapse share one
+  server-side definition of "generated"; the old client-side filename regex is
+  gone.
+
 ## [0.15.0]
 
 The AI bar becomes the Command Deck — a footer that reads the diff and offers
