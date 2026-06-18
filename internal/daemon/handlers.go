@@ -189,7 +189,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		os.Remove(tmpName)
 		return errReply(err.Error())
 	}
-	v, err := st.CreateVersion(hc.Ctx, sub.ID, snap.Branch, snap.BaseRef, "", string(filesJSON))
+	v, err := st.CreateVersion(hc.Ctx, sub.ID, snap.Branch, snap.BaseRef, "", string(filesJSON), sub.SessionID)
 	if err != nil {
 		os.Remove(tmpName)
 		return errReply(err.Error())

@@ -63,7 +63,7 @@ func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) 
 	if err := st.SetReviewMeta(ctx, sub.ID, "base0", branch); err != nil {
 		t.Fatal(err)
 	}
-	version, err := st.CreateVersion(ctx, sub.ID, branch, "HEAD", filepath.Join(t.TempDir(), "p.patch"), "[]")
+	version, err := st.CreateVersion(ctx, sub.ID, branch, "HEAD", filepath.Join(t.TempDir(), "p.patch"), "[]", "")
 	if err != nil {
 		t.Fatal(err)
 	}

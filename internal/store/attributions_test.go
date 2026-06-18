@@ -10,7 +10,7 @@ func TestAttributionsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
 
 	empty, err := s.ListAttributionsByVersion(ctx, v.ID)
 	if err != nil || len(empty) != 0 {
@@ -37,10 +37,10 @@ func TestListAttributionsBySession(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	r1id := seedReview(t, s, "sess-a", 0, "/repo", "main", "base0")
-	v1, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]")
-	v2, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]")
+	v1, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]", "")
+	v2, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]", "")
 	otherid := seedReview(t, s, "sess-b", 0, "/repo2", "main", "base0")
-	vOther, _ := s.CreateVersion(ctx, otherid, "main", "HEAD", "/p", "[]")
+	vOther, _ := s.CreateVersion(ctx, otherid, "main", "HEAD", "/p", "[]", "")
 
 	if err := s.PutAttributions(ctx, v1.ID, map[string][]AttributionRange{
 		"b.go": {{Start: 2, End: 3, TurnID: 9}},
@@ -82,7 +82,7 @@ func TestPutAttributionsReplacesOnConflict(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
 
 	if err := s.PutAttributions(ctx, v.ID, map[string][]AttributionRange{
 		"a.go": {{Start: 1, End: 4, TurnID: 7}},

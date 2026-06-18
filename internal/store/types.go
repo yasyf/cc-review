@@ -8,7 +8,9 @@ import (
 	"github.com/yasyf/cc-interact/vcs"
 )
 
-// Version is one snapshot of the working tree under a review.
+// Version is one snapshot of the working tree under a review. SessionID is the
+// Claude session UUID the snapshot was captured in, threaded onto the version so
+// a frozen review can attribute its corrections to that session.
 type Version struct {
 	ID            int64
 	ReviewID      string
@@ -17,6 +19,7 @@ type Version struct {
 	BaseRef       string
 	PatchPath     string
 	FilesJSON     string
+	SessionID     string
 	CreatedAt     time.Time
 }
 

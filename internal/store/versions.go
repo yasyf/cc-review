@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-const versionCols = `id, review_id, version_number, branch, base_ref, patch_path, files_json, created_at`
+const versionCols = `id, review_id, version_number, branch, base_ref, patch_path, files_json, session_id, created_at`
 
 func scanVersion(row interface{ Scan(...any) error }) (Version, error) {
 	var (
 		v       Version
 		created int64
 	)
-	if err := row.Scan(&v.ID, &v.ReviewID, &v.VersionNumber, &v.Branch, &v.BaseRef, &v.PatchPath, &v.FilesJSON, &created); err != nil {
+	if err := row.Scan(&v.ID, &v.ReviewID, &v.VersionNumber, &v.Branch, &v.BaseRef, &v.PatchPath, &v.FilesJSON, &v.SessionID, &created); err != nil {
 		return Version{}, err
 	}
 	v.CreatedAt = fromUnix(created)
@@ -25,7 +25,7 @@ func scanVersion(row interface{ Scan(...any) error }) (Version, error) {
 // CreateVersion appends the next-numbered version to a review. The number is
 // allocated as MAX(version_number)+1 on the single writer, so it is gap-free and
 // race-free.
-func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, patchPath, filesJSON string) (Version, error) {
+func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, patchPath, filesJSON, sessionID string) (Version, error) {
 	now := time.Now()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -39,9 +39,9 @@ func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, pa
 		return Version{}, fmt.Errorf("next version number: %w", err)
 	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO review_versions(review_id, version_number, branch, base_ref, patch_path, files_json, created_at)
-		 VALUES(?,?,?,?,?,?,?)`,
-		reviewID, next, branch, baseRef, patchPath, filesJSON, unix(now))
+		`INSERT INTO review_versions(review_id, version_number, branch, base_ref, patch_path, files_json, session_id, created_at)
+		 VALUES(?,?,?,?,?,?,?,?)`,
+		reviewID, next, branch, baseRef, patchPath, filesJSON, sessionID, unix(now))
 	if err != nil {
 		return Version{}, fmt.Errorf("insert version: %w", err)
 	}
@@ -54,7 +54,7 @@ func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, pa
 	}
 	return Version{
 		ID: id, ReviewID: reviewID, VersionNumber: next, Branch: branch, BaseRef: baseRef,
-		PatchPath: patchPath, FilesJSON: filesJSON, CreatedAt: now,
+		PatchPath: patchPath, FilesJSON: filesJSON, SessionID: sessionID, CreatedAt: now,
 	}, nil
 }
 

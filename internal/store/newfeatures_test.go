@@ -112,7 +112,7 @@ func TestAnnotationsCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", `[{"path":"a.go","status":"M"}]`)
+	v, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", `[{"path":"a.go","status":"M"}]`, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	ccevent "github.com/yasyf/cc-interact/event"
 	"github.com/yasyf/cc-interact/vcs"
 
+	"github.com/yasyf/cc-review/internal/corrections"
 	"github.com/yasyf/cc-review/internal/feedback"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
@@ -675,7 +676,8 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "review has no versions", http.StatusBadRequest)
 		return
 	}
-	fb, err := feedback.Build(ctx, s.store, review.ID, version, time.Now())
+	submittedAt := time.Now()
+	fb, err := feedback.Build(ctx, s.store, review.ID, version, submittedAt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -688,6 +690,12 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := feedback.Freeze(fbPath, fb); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// The corrections ledger is an additional, best-effort write alongside the
+	// frozen snapshot: a failed shell-out to cc-transcript must not strand a
+	// submitted review whose feedback.json is already on disk.
+	if err := corrections.Write(ctx, fb, review.RepoRoot, submittedAt); err != nil {
+		s.log.Printf("corrections: write for review %s failed: %v", review.ID, err)
 	}
 	if err := s.subjects.SetStatus(ctx, review.ID, "submitted"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

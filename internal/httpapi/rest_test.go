@@ -106,7 +106,7 @@ func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store
 	if err := os.WriteFile(patch, []byte("diff --git a/a.go b/a.go\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	version, err := st.CreateVersion(ctx, sub.ID, "main", "HEAD", patch, filesJSON)
+	version, err := st.CreateVersion(ctx, sub.ID, "main", "HEAD", patch, filesJSON, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestAnswerAIRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 		// A newer version supersedes the question's version.
-		if _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","fingerprint":"fp-a2"}]`); err != nil {
+		if _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","fingerprint":"fp-a2"}]`, ""); err != nil {
 			t.Fatal(err)
 		}
 		resp := postJSON(t, srv.URL+"/api/ai-requests/"+strconv.FormatInt(ar.ID, 10)+"/answer",

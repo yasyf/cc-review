@@ -27,7 +27,7 @@ func TestVersionNumbersAreMonotonic(t *testing.T) {
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
 
 	for want := 1; want <= 3; want++ {
-		v, err := s.CreateVersion(ctx, id, "main", "HEAD", "/p.patch", "[]")
+		v, err := s.CreateVersion(ctx, id, "main", "HEAD", "/p.patch", "[]", "")
 		if err != nil {
 			t.Fatalf("create version: %v", err)
 		}
@@ -45,7 +45,7 @@ func TestReplyDedupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	id1, ins1, err := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "why?", DedupKey: "k1"})
@@ -73,7 +73,7 @@ func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	// Fire many redeliveries of the same reply concurrently. Before the ON
@@ -239,7 +239,7 @@ func TestAskReplyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	ask := &Ask{Header: "Approach", MultiSelect: true, Options: []AskOption{
@@ -287,7 +287,7 @@ func TestAnswerAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	newAsk := func(multi bool) int64 {
@@ -385,7 +385,7 @@ func TestAnswerQuestion(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "Q?"})
@@ -411,7 +411,7 @@ func TestListOpenQuestionsIncludesAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]")
+	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm"})
 
 	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "free-form?"})

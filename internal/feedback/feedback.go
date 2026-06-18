@@ -51,10 +51,13 @@ type OpenQuestion struct {
 	Ask         *store.Ask `json:"ask,omitempty"`
 }
 
-// Feedback is the full frozen snapshot for one version of a review.
+// Feedback is the full frozen snapshot for one version of a review. SessionID is
+// the Claude session UUID the reviewed version was captured in, carried so a
+// downstream consumer can attribute the corrections to that session.
 type Feedback struct {
 	ReviewID      string         `json:"review_id"`
 	Version       int            `json:"version"`
+	SessionID     string         `json:"session_id,omitempty"`
 	FrozenAt      int64          `json:"frozen_at"`
 	Threads       []Thread       `json:"threads"`
 	OpenQuestions []OpenQuestion `json:"open_questions"`
@@ -90,8 +93,8 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 		})
 	}
 	return Feedback{
-		ReviewID: reviewID, Version: version.VersionNumber, FrozenAt: frozenAt.Unix(),
-		Threads: threads, OpenQuestions: questions,
+		ReviewID: reviewID, Version: version.VersionNumber, SessionID: version.SessionID,
+		FrozenAt: frozenAt.Unix(), Threads: threads, OpenQuestions: questions,
 	}, nil
 }
 

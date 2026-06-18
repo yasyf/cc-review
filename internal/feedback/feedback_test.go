@@ -25,7 +25,7 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := st.CreateVersion(ctx, subjectID, "main", "HEAD", "/p", "[]")
+	v, _ := st.CreateVersion(ctx, subjectID, "main", "HEAD", "/p", "[]", "sess-1")
 	cid, _ := st.CreateComment(ctx, store.Comment{
 		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm",
 	})
@@ -44,6 +44,9 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
+	if fb.SessionID != "sess-1" {
+		t.Fatalf("feedback session id = %q, want the version's %q", fb.SessionID, "sess-1")
+	}
 	if len(fb.Threads) != 1 || len(fb.Threads[0].Replies) != 2 {
 		t.Fatalf("threads = %+v, want 1 thread with 2 replies", fb.Threads)
 	}

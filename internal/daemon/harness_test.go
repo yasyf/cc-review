@@ -380,7 +380,7 @@ func seedComment(t *testing.T, s *Server, root string) (reviewID string, comment
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.store.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]")
+	v, err := s.store.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]", "")
 	if err != nil {
 		t.Fatal(err)
 	}

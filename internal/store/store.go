@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS review_versions (
   base_ref       TEXT NOT NULL DEFAULT '',
   patch_path     TEXT NOT NULL,
   files_json     TEXT NOT NULL DEFAULT '[]',
+  session_id     TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   UNIQUE(review_id, version_number)
 );
