@@ -1,0 +1,79 @@
+version: 2
+
+project_name: cc-review
+
+# The web SPA must be built before `go build`: //go:embed all:internal/web/dist
+# reads at compile time, so the dist dir must exist first. goreleaser runs these
+# before hooks once, before any build.
+before:
+  hooks:
+    - bash -c 'cd web && bun install --frozen-lockfile && bunx vite build'
+    - go mod tidy
+
+builds:
+  - id: cc-review
+    main: ./cmd/cc-review
+    binary: cc-review
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/yasyf/cc-review/internal/version.Version={{ .Version }}
+      - -X github.com/yasyf/cc-review/internal/version.Commit={{ .ShortCommit }}
+
+archives:
+  # Bare per-arch binaries named cc-review_<os>_<arch> — the Claude Code plugin's
+  # plugin/scripts/install-binary.sh fetches these directly from the release:
+  #   https://github.com/yasyf/cc-review/releases/download/v${VERSION}/cc-review_${OS}_${ARCH}
+  - id: binary
+    ids:
+      - cc-review
+    formats: [binary]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+  # A normal tar.gz archive for general use (and the Homebrew cask).
+  - id: archive
+    ids:
+      - cc-review
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - name: cc-review
+    # Use the tar.gz archive (not the bare binary) for the cask: two archives
+    # cover each OS/Arch, so the cask must pick one.
+    ids:
+      - archive
+    binaries:
+      - cc-review
+    repository:
+      owner: yasyf
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/yasyf/cc-review
+    description: Local code-review daemon + Claude plugin — review what Claude writes in a PR-like web UI and stream feedback back.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-review"]
+          end
+
+release:
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc

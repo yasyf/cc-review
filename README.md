@@ -27,6 +27,13 @@ lazily-started local daemon). Add the marketplace and install the plugin:
 /plugin install cc-review@cc-review
 ```
 
+The plugin downloads its prebuilt binary automatically. To install the `cc-review`
+CLI on its own (macOS), use Homebrew:
+
+```
+brew install yasyf/tap/cc-review
+```
+
 ## Quickstart
 
 In any git repo with uncommitted changes Claude just made, run:

@@ -20,6 +20,12 @@ Inside Claude Code, add the marketplace and install the plugin:
 
 The plugin is self-contained. On your next session start, a SessionStart hook downloads the prebuilt `cc-review` binary from the GitHub release matching the plugin version. There is no Go toolchain or build step on your machine. When the plugin updates, the hook replaces the binary so the two stay in lockstep.
 
+To install the `cc-review` CLI on its own (macOS), use Homebrew:
+
+```
+brew install yasyf/tap/cc-review
+```
+
 ## Your first review
 
 Have Claude make some changes. Ask it to fix a bug or add a small feature, and stop before it commits.

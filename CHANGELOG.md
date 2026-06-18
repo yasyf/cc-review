@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0]
+
+### Changed
+- Release via goreleaser instead of the hand-rolled workflow: the GitHub release
+  still carries the bare `cc-review_<os>_<arch>` binaries the plugin downloads, and
+  goreleaser now also publishes a Homebrew cask to `yasyf/homebrew-tap`
+  (`brew install yasyf/tap/cc-review`). `plugin.json` version is realigned to the
+  release tag so install-binary.sh stops re-downloading.
+
 ## [0.17.0]
 
 Reviews now feed the cc-family's shared correction memory.
