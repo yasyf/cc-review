@@ -46,6 +46,24 @@ archives:
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
+# Developer-ID sign + notarize the darwin binaries (quill, runs on the linux runner) when the MACOS_*
+# secrets are set; no-op otherwise. Signs the binary before archiving, so both the bare per-arch
+# binary and the tar.gz carry the signature. See yasyf/cc-skills repo-bootstrap go-ci-and-release.md.
+notarize:
+  macos:
+    - enabled: '{{ if envOrDefault "MACOS_SIGN_P12" "" }}true{{ else }}false{{ end }}'
+      ids:
+        - cc-review
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
 checksum:
   name_template: checksums.txt
 
