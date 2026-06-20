@@ -115,14 +115,14 @@ func TestTurnStartSweepsStaleScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	objects := filepath.Join(scratchDir, "objects")
-	if err := os.MkdirAll(objects, 0o755); err != nil {
+	if err := os.MkdirAll(objects, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	dummy := filepath.Join(objects, "stale-object")
-	if err := os.WriteFile(dummy, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(dummy, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(scratchDir, "index"), []byte("junk"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scratchDir, "index"), []byte("junk"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -148,7 +148,7 @@ func TestTurnStartSweepsStaleScratch(t *testing.T) {
 func stubSliceBinary(t *testing.T, script string) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "cc-transcript"), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cc-transcript"), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil { //nolint:gosec // G306: test stub must be executable (0o755) so the code under test can exec it as cc-transcript.
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -55,7 +55,7 @@ func (s *Store) ListCommentsByVersion(ctx context.Context, versionID int64) ([]C
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Comment
 	for rows.Next() {
 		c, err := scanComment(rows)

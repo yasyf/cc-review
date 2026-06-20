@@ -17,14 +17,14 @@ func openTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
 func TestVersionNumbersAreMonotonic(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	for want := 1; want <= 3; want++ {
 		v, err := s.CreateVersion(ctx, id, "main", "HEAD", "/p.patch", "[]", "")
@@ -44,7 +44,7 @@ func TestVersionNumbersAreMonotonic(t *testing.T) {
 func TestReplyDedupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -72,7 +72,7 @@ func TestReplyDedupIsIdempotent(t *testing.T) {
 func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -119,7 +119,7 @@ func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 func TestMaxEventSeq(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	for i := 1; i <= 3; i++ {
 		if _, err := s.cc.AppendEvent(ctx, &ccevent.Event{
@@ -132,7 +132,7 @@ func TestMaxEventSeq(t *testing.T) {
 		t.Fatalf("max event seq = %d err=%v, want 3", seq, err)
 	}
 
-	empty := seedReview(t, s, "s-empty", 0, "/repo/empty", "main", "base0")
+	empty := seedReview(ctx, t, s, "s-empty", 0, "/repo/empty", "main", "base0")
 	if seq, err := s.MaxEventSeq(ctx, empty); err != nil || seq != 0 {
 		t.Fatalf("max event seq of eventless review = %d err=%v, want 0", seq, err)
 	}
@@ -155,19 +155,19 @@ func TestStaleConnectedReviews(t *testing.T) {
 		}
 	}
 
-	staleTrue := seedReview(t, s, "s1", 0, "/repo/a", "main", "base0")
+	staleTrue := seedReview(ctx, t, s, "s1", 0, "/repo/a", "main", "base0")
 	channel(staleTrue, true)
 
-	closedFalse := seedReview(t, s, "s2", 0, "/repo/b", "main", "base0")
+	closedFalse := seedReview(ctx, t, s, "s2", 0, "/repo/b", "main", "base0")
 	channel(closedFalse, true)
 	channel(closedFalse, false)
 
-	reopened := seedReview(t, s, "s3", 0, "/repo/c", "main", "base0")
+	reopened := seedReview(ctx, t, s, "s3", 0, "/repo/c", "main", "base0")
 	channel(reopened, false)
 	channel(reopened, true)
 
 	// connected:true on another event type never counts.
-	otherType := seedReview(t, s, "s4", 0, "/repo/d", "main", "base0")
+	otherType := seedReview(ctx, t, s, "s4", 0, "/repo/d", "main", "base0")
 	if _, err := s.cc.AppendEvent(ctx, &ccevent.Event{
 		SubjectID: otherType, Origin: ccevent.OriginSystem, Type: "t", Payload: []byte(`{"connected":true}`),
 	}); err != nil {
@@ -230,7 +230,7 @@ func TestGetReviewByRef(t *testing.T) {
 	if err != nil || byID.ID != sub.ID {
 		t.Fatalf("by id: id=%q err=%v, want %q", byID.ID, err, sub.ID)
 	}
-	if _, err := s.GetReviewByRef(ctx, "nope"); err != ErrNotFound {
+	if _, err := s.GetReviewByRef(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown ref err = %v, want ErrNotFound", err)
 	}
 }
@@ -238,7 +238,7 @@ func TestGetReviewByRef(t *testing.T) {
 func TestAskReplyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -272,8 +272,10 @@ func TestAskReplyRoundTrip(t *testing.T) {
 		{"ask without payload", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x"}},
 		{"non-ask with payload", Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "x", Ask: ask}},
 		{"empty options", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x", Ask: &Ask{}}},
-		{"duplicate labels", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x",
-			Ask: &Ask{Options: []AskOption{{Label: "A"}, {Label: "A"}}}}},
+		{"duplicate labels", Reply{
+			CommentID: cid, Origin: "claude", Kind: "ask", Body: "x",
+			Ask: &Ask{Options: []AskOption{{Label: "A"}, {Label: "A"}}},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, _, err := s.CreateReply(ctx, tc.r); err == nil {
@@ -286,13 +288,15 @@ func TestAskReplyRoundTrip(t *testing.T) {
 func TestAnswerAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	newAsk := func(multi bool) int64 {
-		id, _, err := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "Q",
-			Ask: &Ask{MultiSelect: multi, Options: []AskOption{{Label: "A"}, {Label: "B"}}}})
+		id, _, err := s.CreateReply(ctx, Reply{
+			CommentID: cid, Origin: "claude", Kind: "ask", Body: "Q",
+			Ask: &Ask{MultiSelect: multi, Options: []AskOption{{Label: "A"}, {Label: "B"}}},
+		})
 		if err != nil {
 			t.Fatalf("seed ask: %v", err)
 		}
@@ -371,7 +375,7 @@ func TestAnswerAsk(t *testing.T) {
 			t.Fatalf("open review: %v", err)
 		}
 		frozenID := newAsk(false)
-		setReviewStatus(t, s, id, "submitted")
+		setReviewStatus(ctx, t, s, id, "submitted")
 		if err := s.AnswerAskIfOpen(ctx, frozenID, AskAnswer{Selected: []string{"A"}}, "web"); !errors.Is(err, ErrReviewNotOpen) {
 			t.Fatalf("err=%v, want ErrReviewNotOpen", err)
 		}
@@ -384,7 +388,7 @@ func TestAnswerAsk(t *testing.T) {
 func TestAnswerQuestion(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
@@ -397,8 +401,10 @@ func TestAnswerQuestion(t *testing.T) {
 		t.Fatalf("got answered=%v answer=%q via=%q", got.Answered, got.Answer, got.AnsweredVia)
 	}
 
-	aid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "Q",
-		Ask: &Ask{Options: []AskOption{{Label: "A"}}}})
+	aid, _, _ := s.CreateReply(ctx, Reply{
+		CommentID: cid, Origin: "claude", Kind: "ask", Body: "Q",
+		Ask: &Ask{Options: []AskOption{{Label: "A"}}},
+	})
 	if err := s.AnswerQuestion(ctx, aid, "text", "web"); err == nil {
 		t.Fatal("want error answering an ask via AnswerQuestion")
 	}
@@ -410,15 +416,17 @@ func TestAnswerQuestion(t *testing.T) {
 func TestListOpenQuestionsIncludesAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	id := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
 	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm"})
 
 	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "free-form?"})
 	ask := &Ask{Options: []AskOption{{Label: "A"}, {Label: "B", Description: "alt"}}}
 	aid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "pick", Ask: ask})
-	answeredID, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "done",
-		Ask: &Ask{Options: []AskOption{{Label: "X"}}}})
+	answeredID, _, _ := s.CreateReply(ctx, Reply{
+		CommentID: cid, Origin: "claude", Kind: "ask", Body: "done",
+		Ask: &Ask{Options: []AskOption{{Label: "X"}}},
+	})
 	if err := s.AnswerAsk(ctx, answeredID, AskAnswer{Selected: []string{"X"}}, "web"); err != nil {
 		t.Fatal(err)
 	}

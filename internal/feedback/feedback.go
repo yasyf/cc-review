@@ -112,7 +112,7 @@ func Freeze(path string, f Feedback) error {
 
 // Load reads a frozen snapshot from path.
 func Load(path string) (Feedback, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304: path is a frozen feedback snapshot under the tool's own review dir, not attacker-controlled.
 	if err != nil {
 		return Feedback{}, fmt.Errorf("read feedback %s: %w", path, err)
 	}

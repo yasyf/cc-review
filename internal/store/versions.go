@@ -31,7 +31,7 @@ func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, pa
 	if err != nil {
 		return Version{}, fmt.Errorf("begin version tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var next int
 	if err := tx.QueryRowContext(ctx,
@@ -108,7 +108,7 @@ func (s *Store) ListVersions(ctx context.Context, reviewID string) ([]Version, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Version
 	for rows.Next() {
 		v, err := scanVersion(rows)

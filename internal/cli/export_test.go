@@ -28,7 +28,7 @@ func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	ts := vcs.NewTurnStore(st.DB())
 	closed, err := ts.CreateTurn(ctx, vcs.Turn{
@@ -91,10 +91,14 @@ func TestWriteActivityDocument(t *testing.T) {
 		Schema:    "cc-review.activity/1",
 		SessionID: exportSession,
 		Turns: []activityTurn{
-			{TurnID: closed.ID, RepoRoot: "/repo", StartedAtMs: closed.StartedAt, EndedAtMs: doc.Turns[0].EndedAtMs,
-				TreeStart: "aaa111", TreeEnd: "bbb222", Status: "closed"},
-			{TurnID: open.ID, RepoRoot: "/repo", StartedAtMs: open.StartedAt, EndedAtMs: 0,
-				TreeStart: "bbb222", TreeEnd: "", Status: "open"},
+			{
+				TurnID: closed.ID, RepoRoot: "/repo", StartedAtMs: closed.StartedAt, EndedAtMs: doc.Turns[0].EndedAtMs,
+				TreeStart: "aaa111", TreeEnd: "bbb222", Status: "closed",
+			},
+			{
+				TurnID: open.ID, RepoRoot: "/repo", StartedAtMs: open.StartedAt, EndedAtMs: 0,
+				TreeStart: "bbb222", TreeEnd: "", Status: "open",
+			},
 		},
 		Attributions: []activityAttributed{
 			{ReviewID: reviewID, Version: 1, FilePath: "src/app.py", Ranges: []activityRange{
@@ -141,7 +145,7 @@ func TestWriteActivityEmptySessionSerializesArrays(t *testing.T) {
 
 func TestExportActivityCommand(t *testing.T) {
 	st, _, _, _ := seedActivityStore(t)
-	st.Close() // the command opens its own connection
+	_ = st.Close() // the command opens its own connection
 
 	root := NewRootCmd()
 	var out bytes.Buffer

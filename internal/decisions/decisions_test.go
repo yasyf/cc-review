@@ -13,7 +13,7 @@ func openTest(t *testing.T, path string) *Log {
 	if err != nil {
 		t.Fatalf("Open(%q): %v", path, err)
 	}
-	t.Cleanup(func() { log.Close() })
+	t.Cleanup(func() { _ = log.Close() })
 	return log
 }
 
@@ -216,7 +216,7 @@ func TestVendoredDDLMatchesEmbedAndApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open fresh db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(string(vendored)); err != nil {
 		t.Fatalf("vendored DDL failed to apply: %v", err)
 	}

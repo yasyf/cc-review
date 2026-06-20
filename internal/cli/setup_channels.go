@@ -89,8 +89,8 @@ func runChannelsApply(out io.Writer) error {
 	if err := writeChannelMarker("done"); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "cc-review is now an approved channel.")
-	fmt.Fprintf(out, "Launch with `--channels %s` (replacing `--dangerously-load-development-channels %s` if you used it) — same channel, no warning.\n", channelsetup.ChannelID, channelsetup.ChannelID)
+	_, _ = fmt.Fprintln(out, "cc-review is now an approved channel.")
+	_, _ = fmt.Fprintf(out, "Launch with `--channels %s` (replacing `--dangerously-load-development-channels %s` if you used it) — same channel, no warning.\n", channelsetup.ChannelID, channelsetup.ChannelID)
 	return nil
 }
 
@@ -104,10 +104,10 @@ func applyUserChannels() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create settings dir: %w", err)
 	}
-	if err := os.WriteFile(path, merged, 0o644); err != nil {
+	if err := os.WriteFile(path, merged, 0o600); err != nil {
 		return fmt.Errorf("write user settings: %w", err)
 	}
 	return nil
@@ -121,11 +121,11 @@ func writeChannelMarker(status string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(paths.ChannelSetupMarker(), body, 0o644)
+	return os.WriteFile(paths.ChannelSetupMarker(), body, 0o600)
 }
 
 func readFileOrEmpty(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304: path is a Claude settings file under the user's own home dir, not external input.
 	if os.IsNotExist(err) {
 		return nil, nil
 	}

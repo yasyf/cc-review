@@ -120,11 +120,11 @@ func TestWalk(t *testing.T) {
 }
 
 func TestProcLookupRealOS(t *testing.T) {
-	ppid, argv, err := procLookup(int32(os.Getpid()))
+	ppid, argv, err := procLookup(int32(os.Getpid())) //nolint:gosec // G115: os.Getpid() returns this process's PID, bounded well below int32 max.
 	if err != nil {
 		t.Fatalf("procLookup(%d): %v", os.Getpid(), err)
 	}
-	if want := int32(os.Getppid()); ppid != want {
+	if want := int32(os.Getppid()); ppid != want { //nolint:gosec // G115: os.Getppid() returns the parent PID, bounded well below int32 max.
 		t.Errorf("ppid = %d, want %d", ppid, want)
 	}
 	if len(argv) == 0 {

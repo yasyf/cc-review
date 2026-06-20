@@ -31,7 +31,7 @@ func LiveClaude(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	p, err := process.NewProcess(int32(pid))
+	p, err := process.NewProcess(int32(pid)) //nolint:gosec // G115: OS PIDs are bounded well below int32 max (Linux PID_MAX_LIMIT 2^22, macOS 99999) and pid is already guarded > 0 above.
 	if err != nil {
 		return false
 	}
@@ -45,7 +45,7 @@ func LiveClaude(pid int) bool {
 // FindAncestor walks the parent chain starting at pid (inclusive) and returns
 // the first pid whose argv satisfies match; 0 when nothing matches.
 func FindAncestor(pid int, match func(argv []string) bool) int {
-	return int(walk(int32(pid), procLookup, match))
+	return int(walk(int32(pid), procLookup, match)) //nolint:gosec // G115: OS PIDs are bounded well below int32 max (Linux PID_MAX_LIMIT 2^22, macOS 99999).
 }
 
 func walk(pid int32, lk lookup, match func(argv []string) bool) int32 {

@@ -129,7 +129,7 @@ func (s *Store) ListRepliesByComment(ctx context.Context, commentID int64) ([]Re
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Reply
 	for rows.Next() {
 		r, err := scanReply(rows)
@@ -229,7 +229,7 @@ func (s *Store) ListOpenQuestions(ctx context.Context, reviewID string) ([]OpenQ
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []OpenQuestion
 	for rows.Next() {
 		var (

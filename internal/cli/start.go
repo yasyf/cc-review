@@ -29,10 +29,10 @@ func newStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), started.URL)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), started.URL)
 			offer, reason, offerErr := channelsOffer()
 			for _, line := range startExtraLines(started.ChannelState, offer, reason, offerErr, started.AIRequests) {
-				fmt.Fprintln(cmd.OutOrStdout(), line)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			return nil
 		},

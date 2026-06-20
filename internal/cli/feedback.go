@@ -26,7 +26,7 @@ func newFeedbackCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), string(fb))
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(fb))
 			return nil
 		},
 	}

@@ -30,7 +30,7 @@ func fakeSlice(t *testing.T, output string) (countPath string) {
 	dir := t.TempDir()
 	countPath = filepath.Join(dir, "count")
 	script := fmt.Sprintf("#!/bin/sh\nprintf x >> %q\ncat <<'EOF'\n%sEOF\n", countPath, output)
-	if err := os.WriteFile(filepath.Join(dir, "cc-transcript"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cc-transcript"), []byte(script), 0o755); err != nil { //nolint:gosec // G306: test stub must be executable (0o755) so the code under test can exec it as cc-transcript.
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -39,7 +39,7 @@ func fakeSlice(t *testing.T, output string) (countPath string) {
 
 func sliceCalls(t *testing.T, countPath string) int {
 	t.Helper()
-	b, err := os.ReadFile(countPath)
+	b, err := os.ReadFile(countPath) //nolint:gosec // G304: countPath is a test-constructed temp path, not external input.
 	if os.IsNotExist(err) {
 		return 0
 	}
@@ -55,7 +55,7 @@ func getProvenance(t *testing.T, srv *httptest.Server, turnID int64) (provenance
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return provenanceResponse{}, resp.StatusCode
 	}
@@ -141,7 +141,7 @@ func TestTurnProvenanceDegradesWhenSliceUnavailable(t *testing.T) {
 		{name: "binary absent", setup: func(t *testing.T) { t.Setenv("PATH", t.TempDir()) }},
 		{name: "exit 1 transcript missing", setup: func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "cc-transcript"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "cc-transcript"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { //nolint:gosec // G306: test stub must be executable (0o755) so the code under test can exec it as cc-transcript.
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", dir)
@@ -160,7 +160,7 @@ func TestTurnProvenanceDegradesWhenSliceUnavailable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				t.Fatal(err)

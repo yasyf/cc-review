@@ -18,7 +18,7 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	subjectID := store.NewSlugHash()
 	if _, err := ccstore.NewSubjectStore(st.DB(), []string{"open"}).

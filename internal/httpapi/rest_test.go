@@ -36,12 +36,12 @@ func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *ccsto
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cc.Close() })
+	t.Cleanup(func() { _ = cc.Close() })
 	ledger, err := decisions.Open(filepath.Join(dir, "decisions.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ledger.Close() })
+	t.Cleanup(func() { _ = ledger.Close() })
 	st := store.New(cc.DB())
 	mux := http.NewServeMux()
 	RESTMount(mux, Deps{
@@ -103,7 +103,7 @@ func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store
 		t.Fatal(err)
 	}
 	patch := filepath.Join(t.TempDir(), "p.patch")
-	if err := os.WriteFile(patch, []byte("diff --git a/a.go b/a.go\n"), 0o644); err != nil {
+	if err := os.WriteFile(patch, []byte("diff --git a/a.go b/a.go\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	version, err := st.CreateVersion(ctx, sub.ID, "main", "HEAD", patch, filesJSON, "")
@@ -123,11 +123,11 @@ func postJSON(t *testing.T, url string, body any) *http.Response {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(b))
+	resp, err := http.Post(url, "application/json", bytes.NewReader(b)) //nolint:gosec // G107: url is the test's own httptest server address, not external input.
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { resp.Body.Close() })
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
 }
 
@@ -317,7 +317,7 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != http.StatusConflict {
 				t.Fatalf("status = %d, want 409", resp.StatusCode)
 			}
@@ -364,7 +364,7 @@ func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -461,7 +461,7 @@ func getSessionBody(t *testing.T, srv *httptest.Server, ref string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("session status = %d, want 200", resp.StatusCode)
 	}
@@ -530,10 +530,14 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantTurns := []wire.Turn{
-		{ID: strconv.FormatInt(t1.ID, 10), SessionID: "s1", PromptExcerpt: "add parser",
-			StartedAt: stored[0].StartedAt, EndedAt: stored[0].EndedAt},
-		{ID: strconv.FormatInt(t2.ID, 10), SessionID: "s1", PromptExcerpt: "fix tests", Interrupted: true,
-			StartedAt: stored[1].StartedAt, EndedAt: stored[1].EndedAt},
+		{
+			ID: strconv.FormatInt(t1.ID, 10), SessionID: "s1", PromptExcerpt: "add parser",
+			StartedAt: stored[0].StartedAt, EndedAt: stored[0].EndedAt,
+		},
+		{
+			ID: strconv.FormatInt(t2.ID, 10), SessionID: "s1", PromptExcerpt: "fix tests", Interrupted: true,
+			StartedAt: stored[1].StartedAt, EndedAt: stored[1].EndedAt,
+		},
 	}
 	if !reflect.DeepEqual(out.Turns, wantTurns) {
 		t.Fatalf("turns = %+v, want %+v", out.Turns, wantTurns)

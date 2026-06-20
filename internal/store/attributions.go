@@ -57,7 +57,7 @@ func (s *Store) ListAttributionsBySession(ctx context.Context, sessionID string)
 	if err != nil {
 		return nil, fmt.Errorf("list session attributions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []SessionAttribution
 	for rows.Next() {
 		var (
@@ -83,7 +83,7 @@ func (s *Store) ListAttributionsByVersion(ctx context.Context, versionID int64) 
 	if err != nil {
 		return nil, fmt.Errorf("list attributions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	byFile := make(map[string][]AttributionRange)
 	for rows.Next() {
 		var path, rangesJSON string

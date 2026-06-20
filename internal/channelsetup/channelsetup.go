@@ -104,7 +104,7 @@ func ApplyManagedViaAdmin(merged []byte) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(merged); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write temp settings: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -113,10 +113,10 @@ func ApplyManagedViaAdmin(merged []byte) error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("automatic managed-settings write is macOS-only; run: sudo install -d -m 755 %q && sudo install -m 644 %q %q", filepath.Dir(dest), tmpPath, dest)
 	}
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	shellCmd := fmt.Sprintf("mkdir -p '%s' && cp '%s' '%s' && chmod 644 '%s'", filepath.Dir(dest), tmpPath, dest, dest)
 	script := `do shell script "` + shellCmd + `" with administrator privileges`
-	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
+	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil { //nolint:gosec // G204: intended privileged macOS settings write; script is built from this tool's own constant paths, not external input.
 		return fmt.Errorf("admin write of %s (%s): %w", dest, strings.TrimSpace(string(out)), err)
 	}
 	return nil

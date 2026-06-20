@@ -91,7 +91,7 @@ func Classify(ctx context.Context, repoRoot string, files []vcs.FileChange) map[
 // maxContentBytes. An unreadable file or a binary one (NUL byte present) yields
 // nil content, leaving enry to fall back to its filename-only checks.
 func readContent(repoRoot, path string) []byte {
-	data, err := os.ReadFile(filepath.Join(repoRoot, path))
+	data, err := os.ReadFile(filepath.Join(repoRoot, path)) //nolint:gosec // G304: repoRoot and path come from the user's own reviewed working tree; reading their content is the whole point of generated-file classification.
 	if err != nil {
 		return nil
 	}
@@ -110,7 +110,7 @@ func checkAttr(ctx context.Context, repoRoot string, paths []string) (map[string
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "check-attr", "-z", "--stdin",
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "check-attr", "-z", "--stdin", //nolint:gosec // G204: fixed git subcommand; only repoRoot (the user's own repo) varies, and paths are passed via stdin, not argv.
 		"linguist-generated", "linguist-vendored")
 	var stdin bytes.Buffer
 	for _, p := range paths {

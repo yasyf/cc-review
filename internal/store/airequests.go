@@ -101,7 +101,7 @@ func (s *Store) ListAIRequests(ctx context.Context, reviewID string) ([]AIReques
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []AIRequest
 	for rows.Next() {
 		r, err := scanAIRequest(rows)
@@ -125,7 +125,7 @@ func (s *Store) ListOpenAIRequests(ctx context.Context, reviewID string, version
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []AIRequest
 	for rows.Next() {
 		r, err := scanAIRequest(rows)
@@ -148,7 +148,7 @@ func (s *Store) AwaitingInputRequests(ctx context.Context, reviewID string) ([]A
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []AIRequest
 	for rows.Next() {
 		r, err := scanAIRequest(rows)
@@ -170,7 +170,7 @@ func (s *Store) StalePendingUserRequests(ctx context.Context, before time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []AIRequest
 	for rows.Next() {
 		r, err := scanAIRequest(rows)
@@ -196,7 +196,7 @@ func (s *Store) transitionAIRequest(ctx context.Context, id int64, to string, up
 	if err != nil {
 		return AIRequest{}, fmt.Errorf("begin transition tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var current string
 	err = tx.QueryRowContext(ctx, `SELECT status FROM ai_requests WHERE id=?`, id).Scan(&current)
@@ -310,7 +310,7 @@ func (s *Store) AppendAIRequestChanges(ctx context.Context, id int64, changes []
 	if err != nil {
 		return fmt.Errorf("begin changes tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var changesJSON string
 	err = tx.QueryRowContext(ctx, `SELECT changes_json FROM ai_requests WHERE id=?`, id).Scan(&changesJSON)

@@ -61,7 +61,7 @@ func newTurnEndCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runTurnHook(cmd, func(ctx context.Context, session, cwd, prompt string) error {
+			runTurnHook(cmd, func(ctx context.Context, session, cwd, _ string) error {
 				return daemon.NewReviewClient().TurnEnd(ctx, session, cwd)
 			})
 			return nil

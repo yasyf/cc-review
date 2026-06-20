@@ -20,7 +20,7 @@ import (
 
 func gitRun(t *testing.T, repo string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...) //nolint:gosec // G204: test helper running git against a test-controlled temp repo with test-controlled args.
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	out, err := cmd.CombinedOutput()
@@ -83,8 +83,10 @@ func TestHandleReplyDedupsEquivalentAsks(t *testing.T) {
 	s, repo := testServer(t)
 	reviewID, cid := seedComment(t, s, repoRoot(t, repo))
 
-	in := ReplyInput{CommentID: cid, Kind: "ask", Body: "pick",
-		Ask: &store.Ask{Header: "H", Options: []store.AskOption{{Label: "A", Description: "d"}, {Label: "B"}}}}
+	in := ReplyInput{
+		CommentID: cid, Kind: "ask", Body: "pick",
+		Ask: &store.Ask{Header: "H", Options: []store.AskOption{{Label: "A", Description: "d"}, {Label: "B"}}},
+	}
 	for i := 0; i < 2; i++ {
 		if resp := s.handleReply(ctx, Request{Replies: []ReplyInput{in}}); !resp.OK {
 			t.Fatalf("reply %d: %s", i, resp.Error)
@@ -108,8 +110,10 @@ func TestHandleAnswerRoutesByTargetKind(t *testing.T) {
 	s, repo := testServer(t)
 	reviewID, cid := seedComment(t, s, repoRoot(t, repo))
 
-	askID, _, err := s.store.CreateReply(ctx, store.Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "pick",
-		Ask: &store.Ask{Options: []store.AskOption{{Label: "A"}, {Label: "B"}}}})
+	askID, _, err := s.store.CreateReply(ctx, store.Reply{
+		CommentID: cid, Origin: "claude", Kind: "ask", Body: "pick",
+		Ask: &store.Ask{Options: []store.AskOption{{Label: "A"}, {Label: "B"}}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

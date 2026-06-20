@@ -9,7 +9,7 @@ import (
 func TestAttributionsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
 
 	empty, err := s.ListAttributionsByVersion(ctx, v.ID)
@@ -36,10 +36,10 @@ func TestAttributionsRoundTrip(t *testing.T) {
 func TestListAttributionsBySession(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	r1id := seedReview(t, s, "sess-a", 0, "/repo", "main", "base0")
+	r1id := seedReview(ctx, t, s, "sess-a", 0, "/repo", "main", "base0")
 	v1, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]", "")
 	v2, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]", "")
-	otherid := seedReview(t, s, "sess-b", 0, "/repo2", "main", "base0")
+	otherid := seedReview(ctx, t, s, "sess-b", 0, "/repo2", "main", "base0")
 	vOther, _ := s.CreateVersion(ctx, otherid, "main", "HEAD", "/p", "[]", "")
 
 	if err := s.PutAttributions(ctx, v1.ID, map[string][]AttributionRange{
@@ -81,7 +81,7 @@ func TestListAttributionsBySession(t *testing.T) {
 func TestPutAttributionsReplacesOnConflict(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
 
 	if err := s.PutAttributions(ctx, v.ID, map[string][]AttributionRange{

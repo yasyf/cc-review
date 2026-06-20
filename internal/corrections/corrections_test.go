@@ -91,7 +91,7 @@ func recordingBin(t *testing.T) string {
 	log := filepath.Join(dir, "argv.log")
 	stub := filepath.Join(dir, "cc-transcript")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + log + "\n"
-	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil { //nolint:gosec // G306: test stub must be executable (0o755) so the code under test can exec it as cc-transcript.
 		t.Fatal(err)
 	}
 	t.Setenv(binEnv, stub)
@@ -159,7 +159,7 @@ func TestWriteAggregatesThreadFailures(t *testing.T) {
 
 func nonEmptyLines(t *testing.T, path string) []string {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304: path is a test-constructed temp path, not external input.
 	if os.IsNotExist(err) {
 		return nil
 	}

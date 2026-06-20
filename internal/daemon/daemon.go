@@ -76,7 +76,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	if err != nil {
 		return err
 	}
-	defer ledger.Close()
+	defer func() { _ = ledger.Close() }()
 	rv := &review{decisions: ledger, log: log.New(os.Stderr, "[cc-review] ", log.LstdFlags)}
 
 	s, err := ccd.New(ccd.Config{

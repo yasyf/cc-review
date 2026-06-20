@@ -141,12 +141,13 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 					}
 					return rv.startReply(hc, sub, latest.VersionNumber, true, cs, reoffer)
 				}
-				ar, found, err := openSystemOrganize(hc.Ctx, st, sub.ID)
+				_, found, err := openSystemOrganize(hc.Ctx, st, sub.ID)
 				if err != nil {
 					return errReply(err.Error())
 				}
 				if !found {
-					if ar, err = st.CreateAIRequest(hc.Ctx, sub.ID, latest.VersionNumber, store.OriginSystem, organizePrompt); err != nil {
+					ar, err := st.CreateAIRequest(hc.Ctx, sub.ID, latest.VersionNumber, store.OriginSystem, organizePrompt)
+					if err != nil {
 						return errReply(err.Error())
 					}
 					emitAIRequest(hc.Ctx, hc.Append, ccevent.OriginSystem, store.EventAIRequestCreated, latest.VersionNumber, ar)
@@ -181,22 +182,22 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.WriteString(snap.PatchText); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return errReply(err.Error())
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return errReply(err.Error())
 	}
 	v, err := st.CreateVersion(hc.Ctx, sub.ID, snap.Branch, snap.BaseRef, "", string(filesJSON), sub.SessionID)
 	if err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return errReply(err.Error())
 	}
 	patchPath := paths.SnapshotPath(sub.ID, v.VersionNumber)
 	if err := os.Rename(tmpName, patchPath); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return errReply(err.Error())
 	}
 	if err := st.UpdateVersionPatchPath(hc.Ctx, v.ID, patchPath); err != nil {

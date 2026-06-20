@@ -24,7 +24,7 @@ func (s *Store) ApplyFileStates(ctx context.Context, reviewID string, inputs []F
 	if err != nil {
 		return nil, fmt.Errorf("begin file-states tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	now := unix(time.Now())
 	results := make([]FileStateResult, 0, len(inputs))
@@ -73,7 +73,7 @@ func (s *Store) RestoreFileStates(ctx context.Context, reviewID string, changes 
 	if err != nil {
 		return fmt.Errorf("begin restore tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	now := unix(time.Now())
 	for _, c := range changes {
@@ -96,7 +96,7 @@ func (s *Store) ListFileStates(ctx context.Context, reviewID string) ([]FileStat
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []FileState
 	for rows.Next() {
 		var (
@@ -124,7 +124,7 @@ func (s *Store) UnreviewChangedFiles(ctx context.Context, reviewID string, finge
 	if err != nil {
 		return nil, fmt.Errorf("begin unreview tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx,
 		`SELECT path, hidden, reviewed_fingerprint FROM file_states WHERE review_id=? AND reviewed=1 ORDER BY path ASC`,
@@ -139,7 +139,7 @@ func (s *Store) UnreviewChangedFiles(ctx context.Context, reviewID string, finge
 			hidden        int
 		)
 		if err := rows.Scan(&path, &hidden, &stamped); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		current, ok := fingerprints[path]
@@ -148,7 +148,7 @@ func (s *Store) UnreviewChangedFiles(ctx context.Context, reviewID string, finge
 		}
 		unmarked = append(unmarked, FileState{ReviewID: reviewID, Path: path, Hidden: hidden != 0})
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}

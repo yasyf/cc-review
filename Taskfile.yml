@@ -58,6 +58,16 @@ tasks:
     cmds:
       - go vet ./...
 
+  lint:
+    desc: Run golangci-lint over the Go module
+    cmds:
+      - golangci-lint run
+
+  fmt:
+    desc: Format the Go module with golangci-lint
+    cmds:
+      - golangci-lint fmt
+
   typecheck-web:
     desc: Type-check the web SPA
     dir: web

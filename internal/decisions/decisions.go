@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 
+	// modernc.org/sqlite registers the pure-Go "sqlite" database/sql driver
+	// used to open the decisions ledger.
 	_ "modernc.org/sqlite"
 )
 
@@ -70,7 +72,7 @@ func Open(path string) (*Log, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(ddl); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("apply decisions ddl: %w", err)
 	}
 	return &Log{db: db}, nil
@@ -107,7 +109,7 @@ func (l *Log) ForTurn(sessionID string, sinceMs, untilMs int64) ([]Decision, err
 	if err != nil {
 		return nil, fmt.Errorf("decisions for turn: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Decision
 	for rows.Next() {
 		d, err := scanDecision(rows)

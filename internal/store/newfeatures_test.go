@@ -9,7 +9,7 @@ import (
 func TestAIRequestAskAnswerRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	ar, err := s.CreateAIRequest(ctx, rid, 1, "user", "mark the boring ones")
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestOrganizationValidatePartial(t *testing.T) {
 func TestAnnotationsCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", `[{"path":"a.go","status":"M"}]`, "")
 	if err != nil {
 		t.Fatal(err)

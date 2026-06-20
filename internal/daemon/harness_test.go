@@ -119,12 +119,12 @@ func testServer(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	t.Cleanup(func() { cc.Close() })
+	t.Cleanup(func() { _ = cc.Close() })
 	ledger, err := decisions.Open(filepath.Join(t.TempDir(), "decisions.db"))
 	if err != nil {
 		t.Fatalf("open decisions ledger: %v", err)
 	}
-	t.Cleanup(func() { ledger.Close() })
+	t.Cleanup(func() { _ = ledger.Close() })
 
 	// One commit on main; tests write their own pending files, since handleStart
 	// fails fast on a repo with nothing to review.
@@ -226,10 +226,6 @@ func toResponse(reply ccd.Reply) Response {
 
 func (s *Server) handleStart(ctx context.Context, req Request) Response {
 	return s.run(ctx, req, (*review).handleStart)
-}
-
-func (s *Server) handleFeedback(ctx context.Context, req Request) Response {
-	return s.run(ctx, req, (*review).handleFeedback)
 }
 
 func (s *Server) handleFileStates(ctx context.Context, req Request) Response {

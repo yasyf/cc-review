@@ -90,7 +90,7 @@ func sliceTurn(ctx context.Context, turn vcs.Turn) ([]provenanceItem, error) {
 	if untilMs == 0 {
 		untilMs = time.Now().UnixMilli()
 	}
-	out, err := exec.CommandContext(ctx, "cc-transcript", "slice",
+	out, err := exec.CommandContext(ctx, "cc-transcript", "slice", //nolint:gosec // G204: fixed cc-transcript subcommand; args are this tool's own session ID and timestamps, intentionally shelling out to the companion CLI.
 		"--session", turn.SessionID, "--since", rfc3339Ms(turn.StartedAt), "--until", rfc3339Ms(untilMs)).Output()
 	if err != nil {
 		return nil, err

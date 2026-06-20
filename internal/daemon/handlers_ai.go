@@ -486,7 +486,7 @@ func writeReviewFilesList(patchPath string, entries []map[string]any) (string, e
 			return "", fmt.Errorf("encode review file entry: %w", err)
 		}
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
 		return "", fmt.Errorf("write review files list: %w", err)
 	}
 	return path, nil
@@ -500,7 +500,7 @@ func writeReviewOrganization(patchPath string, block map[string]any) (string, er
 	if err != nil {
 		return "", fmt.Errorf("encode organization: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return "", fmt.Errorf("write organization: %w", err)
 	}
 	return path, nil

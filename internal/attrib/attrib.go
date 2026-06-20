@@ -1,3 +1,6 @@
+// Package attrib computes per-line authorship for a review version by replaying
+// the snapshot chain's tree transitions and mapping each added line of the
+// version patch back to the turn that wrote it.
 package attrib
 
 import (
@@ -135,7 +138,8 @@ func (c *cursor) rest() []run {
 		return nil
 	}
 	r := c.runs[c.idx]
-	out := []run{{count: r.count - c.off, turnID: r.turnID}}
+	out := make([]run, 0, 1+(len(c.runs)-(c.idx+1)))
+	out = append(out, run{count: r.count - c.off, turnID: r.turnID})
 	return append(out, c.runs[c.idx+1:]...)
 }
 

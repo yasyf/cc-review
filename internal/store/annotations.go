@@ -41,7 +41,7 @@ func (s *Store) ListAnnotationsByVersion(ctx context.Context, versionID int64) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Annotation
 	for rows.Next() {
 		a, err := scanAnnotation(rows)

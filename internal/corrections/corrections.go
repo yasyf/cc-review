@@ -65,7 +65,7 @@ func Write(ctx context.Context, fb feedback.Feedback, repoKey string, submittedA
 	bin := Bin()
 	var errs []error
 	for _, t := range fb.Threads {
-		cmd := exec.CommandContext(ctx, bin, args(fb.ReviewID, t, fb.SessionID, repoKey, submittedAt)...)
+		cmd := exec.CommandContext(ctx, bin, args(fb.ReviewID, t, fb.SessionID, repoKey, submittedAt)...) //nolint:gosec // G204: bin is this tool's own cc-transcript companion CLI and args are tool-constructed, intentional subprocess.
 		if out, err := cmd.CombinedOutput(); err != nil {
 			errs = append(errs, fmt.Errorf("add correction for comment %d: %w: %s", t.CommentID, err, out))
 		}

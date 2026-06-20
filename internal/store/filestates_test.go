@@ -7,9 +7,9 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
-func stateByPath(t *testing.T, s *Store, reviewID string) map[string]FileState {
+func stateByPath(ctx context.Context, t *testing.T, s *Store, reviewID string) map[string]FileState {
 	t.Helper()
-	states, err := s.ListFileStates(context.Background(), reviewID)
+	states, err := s.ListFileStates(ctx, reviewID)
 	if err != nil {
 		t.Fatalf("list file states: %v", err)
 	}
@@ -23,7 +23,7 @@ func stateByPath(t *testing.T, s *Store, reviewID string) map[string]FileState {
 func TestApplyFileStatesPartialFlags(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	fps := map[string]string{"a.go": "fp-a", "b.go": "fp-b"}
 
 	for _, tc := range []struct {
@@ -49,7 +49,7 @@ func TestApplyFileStatesPartialFlags(t *testing.T) {
 			if results[0].Applied.Reviewed != tc.wantReviewed || results[0].Applied.Hidden != tc.wantHidden {
 				t.Fatalf("applied = %+v, want reviewed=%v hidden=%v", results[0].Applied, tc.wantReviewed, tc.wantHidden)
 			}
-			st := stateByPath(t, s, rid)["a.go"]
+			st := stateByPath(ctx, t, s, rid)["a.go"]
 			if st.Reviewed != tc.wantReviewed || st.Hidden != tc.wantHidden || st.ReviewedFingerprint != tc.wantFP {
 				t.Fatalf("stored = %+v, want reviewed=%v hidden=%v fp=%q", st, tc.wantReviewed, tc.wantHidden, tc.wantFP)
 			}
@@ -60,7 +60,7 @@ func TestApplyFileStatesPartialFlags(t *testing.T) {
 func TestApplyFileStatesReturnsPrior(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	fps := map[string]string{"a.go": "fp-a"}
 
 	if _, err := s.ApplyFileStates(ctx, rid, []FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, fps); err != nil {
@@ -79,7 +79,7 @@ func TestApplyFileStatesReturnsPrior(t *testing.T) {
 func TestApplyFileStatesKeepsStampWhenAlreadyReviewed(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	if _, err := s.ApplyFileStates(ctx, rid, []FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}},
 		map[string]string{"a.go": "fp-v1"}); err != nil {
@@ -91,7 +91,7 @@ func TestApplyFileStatesKeepsStampWhenAlreadyReviewed(t *testing.T) {
 		map[string]string{"a.go": "fp-v2"}); err != nil {
 		t.Fatal(err)
 	}
-	if st := stateByPath(t, s, rid)["a.go"]; st.ReviewedFingerprint != "fp-v1" {
+	if st := stateByPath(ctx, t, s, rid)["a.go"]; st.ReviewedFingerprint != "fp-v1" {
 		t.Fatalf("stamp = %q, want the mark-time fp-v1", st.ReviewedFingerprint)
 	}
 }
@@ -99,7 +99,7 @@ func TestApplyFileStatesKeepsStampWhenAlreadyReviewed(t *testing.T) {
 func TestUnreviewChangedFiles(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v1 := map[string]string{"changed.go": "old", "kept.go": "same", "gone.go": "was", "hiddenchanged.go": "old"}
 
 	if _, err := s.ApplyFileStates(ctx, rid, []FileStateInput{
@@ -124,7 +124,7 @@ func TestUnreviewChangedFiles(t *testing.T) {
 		t.Fatal("unmark must preserve the hidden flag in its result")
 	}
 
-	got := stateByPath(t, s, rid)
+	got := stateByPath(ctx, t, s, rid)
 	if got["changed.go"].Reviewed || got["changed.go"].ReviewedFingerprint != "" {
 		t.Fatalf("changed.go = %+v, want unmarked with cleared stamp", got["changed.go"])
 	}
@@ -151,7 +151,7 @@ func TestUnreviewChangedFiles(t *testing.T) {
 func TestRestoreFileStates(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	fps := map[string]string{"a.go": "fp-a", "b.go": "fp-b"}
 
 	if _, err := s.ApplyFileStates(ctx, rid, []FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, fps); err != nil {
@@ -172,7 +172,7 @@ func TestRestoreFileStates(t *testing.T) {
 	if err := s.RestoreFileStates(ctx, rid, changes); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	got := stateByPath(t, s, rid)
+	got := stateByPath(ctx, t, s, rid)
 	if !got["a.go"].Reviewed || got["a.go"].Hidden || got["a.go"].ReviewedFingerprint != "fp-a" {
 		t.Fatalf("a.go = %+v, want pre-batch reviewed state restored", got["a.go"])
 	}

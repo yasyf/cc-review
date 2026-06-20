@@ -21,20 +21,20 @@ func bptr(b bool) *bool { return &b }
 
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 // startedReview boots a review for window 100 over two files and returns the
 // request template stamped with that window's identity.
-func startedReview(t *testing.T, s *Server, repo string) (Request, Response) {
+func startedReview(ctx context.Context, t *testing.T, s *Server, repo string) (Request, Response) {
 	t.Helper()
 	s.alive = aliveSet(100)
 	writeFile(t, repo, "a.go", "package a\n")
 	writeFile(t, repo, "b.go", "package b\n")
 	req := Request{Session: "sA", ClaudePID: 100, Cwd: repo}
-	started := s.handleStart(context.Background(), req)
+	started := s.handleStart(ctx, req)
 	if !started.OK {
 		t.Fatalf("start: %s", started.Error)
 	}
@@ -50,13 +50,13 @@ type testEvent struct {
 	Payload       json.RawMessage
 }
 
-func eventsOfType(t *testing.T, s *Server, reviewID, typ string, excludeAgent bool) []testEvent {
+func eventsOfType(ctx context.Context, t *testing.T, s *Server, reviewID, typ string, excludeAgent bool) []testEvent {
 	t.Helper()
 	excludeOrigin := ""
 	if excludeAgent {
 		excludeOrigin = ccevent.OriginAgent
 	}
-	events, err := s.cc.EventsSince(context.Background(), reviewID, 0, excludeOrigin)
+	events, err := s.cc.EventsSince(ctx, reviewID, 0, excludeOrigin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func eventsOfType(t *testing.T, s *Server, reviewID, typ string, excludeAgent bo
 func TestHandleFileStatesRejectsUnknownPaths(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	req.Files = []FileStateInput{
 		{Path: "a.go", Reviewed: bptr(true)},
@@ -106,7 +106,7 @@ func TestHandleFileStatesRejectsUnknownPaths(t *testing.T) {
 func TestHandleFileStatesRecordsFirstPriorAcrossBatches(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 	ar, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, "user", "mark a.go")
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestHandleFileStatesRecordsFirstPriorAcrossBatches(t *testing.T) {
 func TestHandleFileStatesGuardsAIRequest(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	t.Run("foreign review", func(t *testing.T) {
 		other, err := s.createReview(ctx, "sX", 0, "/elsewhere", "main", "base0")
@@ -189,7 +189,7 @@ func TestHandleFileStatesGuardsAIRequest(t *testing.T) {
 func TestClaudeOriginEventsFilteredFromClaudeStream(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	req.Files = []FileStateInput{{Path: "a.go", Reviewed: bptr(true)}}
 	if resp := s.handleFileStates(ctx, req); !resp.OK {
@@ -198,14 +198,14 @@ func TestClaudeOriginEventsFilteredFromClaudeStream(t *testing.T) {
 
 	// The browser stream (unfiltered) sees Claude's marks; the Claude-side
 	// stream (excludeClaude) must not echo them back.
-	if got := len(eventsOfType(t, s, started.ReviewID, store.EventFileStates, false)); got != 1 {
+	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventFileStates, false)); got != 1 {
 		t.Fatalf("unfiltered file.states = %d, want 1", got)
 	}
-	if got := len(eventsOfType(t, s, started.ReviewID, store.EventFileStates, true)); got != 0 {
+	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventFileStates, true)); got != 0 {
 		t.Fatalf("excludeClaude file.states = %d, want 0", got)
 	}
 	// System events (the organize request) stay visible on both streams.
-	if got := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, true)); got != 1 {
+	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestCreated, true)); got != 1 {
 		t.Fatalf("excludeClaude ai.request.created = %d, want 1", got)
 	}
 }
@@ -213,7 +213,7 @@ func TestClaudeOriginEventsFilteredFromClaudeStream(t *testing.T) {
 func TestHandleSubmitOrganization(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	chapters := []store.Chapter{{Title: "All", Summary: "everything", Files: []store.ChapterFile{
 		{Path: "a.go", Risk: "low", Rationale: "r"},
@@ -242,8 +242,10 @@ func TestHandleSubmitOrganization(t *testing.T) {
 
 	t.Run("incomplete coverage enumerated", func(t *testing.T) {
 		r := req
-		r.Organization = &store.Organization{Chapters: []store.Chapter{{Title: "Partial", Summary: "s",
-			Files: []store.ChapterFile{{Path: "a.go", Risk: "low", Rationale: "r"}}}}}
+		r.Organization = &store.Organization{Chapters: []store.Chapter{{
+			Title: "Partial", Summary: "s",
+			Files: []store.ChapterFile{{Path: "a.go", Risk: "low", Rationale: "r"}},
+		}}}
 		r.VersionNumber = started.Version
 		resp := s.handleSubmitOrganization(ctx, r)
 		if resp.OK || !strings.Contains(resp.Error, "missing paths: b.go") {
@@ -269,7 +271,7 @@ func TestHandleSubmitOrganization(t *testing.T) {
 		if !reflect.DeepEqual(org.Chapters, chapters) {
 			t.Fatalf("chapters = %+v, want %+v", org.Chapters, chapters)
 		}
-		events := eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, false)
+		events := eventsOfType(ctx, t, s, started.ReviewID, store.EventOrganizationUpdated, false)
 		if len(events) != 1 || events[0].Origin != ccevent.OriginAgent {
 			t.Fatalf("organization.updated events = %+v, want one agent-origin event", events)
 		}
@@ -279,7 +281,7 @@ func TestHandleSubmitOrganization(t *testing.T) {
 func TestReviewFilesIncludesPatchPath(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	v, _, err := s.store.LatestVersion(ctx, started.ReviewID)
 	if err != nil {
@@ -308,7 +310,7 @@ func TestReviewFilesCarryGeneratedVendored(t *testing.T) {
 	s, repo := testServer(t)
 	s.alive = aliveSet(100)
 	writeFile(t, repo, "package-lock.json", "{}\n")
-	if err := os.MkdirAll(filepath.Join(repo, "vendor"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, "vendor"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, "vendor"), "x.go", "package vendor\n")
@@ -351,7 +353,7 @@ func TestReviewFilesCarryGeneratedVendored(t *testing.T) {
 func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	req.Files = []FileStateInput{
 		{Path: "a.go", Reviewed: bptr(true)},
@@ -386,10 +388,10 @@ func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
 		t.Fatalf("b.go = %+v, want reviewed state and hidden flag carried forward", byPath["b.go"])
 	}
 
-	if got := len(eventsOfType(t, s, started.ReviewID, store.EventVersionCreated, false)); got != 2 {
+	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventVersionCreated, false)); got != 2 {
 		t.Fatalf("version.created events = %d, want one per start", got)
 	}
-	unmark := eventsOfType(t, s, started.ReviewID, store.EventFileStates, true) // origin system: visible to Claude
+	unmark := eventsOfType(ctx, t, s, started.ReviewID, store.EventFileStates, true) // origin system: visible to Claude
 	if len(unmark) != 1 || unmark[0].Origin != store.OriginSystem || unmark[0].VersionNumber != 2 {
 		t.Fatalf("unmark events = %+v, want one system file.states on v2", unmark)
 	}
@@ -408,7 +410,7 @@ func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
 	}
 
 	// Each start queues a fresh system organize request.
-	organize := eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)
+	organize := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestCreated, false)
 	if len(organize) != 2 {
 		t.Fatalf("ai.request.created events = %d, want one per version", len(organize))
 	}
@@ -452,7 +454,7 @@ func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
 func TestUpdateAIRequestEventCarriesCurrentVersion(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 	ar, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, "user", "p")
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +475,7 @@ func TestUpdateAIRequestEventCarriesCurrentVersion(t *testing.T) {
 		t.Fatalf("to done: %s", resp.Error)
 	}
 
-	updates := eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false)
+	updates := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false)
 	if len(updates) != 1 {
 		t.Fatalf("ai.request.updated events = %d, want 1", len(updates))
 	}
@@ -497,7 +499,7 @@ func TestUpdateAIRequestEventCarriesCurrentVersion(t *testing.T) {
 func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	_, started := startedReview(t, s, repo)
+	_, started := startedReview(ctx, t, s, repo)
 
 	if len(started.AIRequests) != 1 {
 		t.Fatalf("fresh start must re-offer exactly the organize request, got %d", len(started.AIRequests))
@@ -516,7 +518,7 @@ func TestStartReturnsEagerOrganizeRequest(t *testing.T) {
 
 	// The dedupe contract: the response carries the same bytes (and so the same
 	// id) as the request object inside the ai.request.created event payload.
-	created := eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)
+	created := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestCreated, false)
 	if len(created) != 1 {
 		t.Fatalf("ai.request.created events = %d, want 1", len(created))
 	}
@@ -585,7 +587,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, repo := testServer(t)
-			req, started := startedReview(t, s, repo)
+			req, started := startedReview(ctx, t, s, repo)
 			var sys struct {
 				ID string `json:"id"`
 			}
@@ -602,7 +604,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				}
 			}
 			if tc.organized {
-				submitOrg(t, s, req, started.Version, "a.go", "b.go")
+				submitOrg(ctx, t, s, req, started.Version, "a.go", "b.go")
 			}
 			var userID int64
 			if tc.userOpen {
@@ -612,8 +614,8 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				}
 				userID = ur.ID
 			}
-			createdBefore := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false))
-			updatedBefore := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false))
+			createdBefore := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestCreated, false))
+			updatedBefore := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false))
 
 			resumed := s.handleStart(ctx, req)
 			if !resumed.OK || !resumed.Resumed || resumed.Version != started.Version {
@@ -632,7 +634,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				if got.Status != "done" || !strings.Contains(got.Summary, "already organized") {
 					t.Fatalf("system request status=%q summary=%q, want done via already-organized", got.Status, got.Summary)
 				}
-				if got := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false)); got != updatedBefore+1 {
+				if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false)); got != updatedBefore+1 {
 					t.Fatalf("ai.request.updated events = %d, want exactly %d", got, updatedBefore+1)
 				}
 			case "user-only":
@@ -688,7 +690,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				if len(requests) != 1 {
 					t.Fatalf("requests = %d, want the single rescued row", len(requests))
 				}
-				if got := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)); got != createdBefore {
+				if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestCreated, false)); got != createdBefore {
 					t.Fatalf("ai.request.created events = %d, want unchanged %d (no re-emit)", got, createdBefore)
 				}
 			case "fresh":
@@ -708,7 +710,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 				if ar.Source != "system" || ar.Status != "pending" {
 					t.Fatalf("fresh request = %+v, want a pending system request", ar)
 				}
-				created := eventsOfType(t, s, started.ReviewID, store.EventAIRequestCreated, false)
+				created := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestCreated, false)
 				if len(created) != createdBefore+1 {
 					t.Fatalf("ai.request.created events = %d, want %d", len(created), createdBefore+1)
 				}
@@ -743,7 +745,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 func TestSweepStalePending(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	_, started := startedReview(t, s, repo)
+	_, started := startedReview(ctx, t, s, repo)
 
 	// A human AI-bar request no live session ever dispatched.
 	userReq, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, store.OriginUser, "mark all mechanical changes as viewed")
@@ -758,7 +760,7 @@ func TestSweepStalePending(t *testing.T) {
 	if _, err := s.store.TransitionAIRequest(ctx, working.ID, "working", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	updatedBefore := len(eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false))
+	updatedBefore := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false))
 
 	// A cutoff in the future treats every still-pending request as stale.
 	if err := s.sweepStalePending(ctx, time.Now().Add(time.Hour)); err != nil {
@@ -786,7 +788,7 @@ func TestSweepStalePending(t *testing.T) {
 	if sr, _ := s.store.GetAIRequest(ctx, sysID); sr.Status != "pending" {
 		t.Fatalf("system organize status=%q, want untouched pending", sr.Status)
 	}
-	if updates := eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false); len(updates) != updatedBefore+1 {
+	if updates := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false); len(updates) != updatedBefore+1 {
 		t.Fatalf("ai.request.updated events = %d, want exactly one more (%d)", len(updates), updatedBefore+1)
 	}
 
@@ -794,7 +796,7 @@ func TestSweepStalePending(t *testing.T) {
 	if err := s.sweepStalePending(ctx, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("second sweep: %v", err)
 	}
-	if again := eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false); len(again) != updatedBefore+1 {
+	if again := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false); len(again) != updatedBefore+1 {
 		t.Fatalf("second sweep emitted more events: %d", len(again))
 	}
 }
@@ -802,7 +804,7 @@ func TestSweepStalePending(t *testing.T) {
 func TestHandleUpdateAIRequestLifecycle(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 	ar, err := s.store.CreateAIRequest(ctx, started.ReviewID, started.Version, "user", "p")
 	if err != nil {
 		t.Fatal(err)
@@ -830,7 +832,7 @@ func TestHandleUpdateAIRequestLifecycle(t *testing.T) {
 		t.Fatal("undone must be rejected at the daemon op")
 	}
 
-	updates := eventsOfType(t, s, started.ReviewID, store.EventAIRequestUpdated, false)
+	updates := eventsOfType(ctx, t, s, started.ReviewID, store.EventAIRequestUpdated, false)
 	if len(updates) != 2 {
 		t.Fatalf("ai.request.updated events = %d, want 2", len(updates))
 	}
@@ -851,7 +853,7 @@ func TestHandleUpdateAIRequestLifecycle(t *testing.T) {
 
 // submitOrg submits a one-chapter organization covering paths on the review's
 // given version.
-func submitOrg(t *testing.T, s *Server, req Request, version int, paths ...string) store.Organization {
+func submitOrg(ctx context.Context, t *testing.T, s *Server, req Request, version int, paths ...string) store.Organization {
 	t.Helper()
 	files := make([]store.ChapterFile, 0, len(paths))
 	for _, p := range paths {
@@ -861,7 +863,7 @@ func submitOrg(t *testing.T, s *Server, req Request, version int, paths ...strin
 	r := req
 	r.Organization = &org
 	r.VersionNumber = version
-	if resp := s.handleSubmitOrganization(context.Background(), r); !resp.OK {
+	if resp := s.handleSubmitOrganization(ctx, r); !resp.OK {
 		t.Fatalf("submit organization: %s", resp.Error)
 	}
 	return org
@@ -870,8 +872,8 @@ func submitOrg(t *testing.T, s *Server, req Request, version int, paths ...strin
 func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
-	org := submitOrg(t, s, req, started.Version, "a.go", "b.go")
+	req, started := startedReview(ctx, t, s, repo)
+	org := submitOrg(ctx, t, s, req, started.Version, "a.go", "b.go")
 
 	// v2: a changed tree queues a fresh organize request that never completes.
 	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
@@ -903,7 +905,7 @@ func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 	if got := countEvents(t, s, started.ReviewID, store.EventAIRequestCreated); got != 2 {
 		t.Fatalf("ai.request.created events = %d, want 2 (v1 + v2 only)", got)
 	}
-	updated := eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, false)
+	updated := eventsOfType(ctx, t, s, started.ReviewID, store.EventOrganizationUpdated, false)
 	if len(updated) != 2 {
 		t.Fatalf("organization.updated events = %d, want submit + carry", len(updated))
 	}
@@ -911,7 +913,7 @@ func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 		t.Fatalf("carried event origin=%s version=%d, want agent origin on version 3", carried.Origin, carried.VersionNumber)
 	}
 	// Claude-origin keeps the carried event off the Claude-side stream.
-	if got := len(eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, true)); got != 0 {
+	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventOrganizationUpdated, true)); got != 0 {
 		t.Fatalf("excludeClaude organization.updated = %d, want 0", got)
 	}
 	// The carry closes both stranded system organize requests; nothing is left
@@ -933,8 +935,8 @@ func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 func TestStartDoesNotCarryAcrossAChangedDiff(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
-	submitOrg(t, s, req, started.Version, "a.go", "b.go")
+	req, started := startedReview(ctx, t, s, repo)
+	submitOrg(ctx, t, s, req, started.Version, "a.go", "b.go")
 
 	writeFile(t, repo, "a.go", "package a\nfunc Changed() {}\n")
 	second := s.handleStart(ctx, req)
@@ -948,7 +950,7 @@ func TestStartDoesNotCarryAcrossAChangedDiff(t *testing.T) {
 	if _, ok, err := s.store.GetOrganization(ctx, v2.ID); err != nil || ok {
 		t.Fatalf("v2 organization: ok=%v err=%v, want absent", ok, err)
 	}
-	if got := len(eventsOfType(t, s, started.ReviewID, store.EventOrganizationUpdated, false)); got != 1 {
+	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventOrganizationUpdated, false)); got != 1 {
 		t.Fatalf("organization.updated events = %d, want only the v1 submit", got)
 	}
 }
@@ -963,7 +965,7 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 	gitRun(t, repo, "add", "-A")
 	gitRun(t, repo, "commit", "-qm", "lib")
 	writeFile(t, repo, "lib.go", libBody+"func Touched() {}\n")
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	type rfFile struct {
 		Path      string           `json:"path"`

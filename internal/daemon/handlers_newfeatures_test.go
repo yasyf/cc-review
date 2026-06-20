@@ -11,7 +11,7 @@ import (
 func TestHandleFileStatesByRisk(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	org := req
 	org.Organization = &store.Organization{Chapters: []store.Chapter{{Title: "All", Summary: "s", Files: []store.ChapterFile{
@@ -60,7 +60,7 @@ func TestHandleFileStatesByRisk(t *testing.T) {
 func TestHandleAnnotate(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	req, started := startedReview(t, s, repo)
+	req, started := startedReview(ctx, t, s, repo)
 
 	r := req
 	r.Annotations = []AnnotateInput{

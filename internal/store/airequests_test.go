@@ -8,10 +8,9 @@ import (
 	"time"
 )
 
-func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
+func seedAIRequest(ctx context.Context, t *testing.T, s *Store, status string) (string, int64) {
 	t.Helper()
-	ctx := context.Background()
-	reviewID := seedReview(t, s, "", 0, "/repo/"+status+t.Name(), "main", "base0")
+	reviewID := seedReview(ctx, t, s, "", 0, "/repo/"+status+t.Name(), "main", "base0")
 	ar, err := s.CreateAIRequest(ctx, reviewID, 1, "user", "mark the easy ones")
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +26,7 @@ func seedAIRequest(t *testing.T, s *Store, status string) (string, int64) {
 func TestCreateAIRequestDefaults(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	ar, err := s.CreateAIRequest(ctx, rid, 2, "system", "Organize this review into chapters and rate per-file risk.")
 	if err != nil {
@@ -70,7 +69,7 @@ func TestTransitionAIRequestGuards(t *testing.T) {
 		{"working to working", "working", "working", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, id := seedAIRequest(t, s, tc.from)
+			_, id := seedAIRequest(ctx, t, s, tc.from)
 			updated, err := s.TransitionAIRequest(ctx, id, tc.to, "", nil)
 			if tc.wantErr {
 				if !errors.Is(err, ErrInvalidTransition) {
@@ -92,7 +91,7 @@ func TestTransitionAIRequestGuards(t *testing.T) {
 	}
 
 	t.Run("unknown target status", func(t *testing.T) {
-		_, id := seedAIRequest(t, s, "pending")
+		_, id := seedAIRequest(ctx, t, s, "pending")
 		if _, err := s.TransitionAIRequest(ctx, id, "pending", "", nil); err == nil {
 			t.Fatal("want error for an unknown target status")
 		}
@@ -108,7 +107,7 @@ func TestTransitionAIRequestGuards(t *testing.T) {
 func TestTransitionAIRequestSummaryAndUnmatched(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	_, id := seedAIRequest(t, s, "working")
+	_, id := seedAIRequest(ctx, t, s, "working")
 
 	unmatched := []Unmatched{{Pattern: "old tests", Why: "no test file predates v1"}}
 	updated, err := s.TransitionAIRequest(ctx, id, "done", "marked 3 mechanical files", unmatched)
@@ -132,7 +131,7 @@ func TestTransitionAIRequestSummaryAndUnmatched(t *testing.T) {
 func TestMarkWorkingRecordsPhase(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	_, id := seedAIRequest(t, s, "pending")
+	_, id := seedAIRequest(ctx, t, s, "pending")
 
 	working, err := s.MarkWorking(ctx, id, "reading 8 files…")
 	if err != nil {
@@ -164,13 +163,17 @@ func TestMarkWorkingRecordsPhase(t *testing.T) {
 func TestAppendAIRequestChangesKeepsFirstPrior(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	_, id := seedAIRequest(t, s, "working")
+	_, id := seedAIRequest(ctx, t, s, "working")
 
 	first := []AIChange{
-		{Path: "a.go", Reason: "import-only", Prior: PriorState{Reviewed: false, Hidden: false, Fingerprint: ""},
-			Applied: AppliedState{Reviewed: true}},
-		{Path: "b.go", Reason: "lockfile", Prior: PriorState{Reviewed: true, Fingerprint: "fp-b"},
-			Applied: AppliedState{Reviewed: true, Hidden: true}},
+		{
+			Path: "a.go", Reason: "import-only", Prior: PriorState{Reviewed: false, Hidden: false, Fingerprint: ""},
+			Applied: AppliedState{Reviewed: true},
+		},
+		{
+			Path: "b.go", Reason: "lockfile", Prior: PriorState{Reviewed: true, Fingerprint: "fp-b"},
+			Applied: AppliedState{Reviewed: true, Hidden: true},
+		},
 	}
 	if err := s.AppendAIRequestChanges(ctx, id, first); err != nil {
 		t.Fatalf("first batch: %v", err)
@@ -190,8 +193,10 @@ func TestAppendAIRequestChangesKeepsFirstPrior(t *testing.T) {
 	want := []AIChange{
 		// a.go: FIRST prior kept, latest applied + reason.
 		{Path: "a.go", Reason: "also hide it", Prior: PriorState{}, Applied: AppliedState{Reviewed: true, Hidden: true}},
-		{Path: "b.go", Reason: "lockfile", Prior: PriorState{Reviewed: true, Fingerprint: "fp-b"},
-			Applied: AppliedState{Reviewed: true, Hidden: true}},
+		{
+			Path: "b.go", Reason: "lockfile", Prior: PriorState{Reviewed: true, Fingerprint: "fp-b"},
+			Applied: AppliedState{Reviewed: true, Hidden: true},
+		},
 		{Path: "c.go", Reason: "generated", Prior: PriorState{}, Applied: AppliedState{Hidden: true}},
 	}
 	if !reflect.DeepEqual(got.Changes, want) {
@@ -202,7 +207,7 @@ func TestAppendAIRequestChangesKeepsFirstPrior(t *testing.T) {
 func TestListAIRequestsNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	older, _ := s.CreateAIRequest(ctx, rid, 1, "system", "organize")
 	newer, _ := s.CreateAIRequest(ctx, rid, 1, "user", "mark renames")
@@ -219,7 +224,7 @@ func TestListAIRequestsNewestFirst(t *testing.T) {
 func TestListOpenAIRequestsScopedToVersion(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	// v1: a closed system organize, an open (working) user request, a done one.
 	sysV1, _ := s.CreateAIRequest(ctx, rid, 1, "system", "organize")
@@ -256,7 +261,7 @@ func TestListOpenAIRequestsScopedToVersion(t *testing.T) {
 func TestStalePendingUserRequests(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	stale, _ := s.CreateAIRequest(ctx, rid, 1, "user", "stale user pending")
 	working, _ := s.CreateAIRequest(ctx, rid, 1, "user", "user working")

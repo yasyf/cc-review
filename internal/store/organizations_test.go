@@ -19,7 +19,8 @@ func chapter(title string, paths ...string) Chapter {
 // chapterWithLines covers path (carrying focus + line notes) plus rest, so a
 // Validate case can exercise a line note while still satisfying 1:1 coverage.
 func chapterWithLines(title, path string, lines []LineNote, rest ...string) Chapter {
-	files := []ChapterFile{{Path: path, Risk: "low", Rationale: "r", Focus: "f", Lines: lines}}
+	files := make([]ChapterFile, 0, 1+len(rest))
+	files = append(files, ChapterFile{Path: path, Risk: "low", Rationale: "r", Focus: "f", Lines: lines})
 	for _, p := range rest {
 		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r"})
 	}
@@ -34,27 +35,51 @@ func TestOrganizationValidate(t *testing.T) {
 		wantErr []string
 	}{
 		{"exact coverage passes", Organization{Chapters: []Chapter{chapter("one", "a.go", "b.go"), chapter("two", "c.go")}}, nil},
-		{"missing path enumerated", Organization{Chapters: []Chapter{chapter("one", "a.go")}},
-			[]string{"missing paths: b.go, c.go"}},
-		{"unknown path enumerated", Organization{Chapters: []Chapter{chapter("one", "a.go", "b.go", "c.go", "nope.go")}},
-			[]string{"unknown paths: nope.go"}},
-		{"duplicate across chapters enumerated", Organization{Chapters: []Chapter{chapter("one", "a.go", "b.go"), chapter("two", "b.go", "c.go")}},
-			[]string{"more than one chapter: b.go"}},
-		{"missing and unknown together", Organization{Chapters: []Chapter{chapter("one", "a.go", "zzz.go")}},
-			[]string{"missing paths: b.go, c.go", "unknown paths: zzz.go"}},
-		{"unknown risk", Organization{Chapters: []Chapter{{Title: "one", Files: []ChapterFile{{Path: "a.go", Risk: "scary"}}}}},
-			[]string{`unknown risk "scary"`}},
+		{
+			"missing path enumerated",
+			Organization{Chapters: []Chapter{chapter("one", "a.go")}},
+			[]string{"missing paths: b.go, c.go"},
+		},
+		{
+			"unknown path enumerated",
+			Organization{Chapters: []Chapter{chapter("one", "a.go", "b.go", "c.go", "nope.go")}},
+			[]string{"unknown paths: nope.go"},
+		},
+		{
+			"duplicate across chapters enumerated",
+			Organization{Chapters: []Chapter{chapter("one", "a.go", "b.go"), chapter("two", "b.go", "c.go")}},
+			[]string{"more than one chapter: b.go"},
+		},
+		{
+			"missing and unknown together",
+			Organization{Chapters: []Chapter{chapter("one", "a.go", "zzz.go")}},
+			[]string{"missing paths: b.go, c.go", "unknown paths: zzz.go"},
+		},
+		{
+			"unknown risk",
+			Organization{Chapters: []Chapter{{Title: "one", Files: []ChapterFile{{Path: "a.go", Risk: "scary"}}}}},
+			[]string{`unknown risk "scary"`},
+		},
 		{"focus and lines pass", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
 			[]LineNote{{Start: 1, End: 3, Level: "focus", Note: "n"}, {Start: 5, End: 5, Level: "mechanical"}}, "b.go", "c.go")}}, nil},
-		{"unknown line level", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
-			[]LineNote{{Start: 1, End: 2, Level: "scary"}}, "b.go", "c.go")}},
-			[]string{`unknown level "scary"`}},
-		{"line range starts below one", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
-			[]LineNote{{Start: 0, End: 3, Level: "focus"}}, "b.go", "c.go")}},
-			[]string{"invalid line range 0-3"}},
-		{"line range start past end", Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
-			[]LineNote{{Start: 5, End: 2, Level: "focus"}}, "b.go", "c.go")}},
-			[]string{"invalid line range 5-2"}},
+		{
+			"unknown line level",
+			Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+				[]LineNote{{Start: 1, End: 2, Level: "scary"}}, "b.go", "c.go")}},
+			[]string{`unknown level "scary"`},
+		},
+		{
+			"line range starts below one",
+			Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+				[]LineNote{{Start: 0, End: 3, Level: "focus"}}, "b.go", "c.go")}},
+			[]string{"invalid line range 0-3"},
+		},
+		{
+			"line range start past end",
+			Organization{Chapters: []Chapter{chapterWithLines("one", "a.go",
+				[]LineNote{{Start: 5, End: 2, Level: "focus"}}, "b.go", "c.go")}},
+			[]string{"invalid line range 5-2"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.org.Validate(versionPaths)
@@ -79,7 +104,7 @@ func TestOrganizationValidate(t *testing.T) {
 func TestLatestOrganization(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v1, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p1", `[{"path":"a.go","status":"M"}]`, "")
 
 	if _, _, ok, err := s.LatestOrganization(ctx, rid); err != nil || ok {
@@ -125,7 +150,7 @@ func TestLatestOrganization(t *testing.T) {
 func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
 
 	if _, ok, err := s.GetOrganization(ctx, v.ID); err != nil || ok {
@@ -178,7 +203,7 @@ func TestOrganizationDecodeLegacyBlob(t *testing.T) {
 func TestOrganizationUpsertRoundTripWithLines(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	rid := seedReview(t, s, "s", 0, "/repo", "main", "base0")
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
 
 	org := Organization{Chapters: []Chapter{{Title: "Store", Summary: "s", Files: []ChapterFile{

@@ -13,10 +13,10 @@ import (
 func writeRepoFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	full := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -26,7 +26,7 @@ func gitInit(t *testing.T, root string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil { //nolint:gosec // G204: test helper running git init in a test-controlled temp dir.
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 }

@@ -184,7 +184,7 @@ func relToRepo(repoRoot, path string) string {
 // (1 = transcript missing), or schema skew all mean "no slice data": the Bash
 // subtraction is skipped and the degradation logged once per daemon.
 func (rv *review) bashSummaries(ctx context.Context, sessionID string, sinceMs, untilMs int64) []string {
-	out, err := exec.CommandContext(ctx, "cc-transcript", "slice",
+	out, err := exec.CommandContext(ctx, "cc-transcript", "slice", //nolint:gosec // G204: fixed cc-transcript subcommand; args are this tool's own session ID and timestamps, intentionally shelling out to the companion CLI.
 		"--session", sessionID, "--since", rfc3339Ms(sinceMs), "--until", rfc3339Ms(untilMs)).Output()
 	if err != nil {
 		rv.warnNoSlice(err.Error())
