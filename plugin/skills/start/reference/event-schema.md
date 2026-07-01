@@ -17,6 +17,7 @@
 | `annotations.updated` | `annotations` (`[{id, filePath, side, start, end, label}]`) | Never delivered to you — Claude-authored line highlights from the organize agent's `annotate`; the browser renders them on the diff. |
 | `version.created` | *(none beyond `type`, `version_number`)* | Informational — a new version was captured. |
 | `channel.changed` | `connected` | Never delivered to you — drives the browser's Claude-connected indicator. |
+| `channel.probe` | `note` | Yes — run `channel-ack`, reply nothing. Arrives only as a channel tag (never via `watch`), solicited by your own `start` while the channel is attached but unproven; never persisted, so no Monitor or reconnect can replay it. |
 
 Your own replies surface in the browser (and the frozen feedback) as `claude.question`, `claude.ask`, and `claude.clarification`, threaded under the comment they answer. A `claude.ask` payload is `{commentId, reply}`, the reply carrying `ask: {header, multiSelect, options: [{label, description?, preview?}]}`. You never receive these back from `watch`.
 

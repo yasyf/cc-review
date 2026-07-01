@@ -123,7 +123,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 						return errReply(err.Error())
 					}
 				}
-				cs := channelState(hc.Activity, sub.ID, hc.Scope, hc.Window.ClaudePID)
+				cs := rv.channelStateProbed(hc, sub.ID)
 				// An organized version needs no organize agent: close any open system
 				// request stranded by a dead session. An unorganized one rescues the
 				// still-open request — or queues a fresh one when the prior request
@@ -243,7 +243,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	if err := failStrandedQuestions(hc.Ctx, st, hc.Append, sub.ID, v.VersionNumber); err != nil {
 		return errReply(err.Error())
 	}
-	cs := channelState(hc.Activity, sub.ID, hc.Scope, hc.Window.ClaudePID)
+	cs := rv.channelStateProbed(hc, sub.ID)
 	if carriedOK {
 		// The carried organization is the agent's own authored content reattached
 		// verbatim, so the event keeps the agent origin a submit_organization would

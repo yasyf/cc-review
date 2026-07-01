@@ -37,6 +37,18 @@ type Server struct {
 
 	repoMu    sync.Mutex
 	repoLocks map[string]*sync.Mutex
+
+	injectMu sync.Mutex
+	injected []injectCall
+}
+
+// injectCall records one solicited-frame injection the review handlers asked
+// for, standing in for the daemon's (*ccd.Server).InjectEvent.
+type injectCall struct {
+	subjectID string
+	consumer  string
+	pid       int
+	payload   string
 }
 
 // Request is the test-side view of one control RPC: the envelope identity plus
@@ -157,7 +169,19 @@ func newServer(cc *ccstore.Store, ledger *decisions.Log) *Server {
 			Active: func(sub subject.Subject) bool { return sub.Status == "open" },
 		},
 	}
+	s.rv.injectEvent = func(subjectID, consumer string, pid int, payload string) int {
+		s.injectMu.Lock()
+		defer s.injectMu.Unlock()
+		s.injected = append(s.injected, injectCall{subjectID, consumer, pid, payload})
+		return 1
+	}
 	return s
+}
+
+func (s *Server) injectCalls() []injectCall {
+	s.injectMu.Lock()
+	defer s.injectMu.Unlock()
+	return append([]injectCall(nil), s.injected...)
 }
 
 func (s *Server) held(_ context.Context, sub subject.Subject) bool {

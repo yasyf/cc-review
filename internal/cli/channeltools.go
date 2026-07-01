@@ -20,12 +20,13 @@ const channelNotifyMethod = "notifications/claude/channel"
 
 // channelInstructions is folded into the agent's system prompt at the channel's
 // MCP initialize, so every --channels session (even one that never ran
-// cc-review:start) knows the attach handshake is status, not a request.
+// cc-review:start) knows what channel traffic to expect and that silence is
+// normal.
 const channelInstructions = `This MCP server is the cc-review code-review channel. Review activity reaches you as <channel source="cc-review" type="..."> tags whose inner JSON has a "type" field identifying the event.
 
-A channel.hello tag arrives once when the channel attaches, and a channel.changed tag marks a connection-presence change. Both are status signals that confirm the channel is live. They carry no task and need no reply, narration, or tool call. When one arrives, continue whatever you were doing. If the conversation so far holds nothing but this handshake, there is no request yet, so wait for the human instead of asking what they want.
+The channel never speaks unsolicited: outside a /cc-review:start run it is silent, and silence needs nothing from you. A channel.probe tag may arrive right after this session runs cc-review start — it is a delivery check, not a request: run "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD", and reply nothing.
 
-Real review input arrives as other event types such as comment.created, comment.updated, ai.request.created, and submit. The cc-review:start skill governs how to handle those. Outside a /cc-review:start run, the handshake above is the only channel traffic to expect, and it needs nothing from you.`
+Real review input arrives as other event types such as comment.created, comment.updated, ai.request.created, and submit. The cc-review:start skill governs how to handle those.`
 
 // channelTools advertises cc-review's review tools to the agent's MCP channel.
 // The handlers round-trip to the daemon via ReviewClient because the channel

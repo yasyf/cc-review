@@ -42,7 +42,7 @@ Events reach you through **one** route, chosen once by the first matching condit
 | 4 | else you have an **Agent** tool | one-shot streamer subagent | `reference/route-streamer.md` |
 | 5 | else | inline `watch --once` in this thread | `reference/route-inline.md` |
 
-`channel: pending` or `inactive` (from step 1) means the channel isn't proven — fall through to row 2+. Every **non-channel** route shares one transition: if a `<channel source="cc-review">` tag arrives while it runs, channels went live — run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, tear the route down, and switch to `route-channel`. Delivery is at-least-once; dedupe any overlap by event id (replies dedupe server-side, organize dispatch dedupes by request `(id, attempt)`).
+`channel: pending` or `inactive` (from step 1) means the channel isn't proven — fall through to row 2+. On `pending`, start has already injected a `channel.probe` tag to prove delivery, so expect the transition below within seconds when channels work. Every **non-channel** route shares one transition: if a `<channel source="cc-review">` tag arrives while it runs, channels went live — run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, tear the route down, and switch to `route-channel`. Delivery is at-least-once; dedupe any overlap by event id (replies dedupe server-side, organize dispatch dedupes by request `(id, attempt)`).
 
 **Do not block waiting.** Whichever route you pick, tell the user you're watching and keep working — events arrive on their own schedule, and an event is not the user's reply.
 

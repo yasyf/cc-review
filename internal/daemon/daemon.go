@@ -40,6 +40,13 @@ const (
 	// presence; it only distinguishes pending from inactive.
 	channelPollWindow = 3 * time.Second
 
+	// probePayload is the solicited delivery check start injects into a window's
+	// attached-but-unproven channel. It lands mid-turn — start only runs inside a
+	// skill turn — so the model proves the round trip (channel-ack) without an
+	// unsolicited wake; never persisted, so it can neither replay nor reach the
+	// browser.
+	probePayload = `{"type":"channel.probe","note":"delivery probe; run channel-ack; no reply needed"}`
+
 	// stalePendingTTL is how long a human AI-bar request may sit pending before
 	// the sweeper fails it.
 	stalePendingTTL = 10 * time.Minute
@@ -56,11 +63,13 @@ const (
 var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 
 // review holds the cross-handler state the substrate's HandlerCtx does not carry:
-// the shared decision ledger and the daemon logger.
+// the shared decision ledger, the daemon logger, and the SSE inject hook
+// ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through.
 type review struct {
-	decisions *decisions.Log
-	log       *log.Logger
-	sliceWarn sync.Once
+	decisions   *decisions.Log
+	log         *log.Logger
+	injectEvent func(subjectID, consumer string, pid int, payload string) int
+	sliceWarn   sync.Once
 }
 
 // Serve builds the cc-interact daemon for the review domain — scope = repo root,
@@ -98,6 +107,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	if err != nil {
 		return err
 	}
+	rv.injectEvent = s.InjectEvent
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)
@@ -257,6 +267,21 @@ func channelState(act *ccd.Activity, reviewID, scope string, pid int) string {
 		return "pending"
 	}
 	return "inactive"
+}
+
+// channelStateProbed classifies the window's channel route and, when the route
+// is wired but unproven, solicits the proof: one channel.probe frame injected
+// into exactly this window's attached channel stream. Pid-targeted so a parallel
+// window's idle agent is never woken; skipped when nothing is attached (a
+// resolve-poll-only pending has no stream to prove) or the window is already
+// proven.
+func (rv *review) channelStateProbed(hc ccd.HandlerCtx, subjectID string) string {
+	cs := channelState(hc.Activity, subjectID, hc.Scope, hc.Window.ClaudePID)
+	if cs == "pending" && hc.Activity.Attached(subjectID, channelConsumer, hc.Window.ClaudePID) {
+		n := rv.injectEvent(subjectID, channelConsumer, hc.Window.ClaudePID, probePayload)
+		rv.log.Printf("channel probe -> %s pid=%d streams=%d", subjectID, hc.Window.ClaudePID, n)
+	}
+	return cs
 }
 
 func reviewURL(httpPort int, slug string) string {

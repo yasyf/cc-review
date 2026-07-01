@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- The channel no longer pushes a `channel.hello` handshake at attach
+  (cc-interact v0.1.5), so attaching to an existing review never wakes an idle
+  Claude session. Delivery proof is now solicited: `start` on an
+  attached-but-unproven window injects a one-shot, pid-targeted `channel.probe`
+  frame — never persisted, so it cannot replay or reach the browser — which lands
+  mid-turn where the skill acks it via `channel-ack`. `channel: pending` is the
+  normal state until that first ack; `active` still requires the proven round
+  trip. The MCP instructions and skill docs drop the handshake language.
+
 ## [0.18.0]
 
 ### Changed

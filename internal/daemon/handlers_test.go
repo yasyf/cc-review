@@ -716,3 +716,59 @@ func TestHandleChannelAck(t *testing.T) {
 		t.Fatal("the ack must not prove another window")
 	}
 }
+
+// TestStartProbesUnprovenChannel pins the solicited handshake: start injects
+// exactly one channel.probe into this window's attached-but-unproven channel
+// stream, and never probes an unattached, poll-only, or already-proven window.
+func TestStartProbesUnprovenChannel(t *testing.T) {
+	s, repo := testServer(t)
+	ctx := context.Background()
+	writeFile(t, repo, "pending.go", "package p\n")
+
+	// No channel signal at all: inactive, no probe.
+	resp := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+	if !resp.OK {
+		t.Fatalf("start: %s", resp.Error)
+	}
+	if resp.ChannelState != "inactive" || len(s.injectCalls()) != 0 {
+		t.Fatalf("state %q, probes %d; want inactive, 0", resp.ChannelState, len(s.injectCalls()))
+	}
+
+	// Resolve-poll-only pending: no stream is attached, so there is nothing to
+	// probe.
+	if resp := s.handleResolve(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Consumer: "channel"}); !resp.OK {
+		t.Fatalf("resolve: %s", resp.Error)
+	}
+	resp = s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+	if !resp.OK {
+		t.Fatalf("start: %s", resp.Error)
+	}
+	if resp.ChannelState != "pending" || len(s.injectCalls()) != 0 {
+		t.Fatalf("state %q, probes %d; want pending, 0 (poll only)", resp.ChannelState, len(s.injectCalls()))
+	}
+
+	// Attached but unproven: one probe, aimed at exactly this window's stream.
+	detach := s.activity.Attach(resp.ReviewID, channelConsumer, 100)
+	defer detach()
+	resp = s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+	if !resp.OK {
+		t.Fatalf("start: %s", resp.Error)
+	}
+	calls := s.injectCalls()
+	if resp.ChannelState != "pending" || len(calls) != 1 {
+		t.Fatalf("state %q, probes %d; want pending, 1", resp.ChannelState, len(calls))
+	}
+	if want := (injectCall{resp.ReviewID, channelConsumer, 100, probePayload}); calls[0] != want {
+		t.Fatalf("probe = %+v, want %+v", calls[0], want)
+	}
+
+	// Proven: active, and start stops probing.
+	s.activity.MarkProven(100)
+	resp = s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+	if !resp.OK {
+		t.Fatalf("start: %s", resp.Error)
+	}
+	if resp.ChannelState != "active" || len(s.injectCalls()) != 1 {
+		t.Fatalf("state %q, probes %d; want active, still 1", resp.ChannelState, len(s.injectCalls()))
+	}
+}

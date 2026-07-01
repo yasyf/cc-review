@@ -48,6 +48,8 @@ Each event carries an `origin` of `user`, `claude`, or `system`. The browser sub
 
 Named consumers also register presence: their attach and detach transitions drive `channel.changed` events, which is how the UI knows whether a live Claude session is wired to the review. `channel.changed` is delivered to the browser only — named consumer streams (`channel`, `watch`) filter it out, since a consumer learning about its own attachment is noise.
 
+Presence alone never proves delivery: Claude Code silently drops channel notifications when channels are unavailable, so `channel: active` requires the model to have acknowledged a delivered tag via `channel-ack`. A `start` on an attached-but-unproven window solicits that proof by injecting a one-shot `channel.probe` frame into exactly that window's channel stream. The probe bypasses the event log and carries no SSE id — it cannot replay on reconnect, and neither the browser nor `watch` ever sees it. It lands while the model is mid-turn running the start skill, so no idle session is ever woken.
+
 ## Storage
 
 State lives in a single SQLite database via `modernc.org/sqlite` (pure Go, no cgo). `internal/store` opens it with `SetMaxOpenConns(1)`, WAL journaling, and a 5s busy timeout; every other package goes through the store, never the driver.
