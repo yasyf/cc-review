@@ -51,6 +51,8 @@ When you want to start over instead, `cc-review start --new` detaches the existi
 
 The plugin registers a PreToolUse hook on `Edit`, `Write`, and `NotebookEdit`. Before any of those tools run, the hook calls `cc-review guard-edit`, which denies the edit while a review for the session is open and awaiting feedback. Once you press Submit, the guard lifts.
 
+The guard also lifts on its own. An open review idle for 24 hours expires: edits unblock, `/clear` no longer resumes it, and an explicit `/cc-review:start` reopens it. Idle means no comments, replies, AI-bar activity, or new versions; presence pings don't count. To end a review immediately without submitting, press **Close without submitting** in the web UI or run `cc-review close [review]` — the current window's review by default, or any review by slug or id. `cc-review list` shows every open or expired review with its status, age, idle time, and repo, and `cc-review close --stale` closes every expired review across repos. Alongside `open` and `submitted`, a review's status can be `expired` or `closed`.
+
 The guard fails open. If the cc-review binary or daemon is unavailable, edits are allowed. A review tool that could brick Claude's ability to write files when its daemon dies would be worse than one round of unreviewed edits.
 
 ## Claude's side of the protocol

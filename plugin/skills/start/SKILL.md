@@ -1,6 +1,6 @@
 ---
 name: start
-description: Start or resume a cc-review review of the code Claude just wrote. Opens a PR-like web UI at a localhost URL, streams the human's inline comments back into this session in realtime so Claude can ask clarifying questions under each comment, and blocks edits until the human presses Submit. Use when the user asks to review changes, says "/cc-review:start", "review this", "let me review before you change anything", or wants to give feedback on a diff before Claude proceeds.
+description: Start or resume a cc-review review of the code Claude just wrote. Opens a PR-like web UI at a localhost URL, streams the human's inline comments back into this session in realtime so Claude can ask clarifying questions under each comment, and blocks edits until the human presses Submit (a review idle for 24 hours expires and lifts the block). Use when the user asks to review changes, says "/cc-review:start", "review this", "let me review before you change anything", or wants to give feedback on a diff before Claude proceeds.
 ---
 
 # /cc-review:start
@@ -77,7 +77,9 @@ If a comment is ambiguous or you see options worth surfacing, post back — it r
 "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" reply --comment <commentId> --kind clarification --body "Note: this also affects callers in foo.go"
 ```
 
-`reply` returns immediately. Then go back to waiting for the next notification. **Never edit code in this phase.** A hook blocks edits until Submit anyway.
+`reply` returns immediately. Then go back to waiting for the next notification. **Never edit code in this phase.** A hook blocks edits until Submit anyway; a review idle for 24 hours expires on its own and the hook lifts.
+
+A `status.changed` event with `expired` or `closed` also ends the round: no `submit` will follow, so stop waiting and proceed without feedback (skip step 5 — there is nothing to drain).
 
 ## 5. On the `submit` event — drain open questions, then proceed
 

@@ -13,7 +13,8 @@ Local code-review daemon + Claude plugin — review what Claude writes in a PR-l
 cc-review lets you review the code Claude just wrote in a GitHub-PR-style web page
 *before* it commits to changes: you leave inline comments, Claude answers your
 questions and proposes options right under each comment in realtime, and only once
-you press **Submit** does Claude proceed. Every review and the full back-and-forth is
+you press **Submit** does Claude proceed. A review idle for 24 hours expires on its
+own, so an abandoned one never wedges Claude. Every review and the full back-and-forth is
 kept forever in a local SQLite, and re-running `/cc-review:start` resumes the same review
 against your latest changes.
 
@@ -56,7 +57,8 @@ Claude's questions and option cards render under your comments:
 
 - **Review-before-change.** You see and shape what Claude is about to do in a familiar
   PR UI instead of discovering it after the edits land — a `PreToolUse` hook hard-blocks
-  edits until you submit.
+  edits until you submit. `cc-review close` ends a review without submitting, and
+  `cc-review list` shows every open one.
 - **A real back-channel.** Claude's clarifying questions and option sets render *under*
   your comments in realtime, so the conversation stays anchored to specific lines.
 - **Nothing is lost.** Every comment, reply, and decision is persisted forever in local

@@ -44,7 +44,7 @@ Watch the thread. Claude reads the surrounding code and replies under your comme
 
 ![A comment thread on ratelimit.go: a human comment about a hardcoded limit, with Claude's ask card offering Env var, Per-route option, and Other](../../assets/screenshots/comment-thread-ask.png)
 
-While the review is open, Claude cannot edit files. A PreToolUse hook denies every edit until you submit, so nothing moves under you mid-review.
+While the review is open, Claude cannot edit files. A PreToolUse hook denies every edit until you submit, so nothing moves under you mid-review. A review idle for 24 hours expires on its own and unblocks edits; `cc-review close` ends one without submitting, and `cc-review list` shows every open review.
 
 When you have said everything you want to say, press **Submit**. This freezes the feedback. Claude reads the full set of threads, asks you about any questions you left unanswered in the UI, and then applies the feedback to the code.
 
