@@ -17,6 +17,7 @@ const (
 	EventOrganizationUpdated = "organization.updated"
 	EventAnnotationsUpdated  = "annotations.updated"
 	EventChannelChanged      = "channel.changed"
+	EventStatusChanged       = "status.changed"
 )
 
 // Origins recorded in events.origin.
