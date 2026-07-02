@@ -117,11 +117,14 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		} else if ok {
 			if prev, err := os.ReadFile(latest.PatchPath); err == nil && string(prev) == snap.PatchText {
 				// A successful start always leaves the round open: resuming a submitted
-				// review must re-block edits even when the snapshot is unchanged.
+				// review must re-block edits even when the snapshot is unchanged. The
+				// status.changed unfreezes any browser tab still showing the old state.
 				if sub.Status != statusOpen {
 					if err := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, statusOpen); err != nil {
 						return errReply(err.Error())
 					}
+					emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventStatusChanged,
+						latest.VersionNumber, map[string]any{"status": statusOpen})
 				}
 				cs := rv.channelStateProbed(hc, sub.ID)
 				// An organized version needs no organize agent: close any open system
@@ -205,11 +208,14 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	}
 	rv.attributeVersion(hc.Ctx, st, hc.Scope, v.ID, snap.PatchText)
 	// A new version reopens the review (a prior round may have been submitted), so
-	// the edit guard blocks edits again until this round is submitted.
+	// the edit guard blocks edits again until this round is submitted. The
+	// status.changed unfreezes any browser tab still showing the old state.
 	if sub.Status != statusOpen {
 		if err := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, statusOpen); err != nil {
 			return errReply(err.Error())
 		}
+		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventStatusChanged,
+			v.VersionNumber, map[string]any{"status": statusOpen})
 	}
 	// Carry review state across versions: unmark files whose diff content changed
 	// (version.created first, then the unmark batch), then queue the system

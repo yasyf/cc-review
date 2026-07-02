@@ -76,6 +76,8 @@ type Request struct {
 	VersionNumber int
 	Partial       bool
 	Prompt        string
+	Ref           string
+	Stale         bool
 	ToolName      string
 	ToolInput     json.RawMessage
 }
@@ -99,6 +101,8 @@ type Response struct {
 	Feedback     json.RawMessage
 	ReviewFiles  json.RawMessage
 	Paths        []string
+	Closed       []ReviewInfo
+	Reviews      []ReviewInfo
 }
 
 // reviewRow merges a subject with its review_meta for assertions that read the
@@ -119,6 +123,7 @@ func (req Request) body() json.RawMessage {
 		AIRequestID: req.AIRequestID, AIStatus: req.AIStatus, Summary: req.Summary,
 		Unmatched: req.Unmatched, Question: req.Question, Ask: req.Ask, Organization: req.Organization,
 		VersionNumber: req.VersionNumber, Partial: req.Partial, Prompt: req.Prompt,
+		Ref: req.Ref, Stale: req.Stale,
 	})
 	return raw
 }
@@ -234,7 +239,7 @@ func toResponse(reply ccd.Reply) Response {
 		HTTPPort: reply.HTTPPort, Allow: reply.Allow, Reason: reply.Reason,
 		URL: res.URL, Version: res.Version, Resumed: res.Resumed, ChannelState: res.ChannelState,
 		AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
-		ReviewFiles: res.ReviewFiles, Paths: res.Paths,
+		ReviewFiles: res.ReviewFiles, Paths: res.Paths, Closed: res.Closed, Reviews: res.Reviews,
 	}
 }
 
@@ -347,6 +352,19 @@ func (s *Server) channelState(reviewID, scope string, pid int) string {
 
 func (s *Server) sweepStalePending(ctx context.Context, before time.Time) error {
 	return s.rv.sweepStalePending(ctx, s.store, s.appendEvent, before)
+}
+
+func (s *Server) sweepStaleOpen(ctx context.Context, before time.Time) error {
+	_, err := s.rv.sweepStaleOpen(ctx, s.store, s.appendEvent, before)
+	return err
+}
+
+func (s *Server) handleClose(ctx context.Context, req Request) Response {
+	return s.run(ctx, req, (*review).handleClose)
+}
+
+func (s *Server) handleList(ctx context.Context, req Request) Response {
+	return s.run(ctx, req, (*review).handleList)
 }
 
 // createReview seeds a review (a cc-interact subject + its review_meta) the way

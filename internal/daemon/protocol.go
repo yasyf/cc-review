@@ -7,6 +7,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 
@@ -26,7 +27,19 @@ const (
 	OpAnnotate           ccd.Op = "annotate"
 	OpTurnStart          ccd.Op = "turn-start"
 	OpTurnEnd            ccd.Op = "turn-end"
+	OpClose              ccd.Op = "close"
+	OpList               ccd.Op = "list"
 )
+
+// ReviewInfo is one review row the close and list ops report.
+type ReviewInfo struct {
+	ID           string    `json:"id"`
+	Slug         string    `json:"slug"`
+	Scope        string    `json:"scope"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastActivity time.Time `json:"last_activity"`
+}
 
 // AnnotateInput is one annotation Claude adds to the diff: kind "highlight"
 // marks a line range as a non-blocking informational highlight; kind "comment"
@@ -100,6 +113,8 @@ type body struct {
 	Reviewed      *bool               `json:"reviewed,omitempty"`       // review-files (filter) | file-states-by-risk (target)
 	Hidden        *bool               `json:"hidden,omitempty"`         // review-files (filter) | file-states-by-risk (target)
 	Prompt        string              `json:"prompt,omitempty"`         // turn-start
+	Ref           string              `json:"ref,omitempty"`            // close (slug or id; empty = this window's review)
+	Stale         bool                `json:"stale,omitempty"`          // close (expire idle-open reviews instead)
 }
 
 // result is the domain payload a handler returns in Reply.Body. Envelope-level
@@ -114,6 +129,8 @@ type result struct {
 	Feedback     json.RawMessage   `json:"feedback,omitempty"`      // feedback
 	ReviewFiles  json.RawMessage   `json:"review_files,omitempty"`  // review-files
 	Paths        []string          `json:"paths,omitempty"`         // file-states-by-risk
+	Closed       []ReviewInfo      `json:"closed,omitempty"`        // close
+	Reviews      []ReviewInfo      `json:"reviews,omitempty"`       // list
 }
 
 func decodeBody(raw json.RawMessage) body {

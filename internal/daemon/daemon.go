@@ -27,6 +27,11 @@ import (
 const (
 	statusOpen = "open"
 
+	// statusExpired marks an open review the sweeper aged out: the edit guard
+	// lifts and passive session-rotation resume stops, but the subject stays
+	// bound so an explicit start reopens it.
+	statusExpired = "expired"
+
 	// organizePrompt seeds the system AI request handleStart creates per version,
 	// asking the live Claude session to chapter the diff.
 	organizePrompt = "Organize this review into chapters and rate per-file risk."
@@ -52,6 +57,11 @@ const (
 
 	// sweepInterval is how often the daemon sweeps for stale pending requests.
 	sweepInterval = 1 * time.Minute
+
+	// reviewIdleTTL is how long an open review may sit with no real reviewer or
+	// agent activity (comments, replies, AI requests, versions, submit — never
+	// channel presence) before the sweeper expires it and the edit guard lifts.
+	reviewIdleTTL = 24 * time.Hour
 
 	gateBlockReason = "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser."
 	gateErrorReason = "cc-review: could not read review status; blocking the edit to be safe. Try `cc-review status`, or `cc-review stop` to clear the daemon."
@@ -117,6 +127,8 @@ func Serve(ctx context.Context, fixedPort int) error {
 	s.Register(OpAnnotate, rv.handleAnnotate)
 	s.Register(OpTurnStart, rv.handleTurnStart)
 	s.Register(OpTurnEnd, rv.handleTurnEnd)
+	s.Register(OpClose, rv.handleClose)
+	s.Register(OpList, rv.handleList)
 
 	httpapi.RESTMount(s.Mux(), httpapi.Deps{
 		Store:             store.New(s.DB()),
@@ -228,12 +240,19 @@ func (rv *review) bootReconcile(ctx context.Context, s *ccd.Server) error {
 			return err
 		}
 	}
+	// Expire idle-open reviews before the accept loop drains its backlog, so the
+	// very guard-edit that lazily boots the daemon sees the lifted gate instead
+	// of waiting out a sweep tick.
+	if _, err := rv.sweepStaleOpen(ctx, st, s.Append, time.Now().Add(-reviewIdleTTL)); err != nil {
+		return fmt.Errorf("expire stale reviews: %w", err)
+	}
 	return nil
 }
 
-// sweepLoop periodically fails human AI-bar requests left pending past the TTL,
-// so a request no live session ever dispatched stops showing as "queued"
-// forever. It exits when the context is cancelled.
+// sweepLoop periodically fails human AI-bar requests left pending past their
+// TTL — a request no live session ever dispatched would show "queued" forever —
+// and expires open reviews idle past reviewIdleTTL, so an abandoned review
+// stops blocking its window's edits. It exits when the context is cancelled.
 func (rv *review) sweepLoop(ctx context.Context, s *ccd.Server) {
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
@@ -244,6 +263,9 @@ func (rv *review) sweepLoop(ctx context.Context, s *ccd.Server) {
 		case <-t.C:
 			if err := rv.sweepStalePending(ctx, store.New(s.DB()), s.Append, time.Now().Add(-stalePendingTTL)); err != nil {
 				rv.log.Printf("sweep stale pending: %v", err)
+			}
+			if _, err := rv.sweepStaleOpen(ctx, store.New(s.DB()), s.Append, time.Now().Add(-reviewIdleTTL)); err != nil {
+				rv.log.Printf("sweep stale open: %v", err)
 			}
 		}
 	}

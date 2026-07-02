@@ -165,3 +165,23 @@ func (rc *ReviewClient) TurnEnd(ctx context.Context, session, cwd string) error 
 	_, _, err := rc.do(ctx, OpTurnEnd, session, cwd, body{})
 	return err
 }
+
+// Close terminally closes a review — this window's (empty ref) or any review
+// by slug/id — or, with stale, expires every open review idle past the TTL.
+// It returns the rows it closed or expired.
+func (rc *ReviewClient) Close(ctx context.Context, session, cwd, ref string, stale bool) ([]ReviewInfo, error) {
+	_, res, err := rc.do(ctx, OpClose, session, cwd, body{Ref: ref, Stale: stale})
+	if err != nil {
+		return nil, err
+	}
+	return res.Closed, nil
+}
+
+// List reports every open review across scopes with its last real activity.
+func (rc *ReviewClient) List(ctx context.Context, session, cwd string) ([]ReviewInfo, error) {
+	_, res, err := rc.do(ctx, OpList, session, cwd, body{})
+	if err != nil {
+		return nil, err
+	}
+	return res.Reviews, nil
+}
