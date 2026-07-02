@@ -426,6 +426,80 @@ func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 	}
 }
 
+func TestCloseReviewDetachesAndEmits(t *testing.T) {
+	st, cc, srv := newTestServer(t)
+	ctx := context.Background()
+	review, version := createReviewVersion(t, st, `[]`)
+
+	resp := postJSON(t, srv.URL+"/api/close", map[string]any{"reviewId": review.ID})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK {
+		t.Fatalf("body ok = false, want true")
+	}
+
+	sub, err := ccstore.NewSubjectStore(st.DB()).Get(ctx, review.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.Status != "closed" {
+		t.Fatalf("subject status = %q, want closed", sub.Status)
+	}
+	if sub.SessionID != "" || sub.ClaudePID != 0 {
+		t.Fatalf("subject session=%q pid=%d, want detached (empty session, pid 0)", sub.SessionID, sub.ClaudePID)
+	}
+
+	events := newEventLog(t, cc, review.ID)
+	ev := events.next()
+	if ev.Type != store.EventStatusChanged || ev.Origin != ccevent.OriginHuman {
+		t.Fatalf("event type=%s origin=%s, want human status.changed", ev.Type, ev.Origin)
+	}
+	var payload struct {
+		VersionNumber int    `json:"version_number"`
+		Status        string `json:"status"`
+	}
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "closed" || payload.VersionNumber != version.VersionNumber {
+		t.Fatalf("payload = %+v, want status closed at version %d", payload, version.VersionNumber)
+	}
+	events.none()
+}
+
+func TestCloseSubmittedReviewIs409(t *testing.T) {
+	st, cc, srv := newTestServer(t)
+	ctx := context.Background()
+	review, _ := createReviewVersion(t, st, `[]`)
+	ss := ccstore.NewSubjectStore(st.DB())
+	if err := ss.SetStatus(ctx, review.ID, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := postJSON(t, srv.URL+"/api/close", map[string]any{"reviewId": review.ID})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	sub, err := ss.Get(ctx, review.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.Status != "submitted" {
+		t.Fatalf("subject status = %q after refused close, want submitted", sub.Status)
+	}
+	if sub.SessionID != "s1" || sub.ClaudePID != 100 {
+		t.Fatalf("subject session=%q pid=%d after refused close, want still attached (s1, 100)", sub.SessionID, sub.ClaudePID)
+	}
+	newEventLog(t, cc, review.ID).none()
+}
+
 func TestSessionCarriesLatestEventSeq(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	ctx := context.Background()

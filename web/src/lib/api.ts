@@ -176,11 +176,32 @@ export function useAnswerAiRequest(slug: string) {
 }
 
 export function useSubmit(slug: string) {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       request<{ ok: boolean; feedbackPath: string }>('/api/submit', {
         method: 'POST',
         body: JSON.stringify({ reviewId: slug }),
       }),
+    // The new status streams back as status.changed, but a cache keyed to an
+    // older version rejects that frame; invalidate as a net.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
+    },
+  });
+}
+
+export function useClose(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      request<{ ok: boolean }>('/api/close', {
+        method: 'POST',
+        body: JSON.stringify({ reviewId: slug }),
+      }),
+    // Same safety net as useSubmit.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['session', slug], exact: false });
+    },
   });
 }

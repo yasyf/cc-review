@@ -1,6 +1,7 @@
 import { useCreateReply } from '../lib/api';
 import { useAskAnswer } from '../lib/ask-answer';
-import type { Reply } from '../lib/types';
+import { STATUS_NOTICES } from '../lib/status';
+import type { Reply, ReviewStatus } from '../lib/types';
 import { AskOptionPicker } from './AskOptionPicker';
 
 type AskReply = Extract<Reply, { kind: 'ask' }>;
@@ -8,12 +9,13 @@ type AskReply = Extract<Reply, { kind: 'ask' }>;
 export function QuestionCard({
   reply,
   commentId,
-  disabled,
+  status,
 }: {
   reply: AskReply;
   commentId: string;
-  disabled: boolean;
+  status: ReviewStatus;
 }) {
+  const disabled = status !== 'open';
   const createReply = useCreateReply();
   const { ask } = reply;
   // Draft survives portal remounts (the virtualizer releases a file's item when it
@@ -79,8 +81,12 @@ export function QuestionCard({
         disabled={disabled}
         onChange={(e) => form.updateNotes(e.target.value)}
       />
-      {disabled ? (
-        <div className="qc-hint">Review submitted — Claude will ask this directly.</div>
+      {status !== 'open' ? (
+        <div className="qc-hint">
+          {status === 'submitted'
+            ? 'Review submitted — Claude will ask this directly.'
+            : STATUS_NOTICES[status]}
+        </div>
       ) : (
         <div className="qc-actions">
           <button

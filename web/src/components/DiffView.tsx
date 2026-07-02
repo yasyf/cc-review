@@ -97,7 +97,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   // the same addition row (focus owns opacity when no turn is selected).
   const [hover, setHover] = useState<Hover | null>(null);
 
-  const readOnly = session.review.status === 'submitted';
+  const readOnly = session.review.status !== 'open';
 
   const files = useMemo(() => parseFiles(session.patchText), [session.patchText]);
   const order = useMemo(() => fileOrder(session, viewMode), [session, viewMode]);

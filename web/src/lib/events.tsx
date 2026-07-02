@@ -1,6 +1,7 @@
 import { createEventStream } from '@cc-interact/react';
 import type { StreamToast } from '@cc-interact/react';
 import { sessionKey } from './api';
+import { STATUS_NOTICES } from './status';
 import type { Comment, Reply, ReviewEvent, SessionResponse } from './types';
 
 function upsertReply(comment: Comment, reply: Reply): Comment {
@@ -87,6 +88,14 @@ function notificationFor(ev: ReviewEvent): StreamToast | null {
       return { kind: 'info', text: `Claude asked: ${ev.reply.body}` };
     case 'claude.clarification':
       return { kind: 'info', text: `Claude clarified: ${ev.reply.body}` };
+    case 'status.changed':
+      if (ev.status === 'expired') {
+        return { kind: 'warn', text: STATUS_NOTICES.expired };
+      }
+      if (ev.status === 'closed') {
+        return { kind: 'info', text: STATUS_NOTICES.closed };
+      }
+      return null;
     case 'submit':
       return { kind: 'info', text: 'Review submitted — feedback frozen.' };
     case 'ai.request.updated':

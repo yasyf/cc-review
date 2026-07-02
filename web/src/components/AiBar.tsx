@@ -182,7 +182,7 @@ export function AiBar({
     setActiveIndex((i) => (rows.length === 0 ? 0 : Math.min(i, rows.length - 1)));
   }, [rows.length]);
 
-  if (session.review.status === 'submitted') return null;
+  if (session.review.status !== 'open') return null;
 
   function onComposerKey(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Escape') {

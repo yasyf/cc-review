@@ -70,6 +70,10 @@ type submitReq struct {
 	ReviewID string `json:"reviewId"`
 }
 
+type closeReq struct {
+	ReviewID string `json:"reviewId"`
+}
+
 type fileStatesReq struct {
 	ReviewID string `json:"reviewId"`
 	Files    []struct {
@@ -704,6 +708,37 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	s.emit(ctx, review.ID, ccevent.OriginSystem, store.EventSubmit, version.VersionNumber,
 		map[string]any{"feedbackPath": fbPath})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "feedbackPath": fbPath})
+}
+
+func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req closeReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	swapped, err := s.store.CloseAndDetach(ctx, s.subjects, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !swapped {
+		http.Error(w, fmt.Sprintf("review is %s; only an open or expired review can be closed", review.Status),
+			http.StatusConflict)
+		return
+	}
+	if version, ok, err := s.store.LatestVersion(ctx, review.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ok {
+		s.emit(ctx, review.ID, ccevent.OriginHuman, store.EventStatusChanged, version.VersionNumber,
+			map[string]any{"status": "closed"})
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- helpers ---------------------------------------------------------------

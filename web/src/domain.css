@@ -146,6 +146,11 @@
   gap: 0.75rem;
   flex-wrap: wrap;
 }
+.submit-bar .actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 .brand {
   font-size: 0.95rem;
 }
@@ -170,6 +175,12 @@
 }
 .status-submitted {
   color: var(--ok);
+}
+.status-closed {
+  color: var(--dim);
+}
+.status-expired {
+  color: var(--warn);
 }
 .frozen {
   color: var(--ok);

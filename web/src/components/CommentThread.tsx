@@ -3,14 +3,15 @@ import { useCreateReply, useResolveComment, useSession } from '../lib/api';
 import { clearDraft, readDraft, replyDraftKey, writeDraft } from '../lib/drafts';
 import { useReview } from '../lib/review-context';
 import { useUnread } from '../lib/unread';
-import type { Origin, Reply } from '../lib/types';
+import { STATUS_NOTICES } from '../lib/status';
+import type { Origin, Reply, ReviewStatus } from '../lib/types';
 import { QuestionCard } from './QuestionCard';
 
 function Avatar({ origin }: { origin: Origin }) {
   return <div className={`avatar avatar-${origin}`}>{origin === 'claude' ? 'C' : 'Y'}</div>;
 }
 
-function ReplyBubble({ reply, disabled }: { reply: Reply; disabled: boolean }) {
+function ReplyBubble({ reply, status }: { reply: Reply; status: ReviewStatus }) {
   const who = reply.origin === 'claude' ? 'Claude' : 'You';
   return (
     <div className={`reply reply-${reply.origin} reply-kind-${reply.kind}`}>
@@ -21,7 +22,7 @@ function ReplyBubble({ reply, disabled }: { reply: Reply; disabled: boolean }) {
           <span className="reply-kind">{reply.kind}</span>
         </div>
         {reply.kind === 'ask' ? (
-          <QuestionCard reply={reply} commentId={reply.commentId} disabled={disabled} />
+          <QuestionCard reply={reply} commentId={reply.commentId} status={status} />
         ) : (
           <div className="reply-body">{reply.body}</div>
         )}
@@ -61,10 +62,10 @@ export function CommentThread({ commentId }: { commentId: string }) {
     if (visible && comment) markSeen(comment);
   }, [visible, comment, markSeen]);
 
-  if (!comment) return null;
+  if (!data || !comment) return null;
 
   const resolved = comment.status === 'resolved';
-  const submitted = data?.review.status === 'submitted';
+  const status = data.review.status;
 
   function updateAnswer(text: string) {
     setAnswer(text);
@@ -106,11 +107,13 @@ export function CommentThread({ commentId }: { commentId: string }) {
       </div>
 
       {comment.replies.map((reply) => (
-        <ReplyBubble key={reply.id} reply={reply} disabled={submitted} />
+        <ReplyBubble key={reply.id} reply={reply} status={status} />
       ))}
 
-      {submitted ? (
-        <div className="qc-hint">Review submitted — feedback is frozen.</div>
+      {status !== 'open' ? (
+        <div className="qc-hint">
+          {status === 'submitted' ? 'Review submitted — feedback is frozen.' : STATUS_NOTICES[status]}
+        </div>
       ) : (
         <div className="answer-box">
           <textarea

@@ -10,7 +10,7 @@ export interface LineRange {
   endSide?: Side;
 }
 
-export type ReviewStatus = 'open' | 'submitted';
+export type ReviewStatus = 'open' | 'submitted' | 'closed' | 'expired';
 export type CommentStatus = 'open' | 'resolved';
 export type Origin = 'user' | 'claude';
 export type AnsweredVia = 'web' | 'askuserquestion';

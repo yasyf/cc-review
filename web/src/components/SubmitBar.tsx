@@ -1,12 +1,14 @@
-import { useSubmit } from '../lib/api';
+import { useClose, useSubmit } from '../lib/api';
 import { useReview } from '../lib/review-context';
+import { STATUS_NOTICES } from '../lib/status';
 import type { SessionResponse } from '../lib/types';
 
 export function SubmitBar({ session }: { session: SessionResponse }) {
   const { slug } = useReview();
   const submit = useSubmit(slug);
+  const close = useClose(slug);
 
-  const submitted = session.review.status === 'submitted';
+  const status = session.review.status;
   // Claude-authored comments are informational annotations, not reviewer TODOs.
   const openCount = session.comments.filter(
     (c) => c.status === 'open' && c.origin !== 'claude',
@@ -32,20 +34,42 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
             style={{ width: `${total > 0 ? (reviewedCount / total) * 100 : 0}%` }}
           />
         </span>
-        <span className={`status status-${session.review.status}`}>{session.review.status}</span>
+        <span className={`status status-${status}`}>{status}</span>
       </div>
       <div className="actions">
-        {submitted ? (
-          <span className="frozen">{frozenPath ? `Submitted → ${frozenPath}` : 'Submitted'}</span>
+        {status === 'open' ? (
+          <>
+            <button
+              type="button"
+              disabled={close.isPending}
+              onClick={() => close.mutate()}
+            >
+              {close.isPending ? 'Closing…' : 'Close without submitting'}
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={submit.isPending}
+              onClick={() => submit.mutate()}
+            >
+              {submit.isPending ? 'Submitting…' : 'Submit review'}
+            </button>
+          </>
         ) : (
-          <button
-            type="button"
-            className="primary"
-            disabled={submit.isPending}
-            onClick={() => submit.mutate()}
-          >
-            {submit.isPending ? 'Submitting…' : 'Submit review'}
-          </button>
+          <>
+            <span className="frozen">
+              {status === 'submitted'
+                ? frozenPath
+                  ? `Submitted → ${frozenPath}`
+                  : 'Submitted'
+                : STATUS_NOTICES[status]}
+            </span>
+            {status === 'expired' && (
+              <button type="button" disabled={close.isPending} onClick={() => close.mutate()}>
+                {close.isPending ? 'Closing…' : 'Close'}
+              </button>
+            )}
+          </>
         )}
       </div>
     </header>

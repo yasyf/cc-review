@@ -78,6 +78,7 @@ func RESTMount(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("POST /api/ai-requests/{id}/answer", s.handleAnswerAIRequest)
 	mux.HandleFunc("POST /api/ai-requests/{id}/undo", s.handleUndoAIRequest)
 	mux.HandleFunc("POST /api/submit", s.handleSubmit)
+	mux.HandleFunc("POST /api/close", s.handleClose)
 	mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)
 	// Registered last and least-specific: the SPA shell + embedded assets.
 	mux.Handle("/", sse.StaticHandler(d.Dist))
