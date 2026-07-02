@@ -438,3 +438,110 @@ func TestHandleList(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleListOutsideRepo(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+
+	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+
+	resp := s.handleList(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: t.TempDir()})
+	if !resp.OK {
+		t.Fatalf("list outside a repo: %s", resp.Error)
+	}
+	if len(resp.Reviews) != 1 || resp.Reviews[0].ID != started.ReviewID {
+		t.Fatalf("reviews = %+v, want the repo's review visible from outside", resp.Reviews)
+	}
+}
+
+func TestHandleCloseStaleOutsideRepo(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+
+	idle := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !idle.OK {
+		t.Fatalf("start: %s", idle.Error)
+	}
+	backdateReview(ctx, t, s, idle.ReviewID, time.Now().Add(-reviewIdleTTL-time.Hour))
+
+	resp := s.handleClose(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: t.TempDir(), Stale: true})
+	if !resp.OK {
+		t.Fatalf("close --stale outside a repo: %s", resp.Error)
+	}
+	if len(resp.Closed) != 1 || resp.Closed[0].ID != idle.ReviewID || resp.Closed[0].Status != "closed" {
+		t.Fatalf("closed = %+v, want the idle review swept and closed", resp.Closed)
+	}
+	if status, _ := s.reviewStatus(ctx, idle.ReviewID); status != "closed" {
+		t.Fatalf("status = %q, want closed", status)
+	}
+}
+
+func TestHandleCloseByRefOutsideRepo(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+	sub, err := s.createReview(ctx, "sA", 100, root, "main", "base0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := s.handleClose(ctx, Request{Session: "sB", ClaudePID: 999, Cwd: t.TempDir(), Ref: sub.Slug})
+	if !resp.OK {
+		t.Fatalf("close by ref outside a repo: %s", resp.Error)
+	}
+	if status, _ := s.reviewStatus(ctx, sub.ID); status != "closed" {
+		t.Fatalf("status = %q, want closed", status)
+	}
+}
+
+func TestHandleCloseNoRefOutsideRepo(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+
+	resp := s.handleClose(ctx, Request{Session: "nobody", ClaudePID: 12345, Cwd: t.TempDir()})
+	if resp.OK || !strings.Contains(resp.Error, "--stale") {
+		t.Fatalf("bare close outside a repo: ok=%v err=%q, want the slug/--stale error", resp.OK, resp.Error)
+	}
+}
+
+func TestGuardEditOutsideRepoAllows(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
+
+	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
+	if !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+
+	// The same window editing outside the repo: the fallback scope matches no
+	// review, so the open review's guard never leaks across scopes.
+	if guard := s.handleGuardEdit(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: t.TempDir()}); !guard.OK || !guard.Allow {
+		t.Fatalf("guard-edit outside a repo = %+v, want allow", guard)
+	}
+	if guard := s.handleGuardEdit(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo}); guard.Allow {
+		t.Fatal("guard-edit inside the repo must still block the open review")
+	}
+}
+
+func TestHandleStartOutsideRepoFailsAtCapture(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+	outside := t.TempDir()
+
+	resp := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: outside})
+	if resp.OK || !strings.Contains(resp.Error, "not inside a git or jj repository") {
+		t.Fatalf("start outside a repo: ok=%v err=%q, want the capture error", resp.OK, resp.Error)
+	}
+	// Capture precedes any resolver write: the failed start must not have keyed
+	// a subject by the non-repo path.
+	list := s.handleList(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: outside})
+	if !list.OK || len(list.Reviews) != 0 {
+		t.Fatalf("reviews after failed start = %+v, want none", list.Reviews)
+	}
+}

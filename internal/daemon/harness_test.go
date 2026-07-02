@@ -218,15 +218,11 @@ func (s *Server) hc(ctx context.Context, req Request, scope string) ccd.HandlerC
 	}
 }
 
-// run resolves the repo scope (as the daemon's ScopeResolve=vcs.Root does) and
-// invokes the handler; an unresolvable scope errors, matching the daemon's
-// dispatch for a domain op outside a guarded repo.
+// run canonicalizes the repo scope (as the daemon's ScopeResolve=repoScope
+// does) and invokes the handler; outside a repo the handler sees the cwd as
+// given, matching dispatch.
 func (s *Server) run(ctx context.Context, req Request, h func(*review, ccd.HandlerCtx) ccd.Reply) Response {
-	root, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return Response{OK: false, Error: err.Error()}
-	}
-	return toResponse(h(s.rv, s.hc(ctx, req, root)))
+	return toResponse(h(s.rv, s.hc(ctx, req, repoScope(ctx, req.Cwd))))
 }
 
 func toResponse(reply ccd.Reply) Response {
@@ -286,17 +282,12 @@ func (s *Server) handleReply(ctx context.Context, req Request) Response {
 }
 
 // handleSessionRecord mirrors the daemon's core session-record: rebind the
-// window's subject to the rotated session id; a blank session or non-repo is a
-// no-op.
+// window's subject to the rotated session id; a blank session is a no-op.
 func (s *Server) handleSessionRecord(ctx context.Context, req Request) Response {
 	if req.Session == "" {
 		return Response{OK: true}
 	}
-	root, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return Response{OK: true}
-	}
-	if err := s.resolver.Rebind(ctx, subject.Window{Session: req.Session, ClaudePID: req.ClaudePID}, root); err != nil {
+	if err := s.resolver.Rebind(ctx, subject.Window{Session: req.Session, ClaudePID: req.ClaudePID}, repoScope(ctx, req.Cwd)); err != nil {
 		return Response{OK: false, Error: err.Error()}
 	}
 	return Response{OK: true}
@@ -305,10 +296,7 @@ func (s *Server) handleSessionRecord(ctx context.Context, req Request) Response 
 // handleResolve mirrors the daemon's core resolve: note the consumer poll and
 // look up the window's subject without creating.
 func (s *Server) handleResolve(ctx context.Context, req Request) Response {
-	root, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return Response{OK: false, Error: err.Error()}
-	}
+	root := repoScope(ctx, req.Cwd)
 	if req.Consumer != "" {
 		s.activity.NotePoll(root, req.Consumer, req.ClaudePID)
 	}
@@ -328,12 +316,8 @@ func (s *Server) handleResolve(ctx context.Context, req Request) Response {
 // resolve the subject, fail closed on a resolve error, allow when none, else the
 // gate verdict plus the decision-ledger observation.
 func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
-	root, err := vcs.Root(ctx, req.Cwd)
-	if err != nil {
-		return Response{OK: true, Allow: true} // not a repo: nothing to guard
-	}
 	w := subject.Window{Session: req.Session, ClaudePID: req.ClaudePID}
-	sub, ok, err := s.resolver.Find(ctx, w, root)
+	sub, ok, err := s.resolver.Find(ctx, w, repoScope(ctx, req.Cwd))
 	if err != nil {
 		return Response{OK: true, Allow: false, Reason: gateErrorReason}
 	}

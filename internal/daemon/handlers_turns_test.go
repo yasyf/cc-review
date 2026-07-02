@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,13 +66,19 @@ func TestTurnOpsOutsideRepoAreNoops(t *testing.T) {
 	s, _ := testServer(t)
 	outside := t.TempDir()
 
-	// Outside a repo the daemon's scope resolve fails, so the turn op is rejected
-	// at the boundary; the hook swallows that error, making it a silent no-op.
-	if resp := s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside, Prompt: "p"}); resp.OK {
-		t.Fatal("turn-start outside a repo must be rejected at the scope boundary")
+	// Outside a repo the scope falls back to the cwd as given: turn-start fails
+	// where its precondition lives (the tree snapshot), turn-end finds no open
+	// turn and no-ops. Either way the hook stays silent.
+	resp := s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside, Prompt: "p"})
+	if resp.OK || !strings.Contains(resp.Error, "not inside a git or jj repository") {
+		t.Fatalf("turn-start outside a repo: ok=%v err=%q, want the snapshot error", resp.OK, resp.Error)
 	}
-	if resp := s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside}); resp.OK {
-		t.Fatal("turn-end outside a repo must be rejected at the scope boundary")
+	if resp := s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside}); !resp.OK {
+		t.Fatalf("turn-end outside a repo = %+v, want a silent ok no-op", resp)
+	}
+	turns, err := s.turns.ListAttributableTurns(ctx, outside, 0)
+	if err != nil || len(turns) != 0 {
+		t.Fatalf("turns for the non-repo scope = %d (err %v), want none recorded", len(turns), err)
 	}
 }
 

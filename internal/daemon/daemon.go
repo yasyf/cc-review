@@ -102,7 +102,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		Paths:             paths.App(),
 		Version:           version.String(),
 		ActiveStatuses:    []string{statusOpen},
-		ScopeResolve:      vcs.Root,
+		ScopeResolve:      repoScope,
 		Gate:              rv.gate,
 		GateErrorReason:   gateErrorReason,
 		GateObserve:       rv.gateObserve,
@@ -150,6 +150,16 @@ func decisionsPath() string {
 		return p
 	}
 	return decisions.DefaultPath()
+}
+
+// repoScope canonicalizes a cwd to its repo root, falling back to the cwd as
+// given outside any repo. A fallback scope matches no review, so cross-repo
+// ops (list, close --stale) and the core degradations work from anywhere.
+func repoScope(ctx context.Context, raw string) string {
+	if root, err := vcs.Root(ctx, raw); err == nil {
+		return root
+	}
+	return raw
 }
 
 // gate blocks edits while the review is open; a non-open (submitted/closed)
