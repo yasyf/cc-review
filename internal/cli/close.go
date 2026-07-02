@@ -43,7 +43,7 @@ func newCloseCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&session, "session", "", "Claude session id (keys the review with the repo root)")
-	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory; must be inside a repo)")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory)")
 	cmd.Flags().BoolVar(&stale, "stale", false, "close every expired review across all repos, sweeping idle ones past the TTL first")
 	return cmd
 }

@@ -118,11 +118,11 @@ cc-review status
 cc-review list [--cwd <dir>]
 ```
 
-List every open or expired review across repos, one `SLUG STATUS AGE IDLE SCOPE` row each: status, age since creation, idle time since the last real activity, and the repo. Real activity is comments, replies, AI-bar requests, and new versions; presence pings don't count. Prints `no open reviews` when there are none. Run it from inside any repo; the listing spans all of them.
+List every open or expired review across repos, one `SLUG STATUS AGE IDLE SCOPE` row each: status, age since creation, idle time since the last real activity, and the repo. Real activity is comments, replies, AI-bar requests, and new versions; presence pings don't count. Prints `no open reviews` when there are none. The listing spans all repos and runs from anywhere.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--cwd` | string | `""` | working directory (defaults to the current directory; must be inside a repo) |
+| `--cwd` | string | `""` | working directory (defaults to the current directory) |
 
 ```sh
 cc-review list
@@ -134,12 +134,12 @@ cc-review list
 cc-review close [review] [--session <id>] [--cwd <dir>] [--stale]
 ```
 
-Close a review without submitting. With no argument, closes the current window's review; pass a slug or id to close any review. `--stale` instead closes every expired review across all repos — sweeping open reviews idle past the 24-hour TTL into `expired` first — and rejects an explicit review argument. A closed review never resumes; an expired one stays bound to its window, so an explicit `start` reopens it. Prints one line per review closed. Run it from inside any repo; `--stale` spans all of them.
+Close a review without submitting. With no argument, closes the current window's review; pass a slug or id to close any review. `--stale` instead closes every expired review across all repos — sweeping open reviews idle past the 24-hour TTL into `expired` first — and rejects an explicit review argument. A closed review never resumes; an expired one stays bound to its window, so an explicit `start` reopens it. Prints one line per review closed. `--stale` spans all repos and runs from anywhere.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--session` | string | `""` | Claude session id (keys the review with the repo root) |
-| `--cwd` | string | `""` | working directory (defaults to the current directory; must be inside a repo) |
+| `--cwd` | string | `""` | working directory (defaults to the current directory) |
 | `--stale` | bool | `false` | close every expired review across all repos, sweeping idle ones past the TTL first |
 
 ```sh

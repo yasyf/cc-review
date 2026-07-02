@@ -30,7 +30,7 @@ func newListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory; must be inside a repo)")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory)")
 	return cmd
 }
 
