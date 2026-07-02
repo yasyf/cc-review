@@ -1,10 +1,10 @@
 name: Release
 
-# goreleaser cross-compiles cc-review for every supported platform and attaches
-# the assets to the release for the pushed tag. Among the assets are bare
-# per-arch binaries named cc-review_<os>_<arch>, which the plugin's
-# install-binary.sh downloads directly. A goreleaser before-hook builds the web
-# SPA first (embedded via go:embed), so bun must be installed in the job.
+# cc-review ships a Homebrew cask plus bare per-arch binaries
+# (cc-review_<os>_<arch>) that the plugin's install-binary.sh downloads
+# directly — both come out of the in-repo .goreleaser.yaml. A goreleaser
+# before-hook builds the go:embed web SPA first, so the shared workflow
+# installs bun.
 
 on:
   push:
@@ -14,41 +14,8 @@ permissions:
   contents: write
 
 jobs:
-  verify-tag-on-main:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Refuse tags that are not on main
-        run: |
-          git fetch origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::tag $GITHUB_REF_NAME is not on main — tag a merged commit (e.g. git tag vX.Y.Z origin/main)"
-            exit 1
-          fi
-
-  goreleaser:
-    needs: verify-tag-on-main
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          # Apple Developer signing + notarization (optional; no-op when unset).
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+  release:
+    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@v1
+    secrets: inherit
+    with:
+      setup-bun: true
