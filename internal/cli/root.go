@@ -1,5 +1,5 @@
 // Package cli wires the cobra command tree for cc-review: the user-facing review
-// commands (start, reply, feedback, export, setup-channels) and the domain hooks
+// commands (start, close, list, reply, feedback, export, setup-channels) and the domain hooks
 // (turn-start, turn-end) layered on cc-interact's reusable substrate commands
 // (daemon, watch, status, stop, session-record, guard-edit, channel-ack, channel).
 package cli
@@ -42,6 +42,8 @@ func NewRootCmd() *cobra.Command {
 		// cc-review domain commands.
 		newDaemonCmd(),
 		newStartCmd(),
+		newCloseCmd(),
+		newListCmd(),
 		newReplyCmd(),
 		newFeedbackCmd(),
 		newExportCmd(),
