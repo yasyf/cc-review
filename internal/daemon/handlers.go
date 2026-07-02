@@ -33,10 +33,10 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	defer hc.RepoLock.Unlock()
 	// Capture before any resolver write: a failed (e.g. empty) snapshot must
 	// create nothing — and must not let --new close the prior review. A resumed
-	// review captures against its pinned base, so the peek comes first.
+	// review captures against its pinned base, so the resolve comes first.
 	var snap vcs.Snapshot
 	fromPin := false
-	peeked, ok, err := hc.Subjects.Peek(hc.Ctx, hc.Window, hc.Scope)
+	peeked, ok, err := hc.Subjects.Find(hc.Ctx, hc.Window, hc.Scope)
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -68,16 +68,16 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	if err != nil {
 		return errReply(err.Error())
 	}
-	// The peek's verdict can flip under a concurrent rebind, adopt, or submit
-	// between the read and the write phase; re-align the snapshot with the review
-	// Start actually returned.
+	// The resolve's verdict can flip under a concurrent rebind or submit between
+	// the read and the write phase; re-align the snapshot with the review Start
+	// actually returned.
 	if resumed {
 		meta, metaOK, err := st.GetReviewMeta(hc.Ctx, sub.ID)
 		if err != nil {
 			return errReply(err.Error())
 		}
-		// Peek said create (so --base passed the gate above) but Start resumed an
-		// existing pinned review: the explicit base cannot apply.
+		// The resolve said create (so --base passed the gate above) but Start
+		// resumed an existing pinned review: the explicit base cannot apply.
 		if b.Base != "" {
 			return errReply(fmt.Sprintf("review %s is pinned to base %s; pass --new to start a fresh review with --base", sub.Slug, meta.BaseRef))
 		}
@@ -88,12 +88,12 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		}
 	} else {
 		if fromPin {
-			// Peek said resume but Start created: the snapshot was taken against the
-			// vanished review's pin; recapture with create semantics and re-pin the
-			// just-created (still version-less) review.
+			// The resolve said resume but Start created: the snapshot was taken
+			// against the vanished review's pin; recapture with create semantics and
+			// re-pin the just-created (still version-less) review.
 			if snap, err = vcs.Capture(hc.Ctx, hc.Scope, ""); err != nil {
-				// Leave nothing adoptable behind: the empty review would otherwise be
-				// resumed against its stale foreign pin on the next start.
+				// Leave nothing resumable behind: the empty review would otherwise be
+				// resumed against its stale pin on the next start.
 				if cerr := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, "closed"); cerr != nil {
 					return errReply(cerr.Error())
 				}

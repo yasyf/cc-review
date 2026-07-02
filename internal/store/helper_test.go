@@ -11,7 +11,7 @@ import (
 // newSubjectStoreForTest opens the cc-interact subject store over the same
 // writer connection, for tests that need a subject's slug as well as its id.
 func newSubjectStoreForTest(s *Store) subject.Store {
-	return ccstore.NewSubjectStore(s.DB(), []string{"open"})
+	return ccstore.NewSubjectStore(s.DB())
 }
 
 // seedReview creates a review subject and its pinned meta, returning the subject
@@ -19,7 +19,7 @@ func newSubjectStoreForTest(s *Store) subject.Store {
 // cc-interact and is tested there.
 func seedReview(ctx context.Context, t *testing.T, s *Store, session string, pid int, repo, branch, base string) string {
 	t.Helper()
-	ss := ccstore.NewSubjectStore(s.DB(), []string{"open"})
+	ss := ccstore.NewSubjectStore(s.DB())
 	sub, err := ss.Create(ctx, NewSlugHash(), ReviewSlug(branch, NewSlugHash()), session, repo, pid, "open")
 	if err != nil {
 		t.Fatalf("seed review: %v", err)
@@ -34,7 +34,7 @@ func seedReview(ctx context.Context, t *testing.T, s *Store, session string, pid
 // "submitted") via the cc-interact subject store.
 func setReviewStatus(ctx context.Context, t *testing.T, s *Store, id, status string) {
 	t.Helper()
-	if err := ccstore.NewSubjectStore(s.DB(), []string{"open"}).SetStatus(ctx, id, status); err != nil {
+	if err := ccstore.NewSubjectStore(s.DB()).SetStatus(ctx, id, status); err != nil {
 		t.Fatalf("set review status: %v", err)
 	}
 }

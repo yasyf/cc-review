@@ -13,7 +13,7 @@ require (
 
 require (
 	github.com/go-enry/go-enry/v2 v2.9.6
-	github.com/yasyf/cc-interact v0.1.5
+	github.com/yasyf/cc-interact v0.1.7
 )
 
 require (

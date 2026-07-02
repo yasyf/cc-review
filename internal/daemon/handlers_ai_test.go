@@ -30,7 +30,6 @@ func writeFile(t *testing.T, dir, name, content string) {
 // request template stamped with that window's identity.
 func startedReview(ctx context.Context, t *testing.T, s *Server, repo string) (Request, Response) {
 	t.Helper()
-	s.alive = aliveSet(100)
 	writeFile(t, repo, "a.go", "package a\n")
 	writeFile(t, repo, "b.go", "package b\n")
 	req := Request{Session: "sA", ClaudePID: 100, Cwd: repo}
@@ -308,7 +307,6 @@ func TestReviewFilesIncludesPatchPath(t *testing.T) {
 func TestReviewFilesCarryGeneratedVendored(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100)
 	writeFile(t, repo, "package-lock.json", "{}\n")
 	if err := os.MkdirAll(filepath.Join(repo, "vendor"), 0o750); err != nil {
 		t.Fatal(err)

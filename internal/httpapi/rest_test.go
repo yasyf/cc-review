@@ -94,7 +94,7 @@ func (e *eventLog) none() {
 func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store.Review, store.Version) {
 	t.Helper()
 	ctx := context.Background()
-	ss := ccstore.NewSubjectStore(st.DB(), []string{"open"})
+	ss := ccstore.NewSubjectStore(st.DB())
 	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug("main", store.NewSlugHash()), "s1", "/repo", 100, "open")
 	if err != nil {
 		t.Fatal(err)

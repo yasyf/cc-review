@@ -21,7 +21,7 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 	defer func() { _ = st.Close() }()
 
 	subjectID := store.NewSlugHash()
-	if _, err := ccstore.NewSubjectStore(st.DB(), []string{"open"}).
+	if _, err := ccstore.NewSubjectStore(st.DB()).
 		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
 		t.Fatal(err)
 	}

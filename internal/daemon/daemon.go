@@ -18,7 +18,6 @@ import (
 	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/httpapi"
 	"github.com/yasyf/cc-review/internal/paths"
-	"github.com/yasyf/cc-review/internal/procs"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/version"
 	"github.com/yasyf/cc-review/internal/web"
@@ -93,7 +92,6 @@ func Serve(ctx context.Context, fixedPort int) error {
 		Paths:             paths.App(),
 		Version:           version.String(),
 		ActiveStatuses:    []string{statusOpen},
-		WindowAlive:       procs.LiveClaude,
 		ScopeResolve:      vcs.Root,
 		Gate:              rv.gate,
 		GateErrorReason:   gateErrorReason,

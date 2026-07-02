@@ -11,7 +11,6 @@ import (
 	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
-	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/digest"
@@ -28,17 +27,6 @@ func gitRun(t *testing.T, repo string, args ...string) string {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
-}
-
-func aliveSet(pids ...int) func(int) bool {
-	return func(pid int) bool {
-		for _, p := range pids {
-			if p == pid {
-				return true
-			}
-		}
-		return false
-	}
 }
 
 func repoRoot(t *testing.T, cwd string) string {
@@ -156,7 +144,6 @@ func TestHandleAnswerRoutesByTargetKind(t *testing.T) {
 func TestStartTwoLiveWindowsGetSeparateReviews(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100, 200)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	a := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
@@ -197,7 +184,6 @@ func TestStartTwoLiveWindowsGetSeparateReviews(t *testing.T) {
 func TestSessionRecordRotationFollowsWindow(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100)
 	root := repoRoot(t, repo)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
@@ -223,49 +209,28 @@ func TestSessionRecordRotationFollowsWindow(t *testing.T) {
 	}
 }
 
-func TestSessionRecordAdoptsDeadWindowsReview(t *testing.T) {
+func TestSessionRecordNeverBindsAnotherWindowsReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
-	orphan, err := s.createReview(ctx, "sA", 100, root, "main", "base0")
+	other, err := s.createReview(ctx, "sA", 100, root, "main", "base0")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// pid 100 is dead (default alive: nothing lives): the new window adopts.
+	// A second session starting in the same repo must not take over sA's review —
+	// ownership is per-window, dead pid or not.
 	resp := s.handleSessionRecord(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: repo})
 	if !resp.OK {
 		t.Fatalf("session-record failed: %s", resp.Error)
 	}
-	got, ok, _ := s.resolver.Store.FindBySessionScope(ctx, "sB", root)
-	if !ok || got.ID != orphan.ID {
-		t.Fatal("orphaned review was not adopted")
-	}
-	if got.ClaudePID != 200 {
-		t.Fatalf("adopted review pid = %d, want 200", got.ClaudePID)
-	}
-}
-
-func TestSessionRecordNeverStealsLiveWindow(t *testing.T) {
-	ctx := context.Background()
-	s, repo := testServer(t)
-	s.alive = aliveSet(100)
-	root := repoRoot(t, repo)
-	held, err := s.createReview(ctx, "sA", 100, root, "main", "base0")
-	if err != nil {
+	if got, err := s.getReview(ctx, other.ID); err != nil {
 		t.Fatal(err)
+	} else if got.SessionID != "sA" || got.ClaudePID != 100 {
+		t.Fatalf("another window's review reparented to %s/%d, want sA/100", got.SessionID, got.ClaudePID)
 	}
-
-	resp := s.handleSessionRecord(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: repo})
-	if !resp.OK {
-		t.Fatalf("session-record failed: %s", resp.Error)
-	}
-	got, err := s.getReview(ctx, held.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.SessionID != "sA" || got.ClaudePID != 100 {
-		t.Fatalf("live foreign window's review reparented to %s/%d", got.SessionID, got.ClaudePID)
+	if _, ok, _ := s.resolver.Store.FindBySessionScope(ctx, "sB", root); ok {
+		t.Fatal("new session must not be bound to a foreign review")
 	}
 }
 
@@ -301,43 +266,29 @@ func TestSessionRecordOutsideRepoIsNoop(t *testing.T) {
 	}
 }
 
-func TestStartAdoptRaceLoserCreatesOwn(t *testing.T) {
+func TestStartCreatesOwnWhenForeignReviewExists(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 	head := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
-	orphan, err := s.createReview(ctx, "sA", 100, root, "main", head)
+	other, err := s.createReview(ctx, "sA", 100, root, "main", head)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A competing window wins the adoption between the loser's peek and the
-	// write phase; by the write phase the winner's window is alive.
-	stole := false
-	s.resolver.Policy.Held = func(ctx context.Context, sub subject.Subject) bool {
-		if stole {
-			return true
-		}
-		stole = true
-		if ok, err := s.resolver.Store.Rebind(ctx, sub.ID, sub.ClaudePID, "winner", 999); err != nil || !ok {
-			t.Fatalf("competing rebind: ok=%v err=%v", ok, err)
-		}
-		return false
-	}
 
-	resp := s.handleStart(ctx, Request{Session: "loser", ClaudePID: 300, Cwd: repo})
+	// A second session's start never adopts sA's open review — it creates its own.
+	resp := s.handleStart(ctx, Request{Session: "sB", ClaudePID: 200, Cwd: repo})
 	if !resp.OK {
 		t.Fatalf("start: %s", resp.Error)
 	}
-	if resp.ReviewID == orphan.ID || resp.Resumed {
-		t.Fatalf("loser must create its own review: id=%q resumed=%v", resp.ReviewID, resp.Resumed)
+	if resp.Resumed || resp.ReviewID == other.ID {
+		t.Fatalf("second session must create its own review: id=%q resumed=%v", resp.ReviewID, resp.Resumed)
 	}
-	got, err := s.getReview(ctx, orphan.ID)
-	if err != nil {
+	if got, err := s.getReview(ctx, other.ID); err != nil {
 		t.Fatal(err)
-	}
-	if got.SessionID != "winner" || got.ClaudePID != 999 {
-		t.Fatalf("winner's binding disturbed: %s/%d", got.SessionID, got.ClaudePID)
+	} else if got.SessionID != "sA" || got.ClaudePID != 100 {
+		t.Fatalf("foreign review disturbed: %s/%d, want sA/100", got.SessionID, got.ClaudePID)
 	}
 }
 
@@ -368,7 +319,6 @@ func TestHandleStartNoChanges(t *testing.T) {
 func TestHandleStartTrunkFallbackAndExplicitBase(t *testing.T) {
 	ctx := context.Background()
 	s, _ := testServer(t)
-	s.alive = aliveSet(100, 200)
 
 	// Commit A on main, commit B on feature, clean tree.
 	repo := t.TempDir()
@@ -414,7 +364,6 @@ func TestHandleStartTrunkFallbackAndExplicitBase(t *testing.T) {
 func TestHandleStartPinnedBaseAndDedupAcrossCommits(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
@@ -472,7 +421,6 @@ func TestHandleStartPinnedBaseAndDedupAcrossCommits(t *testing.T) {
 func TestHandleStartDedupReopensSubmittedReview(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})
@@ -495,7 +443,7 @@ func TestHandleStartDedupReopensSubmittedReview(t *testing.T) {
 	}
 }
 
-func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
+func TestHandleStartCreateUsesCreateSemantics(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
@@ -512,19 +460,9 @@ func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
 	headB := strings.TrimSpace(gitRun(t, repo, "rev-parse", "HEAD"))
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
-	// The orphan is stolen between the loser's peek and the write phase.
-	stole := false
-	s.resolver.Policy.Held = func(ctx context.Context, sub subject.Subject) bool {
-		if stole {
-			return true
-		}
-		stole = true
-		if ok, err := s.resolver.Store.Rebind(ctx, sub.ID, sub.ClaudePID, "winner", 999); err != nil || !ok {
-			t.Fatalf("competing rebind: ok=%v err=%v", ok, err)
-		}
-		return false
-	}
-
+	// A second session never adopts sA's orphan, so its start creates a fresh
+	// review with create-semantics: pinned to the current HEAD, diffing only its
+	// own change.
 	resp := s.handleStart(ctx, Request{Session: "loser", ClaudePID: 300, Cwd: repo})
 	if !resp.OK || resp.Resumed || resp.ReviewID == orphan.ID {
 		t.Fatalf("loser must create its own: ok=%v resumed=%v id=%q err=%q", resp.OK, resp.Resumed, resp.ReviewID, resp.Error)
@@ -552,7 +490,6 @@ func TestHandleStartRaceCreateUsesCreateSemantics(t *testing.T) {
 func TestGuardEditPerWindow(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100, 200)
 	writeFile(t, repo, "pending.go", "package p\nvar Pending int\n")
 
 	started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo})

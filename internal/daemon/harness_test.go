@@ -32,7 +32,6 @@ type Server struct {
 	resolver  subject.Resolver
 	activity  *ccd.Activity
 	decisions *decisions.Log
-	alive     func(int) bool
 	httpPort  int
 
 	repoMu    sync.Mutex
@@ -159,13 +158,11 @@ func newServer(cc *ccstore.Store, ledger *decisions.Log) *Server {
 		rv:        &review{decisions: ledger, log: log.New(io.Discard, "", 0)},
 		activity:  ccd.NewActivity(),
 		decisions: ledger,
-		alive:     func(int) bool { return false },
 		repoLocks: make(map[string]*sync.Mutex),
 	}
 	s.resolver = subject.Resolver{
-		Store: ccstore.NewSubjectStore(cc.DB(), []string{"open"}),
+		Store: ccstore.NewSubjectStore(cc.DB()),
 		Policy: subject.Policy{
-			Held:   s.held,
 			Active: func(sub subject.Subject) bool { return sub.Status == "open" },
 		},
 	}
@@ -182,13 +179,6 @@ func (s *Server) injectCalls() []injectCall {
 	s.injectMu.Lock()
 	defer s.injectMu.Unlock()
 	return append([]injectCall(nil), s.injected...)
-}
-
-func (s *Server) held(_ context.Context, sub subject.Subject) bool {
-	if sub.ClaudePID != 0 {
-		return s.alive(sub.ClaudePID)
-	}
-	return s.activity.AttachedWithin(sub.ID, 10_000_000_000) // 10s in ns
 }
 
 // appendEvent mirrors the daemon's Append chokepoint: persist, then publish (no

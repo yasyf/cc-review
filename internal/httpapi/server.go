@@ -59,7 +59,7 @@ type Server struct {
 func RESTMount(mux *http.ServeMux, d Deps) {
 	s := &Server{
 		store:      d.Store,
-		subjects:   ccstore.NewSubjectStore(d.Store.DB(), []string{"open"}),
+		subjects:   ccstore.NewSubjectStore(d.Store.DB()),
 		turns:      vcs.NewTurnStore(d.Store.DB()),
 		decisions:  d.Decisions,
 		log:        d.Log,

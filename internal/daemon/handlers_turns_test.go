@@ -234,7 +234,6 @@ func TestTurnEndFullyAttributedWritesNoBypassRow(t *testing.T) {
 func TestHandleStartAttributesTurnLines(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
-	s.alive = aliveSet(100)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "turn one"}), "turn-start 1")
