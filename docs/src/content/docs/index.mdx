@@ -3,7 +3,7 @@ title: cc-review
 description: Review the code Claude just wrote in a PR-like web UI before it lands.
 template: splash
 hero:
-  tagline: Review the code Claude just wrote, before it lands.
+  tagline: The only thing between Claude and its next edit is your Submit button.
   image:
     file: ../../assets/screenshots/review-overview.png
     alt: cc-review web UI showing a syntax-highlighted diff of handler.go with a file-tree sidebar, review progress, and an inline comment thread where Claude posted a question reply
@@ -19,27 +19,27 @@ hero:
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
+```
+/plugin marketplace add yasyf/cc-review
+/plugin install cc-review@cc-review
+```
+
 cc-review is a local code-review daemon and Claude Code plugin. It puts the uncommitted working tree in front of you as a PR-style diff, streams your inline comments back to Claude in realtime, and blocks further edits until you press Submit. Everything runs on 127.0.0.1 from one Go binary and persists to local SQLite.
 
 <CardGrid>
   <LinkCard
-    title="Getting started"
-    description="Install the plugin, run your first review, and submit feedback."
+    title="Run your first review"
+    description="Install the plugin and go from uncommitted diff to submitted feedback."
     href="/cc-review/getting-started/"
   />
   <LinkCard
     title="How a review works"
-    description="The full loop: snapshot, comments, Claude's asks, and the edit guard."
+    description="Snapshot, comments, Claude's ask cards, the edit guard, and resume."
     href="/cc-review/how-a-review-works/"
   />
   <LinkCard
     title="CLI reference"
     description="Every cc-review subcommand and flag, with examples."
     href="/cc-review/cli-reference/"
-  />
-  <LinkCard
-    title="Internals"
-    description="Daemon lifecycle, unix-socket IPC, SQLite schema, and the snapshot model."
-    href="/cc-review/internals/"
   />
 </CardGrid>

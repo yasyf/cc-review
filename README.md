@@ -1,88 +1,82 @@
-# cc-review
+# ![cc-review](docs/assets/readme-banner.webp)
 
-![cc-review banner](docs/assets/readme-banner.webp)
+**The only thing between Claude and its next edit is your Submit button.** cc-review renders your working tree as a local PR page and streams your comments to Claude live; a PreToolUse hook freezes edits until you press Submit.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/yasyf/cc-review/ci.yml?branch=main&label=CI)](https://github.com/yasyf/cc-review/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/github/actions/workflow/status/yasyf/cc-review/docs.yml?branch=main&label=docs)](https://yasyf.github.io/cc-review)
-[![License: PolyForm-Noncommercial-1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-blue.svg)](https://github.com/yasyf/cc-review/blob/main/LICENSE)
+[![CI](https://github.com/yasyf/cc-review/actions/workflows/ci.yml/badge.svg)](https://github.com/yasyf/cc-review/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/yasyf/cc-review)](https://github.com/yasyf/cc-review/releases)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm--Noncommercial--1.0.0-blue)](LICENSE)
 
-Local code-review daemon + Claude plugin — review what Claude writes in a PR-like web UI and stream feedback back.
-
-![The cc-review web UI: a PR-style diff of the working tree with inline comments](docs/src/assets/screenshots/review-overview.png)
-
-cc-review lets you review the code Claude just wrote in a GitHub-PR-style web page
-*before* it commits to changes: you leave inline comments, Claude answers your
-questions and proposes options right under each comment in realtime, and only once
-you press **Submit** does Claude proceed. A review idle for 24 hours expires on its
-own, so an abandoned one never wedges Claude. Every review and the full back-and-forth is
-kept forever in a local SQLite, and re-running `/cc-review:start` resumes the same review
-against your latest changes.
-
-## Install
-
-cc-review is a Claude Code plugin that ships a prebuilt `cc-review` binary (the CLI +
-lazily-started local daemon). Add the marketplace and install the plugin:
+## Get started
 
 ```
 /plugin marketplace add yasyf/cc-review
 /plugin install cc-review@cc-review
 ```
 
-The plugin downloads its prebuilt binary automatically. To install the `cc-review`
-CLI on its own (macOS), use Homebrew:
+Then, in a repo where Claude just wrote code, run `/cc-review:start` and open the printed URL:
+
+<img src="docs/src/assets/screenshots/review-overview.png" alt="The cc-review web UI: a PR-style diff of the uncommitted working tree with a file tree, review progress, and an inline comment thread" width="700">
+
+Driving with an agent? Paste this:
 
 ```
-brew install yasyf/tap/cc-review
+/plugin marketplace add yasyf/cc-review
+/plugin install cc-review@cc-review
 ```
 
-## Quickstart
+<details>
+<summary>Standalone CLI, without the plugin (macOS)</summary>
 
-In any git repo with uncommitted changes Claude just made, run:
+```text
+Install the cc-review CLI with `brew install yasyf/tap/cc-review`, then run
+`cc-review start` in this repo and give me the review URL to open.
+Docs: https://yasyf.github.io/cc-review
+```
+
+</details>
+
+---
+
+## Use cases
+
+### Stop a wrong approach before Claude's next edit
+
+Claude just rewrote your handler around a pattern you'd never merge, and it's about to keep going. Start a review:
 
 ```
 /cc-review:start
 ```
 
-Claude prints a `http://127.0.0.1:<port>/s/<branch-slug>--<hash>` URL. Open it to see a PR-style diff of
-the working tree, leave inline comments, and watch Claude reply with questions and
-options under each one. Press **Submit** at the top when you're done — Claude reads the
-frozen feedback, asks any leftover questions inline, and then makes the changes. Run
-`/cc-review:start` again after those changes to resume the review against the new diff.
+Claude prints a `http://127.0.0.1:<port>/s/<slug>` URL and the edit guard engages — every `Edit` and `Write` is denied until you press Submit. Comment on the offending lines and the rework happens on your terms, not ten files later.
 
-Claude's questions and option cards render under your comments:
+### Answer Claude's clarifying questions on the exact line they're about
 
-![A Claude ask card with selectable options under an inline review comment](docs/src/assets/screenshots/comment-thread-ask.png)
+In chat, "which config style do you want?" arrives forty lines of scrollback away from the code it's asking about. In the review UI, click the line and say what's wrong:
 
-## What problems does this solve?
+```text
+This hardcodes the rate limit — should it come from config?
+```
 
-- **Review-before-change.** You see and shape what Claude is about to do in a familiar
-  PR UI instead of discovering it after the edits land — a `PreToolUse` hook hard-blocks
-  edits until you submit. `cc-review close` ends a review without submitting, and
-  `cc-review list` shows every open one.
-- **A real back-channel.** Claude's clarifying questions and option sets render *under*
-  your comments in realtime, so the conversation stays anchored to specific lines.
-- **Nothing is lost.** Every comment, reply, and decision is persisted forever in local
-  SQLite; reviews resume across sessions, keyed to your Claude session.
-- **Fully local, lazily started.** One Go binary serves the UI and daemon on
-  `127.0.0.1`; no cloud, no account, no server to keep running.
+Claude replies under that comment in realtime — a clarifying question, a note, or an ask card with option buttons and a code preview. Pick an option and the answer lands in Claude's session immediately:
 
-## Documentation
+<img src="docs/src/assets/screenshots/comment-thread-ask.png" alt="A Claude ask card with selectable options rendered under an inline review comment" width="700">
 
-Full documentation lives at https://yasyf.github.io/cc-review.
+### Resume yesterday's review against today's diff
 
-- [Getting started](https://yasyf.github.io/cc-review/getting-started/) covers installing the plugin and running your first review.
-- [How a review works](https://yasyf.github.io/cc-review/how-a-review-works/) walks the full lifecycle from snapshot through comments, asks, Submit, and resume.
-- [CLI reference](https://yasyf.github.io/cc-review/cli-reference/) lists every `cc-review` subcommand and flag.
-- [Internals](https://yasyf.github.io/cc-review/internals/) explains the daemon architecture, SQLite schema, and the plugin hooks.
+You pressed Submit, Claude applied the feedback, and now you owe round two. Run the same command again:
 
-## Development
+```
+/cc-review:start
+```
 
-You need Go, [bun](https://bun.sh), and [go-task](https://taskfile.dev). `task build`
-builds the web SPA and then the Go binary; the order matters, since `//go:embed`
-bakes `internal/web/dist` in at compile time. `task dev` runs the daemon and the Vite
-dev server together for live development. Run tests with `go test -race ./...`.
-Conventions live in [AGENTS.md](AGENTS.md).
+The review resumes as a new version against the fresh diff — prior threads retained, files you already marked reviewed stay marked, and only files whose diff changed come back for re-reading. Everything persists in local SQLite under `~/.cc-review`, and a review idle for 24 hours expires on its own, so an abandoned one never wedges Claude.
 
-## License
+## More in the docs
 
-PolyForm-Noncommercial-1.0.0. See [LICENSE](https://github.com/yasyf/cc-review/blob/main/LICENSE).
+- **The edit guard** — what the PreToolUse hook blocks, when it lifts, and why it fails open — [how a review works](https://yasyf.github.io/cc-review/how-a-review-works/#the-edit-guard)
+- **Asks and replies** — the three kinds of reply Claude posts under your comments — [Claude's side](https://yasyf.github.io/cc-review/how-a-review-works/#claudes-side)
+- **Resume and versions** — how reviewed state carries across rounds — [resume semantics](https://yasyf.github.io/cc-review/how-a-review-works/#resume-and-versions)
+- **CLI reference** — every `cc-review` subcommand and flag — [reference](https://yasyf.github.io/cc-review/cli-reference/)
+- **Daemon internals** — lazy start, newest-wins version skew, unix-socket IPC, the SQLite schema — [internals](https://yasyf.github.io/cc-review/internals/)
+
+Read the [docs](https://yasyf.github.io/cc-review) for the full guide. Licensed under [PolyForm Noncommercial 1.0.0](LICENSE).

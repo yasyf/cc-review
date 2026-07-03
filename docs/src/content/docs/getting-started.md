@@ -1,9 +1,11 @@
 ---
-title: Getting Started
+title: Your first review in five minutes
 description: Install the cc-review plugin and run your first review of Claude's uncommitted changes.
 ---
 
-cc-review puts a PR-style review step between Claude writing code and Claude committing to it. You review the uncommitted working tree in a local web UI, Claude responds under your comments in realtime, and a hook blocks further edits until you press Submit. This page gets you from nothing to a completed first review.
+cc-review puts a PR-style review step between Claude writing code and Claude committing to it. You review the uncommitted working tree in a local web UI, Claude responds under your comments in realtime, and a hook blocks further edits until you press Submit.
+
+Here's where you land: a submitted review, in which you commented on Claude's diff from your browser, answered its ask card inline, and pressed Submit — with Claude unable to touch a file until you did. Claude then applies exactly the feedback you froze.
 
 ## Requirements
 
@@ -28,27 +30,35 @@ brew install yasyf/tap/cc-review
 
 ## Your first review
 
-Have Claude make some changes. Ask it to fix a bug or add a small feature, and stop before it commits.
+1. Have Claude make some changes. Ask it to fix a bug or add a small feature, and stop before it commits.
 
-Start the review:
+2. Start the review:
 
-```
-/cc-review:start
-```
+   ```
+   /cc-review:start
+   ```
 
-Claude prints a URL of the form `http://127.0.0.1:<port>/s/<slug>` and tells you it is watching for comments. Open the URL in your browser. You get a familiar PR layout with a file tree on the left, syntax-highlighted diffs of the uncommitted working tree, and a header with the version, file count, review progress, and a Submit button.
+:::tip[Checkpoint]
+Claude prints a review URL of the form `http://127.0.0.1:<port>/s/<slug>` and tells you it is watching for comments. An empty diff means the work is already committed — reset it back into the working tree and start again (see [Nothing to review?](#nothing-to-review)).
+:::
 
-Now click a line in the diff and leave an inline comment, the same kind you would write on any PR. It streams to Claude immediately.
+3. Open the URL in your browser. You get a familiar PR layout with a file tree on the left, syntax-highlighted diffs of the uncommitted working tree, and a header with the version, file count, review progress, and a Submit button.
 
-Watch the thread. Claude reads the surrounding code and replies under your comment in the review UI, not in the chat window. A reply can be a clarifying question, a note, or an "ask", which renders as a structured card with option buttons, an optional code preview, and a notes field. Pick an option (or write your own) and submit the card; your answer goes straight back to Claude.
+4. Click a line in the diff and leave an inline comment, the same kind you would write on any PR. It streams to Claude immediately.
 
-![A comment thread on ratelimit.go: a human comment about a hardcoded limit, with Claude's ask card offering Env var, Per-route option, and Other](../../assets/screenshots/comment-thread-ask.png)
+5. Watch the thread. Claude reads the surrounding code and replies under your comment in the review UI, not in the chat window. A reply can be a clarifying question, a note, or an "ask", which renders as a structured card with option buttons, an optional code preview, and a notes field. Pick an option (or write your own) and submit the card; your answer goes straight back to Claude.
 
-While the review is open, Claude cannot edit files. A PreToolUse hook denies every edit until you submit, so nothing moves under you mid-review. A review idle for 24 hours expires on its own and unblocks edits; `cc-review close` ends one without submitting, and `cc-review list` shows every open review.
+   ![A comment thread on ratelimit.go: a human comment about a hardcoded limit, with Claude's ask card offering Env var, Per-route option, and Other](../../assets/screenshots/comment-thread-ask.png)
 
-When you have said everything you want to say, press **Submit**. This freezes the feedback. Claude reads the full set of threads, asks you about any questions you left unanswered in the UI, and then applies the feedback to the code.
+:::tip[Checkpoint]
+Claude's reply renders under your comment in the browser, and while the review is open every edit is denied — a PreToolUse hook holds `Edit`, `Write`, and `NotebookEdit` until you submit. `cc-review list` shows the review as an `open` row.
+:::
 
-After Claude makes the changes, run `/cc-review:start` again. It resumes the same review as a new version against the new diff, with all prior history retained.
+6. When you have said everything you want to say, press **Submit**. This freezes the feedback. Claude reads the full set of threads, asks you about any questions you left unanswered in the UI, and then applies the feedback to the code.
+
+7. After Claude makes the changes, run `/cc-review:start` again. It resumes the same review as a new version against the new diff, with all prior history retained.
+
+A review idle for 24 hours expires on its own and unblocks edits; `cc-review close` ends one without submitting, and `cc-review list` shows every open review.
 
 ## Nothing to review?
 
