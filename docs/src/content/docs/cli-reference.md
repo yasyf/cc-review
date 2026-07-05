@@ -3,7 +3,7 @@ title: CLI Reference
 description: Every cc-review command, flag, and example invocation.
 ---
 
-The plugin's SessionStart hook downloads the `cc-review` binary into `plugin/bin/cc-review` from the GitHub release matching the plugin version, and that directory is on `PATH` in plugin sessions. Every command is a thin shell around the daemon control client; the daemon lazy-starts on first use.
+The plugin's SessionStart hook provisions the `cc-review` binary pinned by the plugin version — a brew install wins, otherwise a checksum-verified download to the plugin data dir — and points the `plugin/bin/cc-review` symlink at it; that directory is on `PATH` in plugin sessions. Every command is a thin shell around the daemon control client; the daemon lazy-starts on first use.
 
 ## start
 

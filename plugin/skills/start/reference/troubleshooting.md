@@ -1,6 +1,6 @@
 # Troubleshooting
 
-**The binary is missing.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"`. It downloads the release binary for this platform into `bin/cc-review`. The SessionStart hook runs this automatically on the first session.
+**The binary is missing.** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/install-binary.sh"`. It provisions the release pinned by the plugin version — a brew-installed `cc-review` wins, otherwise it downloads to the durable plugin data dir — and leaves `bin/cc-review` as a symlink to the payload. The SessionStart hook runs this automatically on the first session.
 
 **No comment notifications arrive.** Confirm the Monitor is running (`/tasks`) and that you launched it with `persistent: true`. `cc-review watch` writes one line per event straight to stdout (unbuffered), so as long as the Monitor is armed, each comment becomes a notification. Check the daemon is up with `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" status`.
 

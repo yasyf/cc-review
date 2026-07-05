@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `plugin/scripts/install-binary.sh` is rendered from the canonical
+  repo-bootstrap template (synced with plugin-template's `render.sh
+  --sync-scripts`, provenance-stamped): a brew-installed binary wins, downloads
+  land in the durable plugin data dir verified against the release
+  `checksums.txt`, and `plugin/bin/cc-review` is only ever a symlink.
 - The channel no longer pushes a `channel.hello` handshake at attach
   (cc-interact v0.1.5), so attaching to an existing review never wakes an idle
   Claude session. Delivery proof is now solicited: `start` on an
@@ -15,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-turn where the skill acks it via `channel-ack`. `channel: pending` is the
   normal state until that first ack; `active` still requires the proven round
   trip. The MCP instructions and skill docs drop the handshake language.
+
+### Fixed
+- The old installer's freshness fast-path compared `--version` output against
+  `v$VERSION`, but release builds printed `X.Y.Z (sha)` — stale release
+  binaries were never refreshed. The canonical installer compares v-stripped
+  and reprovisions stale releases.
+- Local dev builds (pseudo-versions like `v0.12.1-0.20260617…+dirty`) matched
+  the old installer's `v[0-9]*` arm and were clobbered by a re-download; the
+  canonical arm order leaves dev builds alone.
+- `plugin.json` version realigned to the latest release (0.19.1) so the
+  pinned installer resolves an existing tag.
 
 ## [0.18.0]
 

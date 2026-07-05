@@ -22,8 +22,8 @@ cc-review/
 │   ├── .claude-plugin/ #   plugin.json: manifest with mcpServers (channel server) + channels
 │   ├── skills/start/   #   the /cc-review:start skill (thin CLI wrapper) + reference docs
 │   ├── hooks/          #   SessionStart, PreToolUse edit-guard
-│   ├── scripts/        #   install-binary.sh (downloads release asset), mcp-channel.sh
-│   └── bin/            #   cc-review binary (downloaded or built; gitignored)
+│   ├── scripts/        #   install-binary.sh (canonical, synced from repo-bootstrap), mcp-channel.sh
+│   └── bin/            #   cc-review symlink — brew binary, data-dir payload, or dev build (gitignored)
 ├── .claude-plugin/     # marketplace.json — plugin source points at ./plugin
 ├── AGENTS.md           # This file — shared conventions
 └── README.md           # Project overview
@@ -136,3 +136,5 @@ embedded `internal/web/dist` before `go build`, since `//go:embed` reads at comp
 CI runs the web build first, then `go vet ./...` and `go test -race ./...`.
 
 **Git.** Commits should be atomic and scoped. One logical change per commit.
+
+**Releases.** Tagging `v*` runs goreleaser via the shared `yasyf/homebrew-tap` workflow: bare `cc-review_<os>_<arch>` binaries, `checksums.txt`, a tar.gz archive, and the Homebrew cask. Bump `plugin/.claude-plugin/plugin.json` to the tag's version in the release commit — the plugin's pinned installer reads it to pick which release to provision, so a stale manifest strands users on an old binary.
