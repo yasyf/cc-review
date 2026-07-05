@@ -18,10 +18,12 @@ func NewRootCmd() *cobra.Command {
 		Use:           "cc-review",
 		Short:         "Local code-review daemon + Claude plugin",
 		Long:          "cc-review reviews the code Claude just wrote in a PR-like web UI and streams the feedback back into the running Claude session.",
-		Version:       version.String(),
+		Version:       version.Tag(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// One line, tag only, no commit suffix — the plugin installer's freshness
+	// check matches this against v<plugin.json version>.
 	root.SetVersionTemplate("{{.Version}}\n")
 	d := deps()
 	// The plugin's scripts/mcp-channel.sh invokes the historical `mcp-channel`
