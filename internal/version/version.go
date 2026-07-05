@@ -57,14 +57,22 @@ func parseTriple(s string) ([3]int, bool) {
 	return t, true
 }
 
-// String renders a human-readable version line.
-func String() string {
-	v := Version
-	if v == "dev" {
+// Tag renders the stamped version alone — for a release build, exactly the
+// git tag ("v0.19.2"), no commit suffix. `--version` prints this and
+// plugin/scripts/install-binary.sh pins its freshness check to it.
+func Tag() string {
+	if Version == "dev" {
 		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-			v = bi.Main.Version
+			return bi.Main.Version
 		}
 	}
+	return Version
+}
+
+// String renders a human-readable version line: the tag plus the commit when
+// one was stamped.
+func String() string {
+	v := Tag()
 	if Commit != "" {
 		v += " (" + Commit + ")"
 	}

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --sync-scripts`, provenance-stamped): a brew-installed binary wins, downloads
   land in the durable plugin data dir verified against the release
   `checksums.txt`, and `plugin/bin/cc-review` is only ever a symlink.
+- Release builds stamp `version.Version` with the git tag (`{{ .Tag }}`
+  instead of `{{ .Version }}`), and `--version` prints exactly that tag — one
+  line, no commit suffix. Verbose surfaces keep the `tag (commit)` form via
+  `version.String()`.
 - The channel no longer pushes a `channel.hello` handshake at attach
   (cc-interact v0.1.5), so attaching to an existing review never wakes an idle
   Claude session. Delivery proof is now solicited: `start` on an

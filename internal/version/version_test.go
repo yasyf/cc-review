@@ -2,6 +2,32 @@ package version
 
 import "testing"
 
+func TestTagAndString(t *testing.T) {
+	cases := []struct {
+		name       string
+		version    string
+		commit     string
+		wantTag    string
+		wantString string
+	}{
+		{"release build", "v0.19.2", "abc1234", "v0.19.2", "v0.19.2 (abc1234)"},
+		{"release build no commit", "v0.19.2", "", "v0.19.2", "v0.19.2"},
+		{"dev build", "dev", "abc1234", "dev", "dev (abc1234)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func(v, c string) { Version, Commit = v, c }(Version, Commit)
+			Version, Commit = tc.version, tc.commit
+			if got := Tag(); got != tc.wantTag {
+				t.Errorf("Tag() = %q, want %q", got, tc.wantTag)
+			}
+			if got := String(); got != tc.wantString {
+				t.Errorf("String() = %q, want %q", got, tc.wantString)
+			}
+		})
+	}
+}
+
 func TestNewer(t *testing.T) {
 	cases := []struct {
 		name string

@@ -26,7 +26,10 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/yasyf/cc-review/internal/version.Version={{ .Version }}
+      # {{ .Tag }}, not {{ .Version }}: release binaries must report the tag
+      # verbatim ("v0.19.2") — plugin/scripts/install-binary.sh's freshness
+      # check compares `--version` output against v<plugin.json version>.
+      - -X github.com/yasyf/cc-review/internal/version.Version={{ .Tag }}
       - -X github.com/yasyf/cc-review/internal/version.Commit={{ .ShortCommit }}
 
 archives:
