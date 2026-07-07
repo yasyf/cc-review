@@ -47,7 +47,7 @@ Claude just rewrote your handler around a pattern you'd never merge, and it's ab
 /cc-review:start
 ```
 
-Claude prints a `http://127.0.0.1:<port>/s/<slug>` URL and the edit guard engages, denying every `Edit` and `Write` until you press Submit. Comment on the offending lines and the rework happens on your terms, not ten files later.
+Claude prints an `http://127.0.0.1:<port>/s/<slug>` URL and the edit guard engages, denying every `Edit` and `Write` until you press Submit. Comment on the offending lines and the rework happens on your terms, not ten files later.
 
 ### Answer Claude's clarifying questions on the exact line they're about
 
