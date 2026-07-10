@@ -1,5 +1,5 @@
 #!/bin/sh
-# cc-guides 0.1.12 src=.claude/fragments/plugin/scripts/install-binary.sh fragments=cc-skills@1d12978b0605 | GENERATED — do not edit: edit .claude/fragments/plugin/scripts/install-binary.sh/ and run 'cc-guides render'. Everything below is in force.
+# cc-guides 0.1.12 src=.claude/fragments/plugin/scripts/install-binary.sh fragments=cc-skills@9d162c48d466 | GENERATED — do not edit: edit .claude/fragments/plugin/scripts/install-binary.sh/ and run 'cc-guides render'. Everything below is in force.
 # Provision the cc-review binary for the cc-review plugin.
 #
 # bin/cc-review is only ever a symlink — to a brew-installed binary, the
