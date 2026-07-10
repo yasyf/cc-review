@@ -1,3 +1,6 @@
 fragments = [
   { use = "cc-skills:install-binary-pinned", args = { binary = "cc-review", brew = "yasyf/tap/cc-review", plugin = "cc-review", repo = "yasyf/cc-review" } },
 ]
+
+[sources.cc-skills]
+source = "github:yasyf/cc-skills@main"

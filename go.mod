@@ -1,6 +1,6 @@
 module github.com/yasyf/cc-review
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/bluekeyes/go-gitdiff v0.8.1
