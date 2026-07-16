@@ -36,7 +36,3 @@
 the repo root. The frontend lives in `web/`; run `cd web && bunx vite build` to refresh the
 embedded `internal/web/dist` before `go build`, since `//go:embed` reads at compile time.
 CI runs the web build first, then `go vet ./...` and `go test -race ./...`.
-
-**Git.** Commits should be atomic and scoped. One logical change per commit.
-
-**Releases.** Tagging `v*` runs goreleaser via the shared `yasyf/homebrew-tap` workflow: bare `cc-review_<os>_<arch>` binaries, `checksums.txt`, a tar.gz archive, and the Homebrew cask. Bump `plugin/.claude-plugin/plugin.json` to the tag's version in the release commit — the plugin's pinned installer reads it to pick which release to provision, so a stale manifest strands users on an old binary.
