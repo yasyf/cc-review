@@ -22,11 +22,15 @@ const channelNotifyMethod = "notifications/claude/channel"
 // MCP initialize, so every --channels session (even one that never ran
 // cc-review:start) knows what channel traffic to expect and that silence is
 // normal.
-const channelInstructions = `This MCP server is the cc-review code-review channel. Review activity reaches you as <channel source="cc-review" type="..."> tags whose inner JSON has a "type" field identifying the event.
+var channelInstructions = channel.Instructions(channel.InstructionsSpec{
+	Desc:    "the cc-review code-review channel",
+	Traffic: "Review activity reaches you",
+	Source:  "cc-review",
+	Guide: `A channel.probe tag may arrive right after this session runs cc-review start — it is a delivery check, not a request: run "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD", and reply nothing.
 
-The channel never speaks unsolicited: outside a /cc-review:start run it is silent, and silence needs nothing from you. A channel.probe tag may arrive right after this session runs cc-review start — it is a delivery check, not a request: run "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD", and reply nothing.
-
-Real review input arrives as other event types such as comment.created, comment.updated, ai.request.created, and submit. The cc-review:start skill governs how to handle those.`
+Real review input arrives as other event types such as comment.created, comment.updated, ai.request.created, and submit. The cc-review:start skill governs how to handle those.`,
+	SilentOutside: "a /cc-review:start run",
+})
 
 // channelTools advertises cc-review's review tools to the agent's MCP channel.
 // The handlers round-trip to the daemon via ReviewClient because the channel

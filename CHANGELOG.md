@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-turn where the skill acks it via `channel-ack`. `channel: pending` is the
   normal state until that first ack; `active` still requires the proven round
   trip. The MCP instructions and skill docs drop the handshake language.
+- Channel setup now comes from cc-interact's hoisted `channelsetup` package:
+  `--apply` no longer writes `~/.claude/settings.json` (that key never fed
+  Claude's session channel gate), a machine whose managed settings list the
+  plugin but leave `channelsEnabled` false is re-offered (delivery genuinely
+  isn't on), and `setup-channels`'s three flags are now mutually exclusive
+  instead of silently preferring `--apply`.
 
 ### Fixed
 - The old installer's freshness fast-path compared `--version` output against
@@ -35,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical arm order leaves dev builds alone.
 - `plugin.json` version realigned to the latest release (0.19.1) so the
   pinned installer resolves an existing tag.
+- The `setup-channels --apply` admin script no longer interpolates paths raw
+  into the AppleScript/shell line (command injection via a hostile `$TMPDIR`).
+- A wrong-typed `allowedChannelPlugins` in managed settings now errors instead
+  of being silently clobbered.
+- `vcs` snapshot diffs pass `--no-ext-diff` (via the cc-interact bump), so a
+  configured external diff driver no longer corrupts snapshots.
 
 ## [0.18.0]
 

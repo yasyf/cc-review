@@ -7,7 +7,6 @@ The channel loads with no dialog only once cc-review is on Claude's *approved* a
 ## What `--apply` writes
 
 1. **`managed-settings.json`** (the only file Claude reads `allowedChannelPlugins` from): sets `channelsEnabled: true` and adds `{ "marketplace": "cc-review", "plugin": "cc-review" }`. This file is machine-wide and root-owned, so the write goes through a macOS admin-password prompt (`osascript … with administrator privileges`). Other keys in the file are preserved.
-2. **`~/.claude/settings.json`** (honoring `CLAUDE_CONFIG_DIR`): records `plugin:cc-review@cc-review` in the `channels` array as the selection. Other keys are preserved. (Current Claude builds still require `--channels` at launch to activate the channel; this key alone does not auto-load it.)
 
 It then writes a marker at `~/.cc-review/channels-setup.json` so the offer is never made again.
 
@@ -21,4 +20,4 @@ Launch with `--channels plugin:cc-review@cc-review`, replacing `--dangerously-lo
 
 ## Undo
 
-Delete the `channels` entry from `~/.claude/settings.json` and the cc-review entry (and, if you added nothing else, `channelsEnabled`) from `managed-settings.json`. Remove `~/.cc-review/channels-setup.json` to be offered again.
+Delete the cc-review entry (and, if you added nothing else, `channelsEnabled`) from `managed-settings.json`. Remove `~/.cc-review/channels-setup.json` to be offered again.

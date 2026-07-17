@@ -5,12 +5,17 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-interact/channelsetup"
 	"github.com/yasyf/cc-interact/cmd"
 
 	"github.com/yasyf/cc-review/internal/version"
 )
+
+var reviewPlugin = channelsetup.Plugin{Marketplace: "cc-review", Name: "cc-review"}
 
 // NewRootCmd builds the root command with every subcommand attached.
 func NewRootCmd() *cobra.Command {
@@ -26,6 +31,7 @@ func NewRootCmd() *cobra.Command {
 	// check matches this against v<plugin.json version>.
 	root.SetVersionTemplate("{{.Version}}\n")
 	d := deps()
+	applyHint := fmt.Sprintf("cc-review is now an approved channel.\nLaunch with `--channels %s` (replacing `--dangerously-load-development-channels %s` if you used it) — same channel, no warning.", reviewPlugin.ChannelID(), reviewPlugin.ChannelID())
 	// The plugin's scripts/mcp-channel.sh invokes the historical `mcp-channel`
 	// name; cc-interact's ChannelCmd defaults to `channel`. Preserve the plugin
 	// contract and keep `channel` as an alias.
@@ -51,7 +57,7 @@ func NewRootCmd() *cobra.Command {
 		newExportCmd(),
 		newTurnStartCmd(),
 		newTurnEndCmd(),
-		newSetupChannelsCmd(),
+		cmd.SetupChannelsCmd(d, reviewPlugin, applyHint),
 	)
 	return root
 }

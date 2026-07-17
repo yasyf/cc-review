@@ -6,8 +6,19 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/yasyf/cc-interact/channelsetup"
+
 	"github.com/yasyf/cc-review/internal/daemon"
 )
+
+func channelsOffer() (bool, string, error) {
+	managedPath, err := channelsetup.ManagedSettingsPath()
+	if err != nil {
+		return false, "", err
+	}
+	d := deps()
+	return channelsetup.Offer(reviewPlugin, d.Paths.ChannelSetupMarkerPath(), managedPath)
+}
 
 func newStartCmd() *cobra.Command {
 	var (

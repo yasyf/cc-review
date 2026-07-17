@@ -164,7 +164,7 @@ cc-review stop
 cc-review setup-channels [--check | --apply | --decline]
 ```
 
-Make cc-review an approved Claude channel, silencing the dev-channels warning. Hidden from `--help`. `cc-review start` already prints the offer check as its `setup:` line; `/cc-review:start` reads that line and runs `--apply` or `--decline` once based on the user's answer. With no flag it behaves as `--check`.
+Make cc-review an approved Claude channel, silencing the dev-channels warning. Hidden from `--help`. `cc-review start` already prints the offer check as its `setup:` line; `/cc-review:start` reads that line and runs `--apply` or `--decline` once based on the user's answer. The three flags are mutually exclusive; passing none runs the check.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
