@@ -22,7 +22,7 @@ cc-review/
 │   ├── .claude-plugin/ #   plugin.json: manifest with mcpServers (channel server) + channels
 │   ├── skills/start/   #   the /cc-review:start skill (thin CLI wrapper) + reference docs
 │   ├── hooks/          #   SessionStart, PreToolUse edit-guard
-│   ├── scripts/        #   install-binary.sh (canonical, synced from repo-bootstrap), mcp-channel.sh
+│   ├── scripts/        #   install-binary.sh (rendered by cc-guides), mcp-channel.sh
 │   └── bin/            #   cc-review symlink — brew binary, data-dir payload, or dev build (gitignored)
 ├── .claude-plugin/     # marketplace.json — plugin source points at ./plugin
 ├── AGENTS.md           # This file — shared conventions
