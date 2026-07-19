@@ -1,9 +1,11 @@
 ---
 title: Internals
 description: How the cc-review daemon, event log, storage, and SPA fit together — for contributors and integrators.
+aliases:
+  - /internals/
 ---
 
-cc-review is one Go binary. Every user-facing command in the [CLI reference](/cc-review/cli-reference/) talks to a background daemon over a unix socket, and that same daemon serves the web UI over HTTP on 127.0.0.1. This page explains how those pieces fit together.
+cc-review is one Go binary. Every user-facing command in the [CLI reference](cli-reference.md) talks to a background daemon over a unix socket, and that same daemon serves the web UI over HTTP on 127.0.0.1. This page explains how those pieces fit together.
 
 ## Daemon lifecycle
 

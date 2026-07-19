@@ -33,10 +33,9 @@ web/node_modules/
 web/dist/
 .pnpm-store/
 
-# Docs site (Astro/Starlight)
-docs/node_modules/
-docs/dist/
-docs/.astro/
+# Docs site (Great Docs)
+great-docs/
+docs/scripts/.gd-build/
 
 # Embedded SPA build output — rebuilt by the web build; keep only the committed placeholder
 internal/web/dist/*

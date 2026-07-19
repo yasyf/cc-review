@@ -1,6 +1,8 @@
 ---
 title: How a review works
 description: The lifecycle of a cc-review review, from snapshot to submit, and how feedback flows back to Claude.
+aliases:
+  - /how-a-review-works/
 ---
 
 A review is a conversation about a diff that hasn't been committed yet. You ask Claude to start one, read its uncommitted changes in a browser, leave inline comments, and press Submit. Claude watches the whole time but cannot edit anything until you do. This page explains each phase of that lifecycle and why it works the way it does.
@@ -17,7 +19,7 @@ If there are no uncommitted changes, the diff is empty and there is nothing to r
 
 The review page looks like a pull request, with a file tree on the left, syntax-highlighted diffs on the right, and a header showing the version number, file progress, and the Submit button.
 
-![A review in progress showing the file tree, a diff of handler.go, and an inline comment thread with a question from Claude](../../assets/screenshots/review-overview.png)
+![A review in progress showing the file tree, a diff of handler.go, and an inline comment thread with a question from Claude](images/review-overview.png)
 
 You comment by selecting lines in the diff, the same gesture as on GitHub. Each comment is anchored to a file path and a line range on a specific side of the diff, and it starts a thread. As you work through files, you can mark each one reviewed; the daemon remembers which files you've cleared.
 
@@ -27,7 +29,7 @@ Every comment streams to Claude's session the moment you post it. The daemon pus
 
 While the review is open, Claude is in a read-only posture. It receives each comment as an event, reads the referenced file for context, and may post a reply under your comment. Replies render in the thread in realtime, and they come in three kinds. A `question` is a free-text clarifying question, used when your comment is ambiguous. An `ask` is a structured card with a header and option buttons, the in-review equivalent of Claude's `AskUserQuestion`; each option can carry a description and a code or markdown preview. A `clarification` is a note with no question attached, such as pointing out that a change would ripple into other callers.
 
-![An ask card under a comment, with option buttons for how a rate limit should be configured, a code preview, and a notes field](../../assets/screenshots/comment-thread-ask.png)
+![An ask card under a comment, with option buttons for how a rate limit should be configured, a code preview, and a notes field](images/comment-thread-ask.png)
 
 You can answer an ask directly in the web UI by picking an option, optionally adding notes, and submitting the card. That answer travels back to Claude immediately as an update to the thread, so the question is settled before you ever press Submit. Questions you skip become the open questions that Claude drains after submit, surfaced in the terminal via `AskUserQuestion`, with your picks written back into the review record.
 
@@ -57,4 +59,4 @@ The guard fails open. If the cc-review binary or daemon is unavailable, edits ar
 
 ## Claude's side of the protocol
 
-Everything Claude does during a review, from wiring up event delivery to the event schema and the reply commands, is specified in the `/cc-review:start` skill that ships with the plugin. The [skill source](https://github.com/yasyf/cc-review/tree/main/plugin/skills/start) is the operator's source of truth for that protocol. For the human-facing commands, see the [CLI reference](/cc-review/cli-reference/).
+Everything Claude does during a review, from wiring up event delivery to the event schema and the reply commands, is specified in the `/cc-review:start` skill that ships with the plugin. The [skill source](https://github.com/yasyf/cc-review/tree/main/plugin/skills/start) is the operator's source of truth for that protocol. For the human-facing commands, see the [CLI reference](cli-reference.md).

@@ -1,6 +1,8 @@
 ---
 title: CLI Reference
 description: Every cc-review command, flag, and example invocation.
+aliases:
+  - /cli-reference/
 ---
 
 The plugin's SessionStart hook provisions the `cc-review` binary pinned by the plugin version — a brew install wins, otherwise a checksum-verified download to the plugin data dir — and points the `plugin/bin/cc-review` symlink at it; that directory is on `PATH` in plugin sessions. Every command is a thin shell around the daemon control client; the daemon lazy-starts on first use.
@@ -178,4 +180,4 @@ cc-review setup-channels --check
 
 ## Hidden internal commands
 
-The binary also carries hidden entry points the plugin uses for itself. `daemon` runs the lazy-started background process, `session-record` handles the SessionStart hook, `guard-edit` handles the PreToolUse edit guard, `mcp-channel` runs the MCP channel server, and `channel-ack` marks a window's channel proven after its first delivered tag. See [Internals](/cc-review/internals/) for how they fit together.
+The binary also carries hidden entry points the plugin uses for itself. `daemon` runs the lazy-started background process, `session-record` handles the SessionStart hook, `guard-edit` handles the PreToolUse edit guard, `mcp-channel` runs the MCP channel server, and `channel-ack` marks a window's channel proven after its first delivered tag. See [Internals](internals.md) for how they fit together.

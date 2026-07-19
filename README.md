@@ -15,7 +15,7 @@
 
 Then, in a repo where Claude just wrote code, run `/cc-review:start` and open the printed URL:
 
-<img src="docs/src/assets/screenshots/review-overview.png" alt="The cc-review web UI: a PR-style diff of the uncommitted working tree with a file tree, review progress, and an inline comment thread" width="700">
+<img src="docs/guide/images/review-overview.png" alt="The cc-review web UI: a PR-style diff of the uncommitted working tree with a file tree, review progress, and an inline comment thread" width="700">
 
 Driving with an agent? Paste this:
 
@@ -59,7 +59,7 @@ This hardcodes the rate limit — should it come from config?
 
 Claude replies under that comment in realtime, posting a clarifying question, a note, or an ask card with option buttons and a code preview. Pick an option and the answer lands in Claude's session immediately:
 
-<img src="docs/src/assets/screenshots/comment-thread-ask.png" alt="A Claude ask card with selectable options rendered under an inline review comment" width="700">
+<img src="docs/guide/images/comment-thread-ask.png" alt="A Claude ask card with selectable options rendered under an inline review comment" width="700">
 
 ### Resume yesterday's review against today's diff
 
@@ -73,9 +73,9 @@ The review resumes as a new version against the fresh diff. Prior threads carry 
 
 ## More in the docs
 
-- [The edit guard](https://yasyf.github.io/cc-review/how-a-review-works/#the-edit-guard) covers what the PreToolUse hook blocks, when it lifts, and why it fails open.
-- [Claude's side](https://yasyf.github.io/cc-review/how-a-review-works/#claudes-side) explains the three kinds of reply Claude posts under your comments.
-- [Resume and versions](https://yasyf.github.io/cc-review/how-a-review-works/#resume-and-versions) traces how reviewed state carries across rounds.
-- [CLI reference](https://yasyf.github.io/cc-review/cli-reference/) lists every `cc-review` subcommand and flag.
+- [The edit guard](https://yasyf.github.io/cc-review/docs/guide/how-a-review-works.html#the-edit-guard) covers what the PreToolUse hook blocks, when it lifts, and why it fails open.
+- [Claude's side](https://yasyf.github.io/cc-review/docs/guide/how-a-review-works.html#claudes-side) explains the three kinds of reply Claude posts under your comments.
+- [Resume and versions](https://yasyf.github.io/cc-review/docs/guide/how-a-review-works.html#resume-and-versions) traces how reviewed state carries across rounds.
+- [CLI reference](https://yasyf.github.io/cc-review/docs/guide/cli-reference.html) lists every `cc-review` subcommand and flag.
 
 Read the [docs](https://yasyf.github.io/cc-review) for the full guide. Licensed under [PolyForm Noncommercial 1.0.0](LICENSE).
