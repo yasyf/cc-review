@@ -11,7 +11,7 @@ A review is a conversation about a diff that hasn't been committed yet. You ask 
 
 When Claude runs `cc-review start`, the daemon captures the state of your working tree as a patch. In a git repo, that means everything uncommitted, including tracked, staged, and untracked files but excluding ignored ones, diffed against `HEAD`. A repo with no commits is diffed against the empty tree. In a jj repo, including a colocated one, it diffs the working-copy change (`@`) against its parent.
 
-The patch is stored as a numbered version inside the review, in SQLite under `~/.cc-review`. The web UI renders that frozen patch, not the live filesystem, so the diff you're reading stays stable even if files change underneath it. Each later round of review captures a new version of the same review, and the history of every version is retained.
+The patch is stored as a numbered version inside the review, in SQLite under `~/.cc-review/v1`. The web UI renders that frozen patch, not the live filesystem, so the diff you're reading stays stable even if files change underneath it. Each later round of review captures a new version of the same review, and the history of every version is retained.
 
 If there are no uncommitted changes, the diff is empty and there is nothing to review.
 

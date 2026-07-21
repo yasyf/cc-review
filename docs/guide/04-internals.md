@@ -11,19 +11,19 @@ cc-review is one Go binary. Every user-facing command in the [CLI reference](cli
 
 There is no install step for the daemon and no service manager. Every user-facing CLI command calls `daemon.EnsureCurrent` before doing work. If no daemon at the current binary version answers on the socket, the CLI spawns a detached `cc-review daemon` and waits for it to come up. The `daemon` subcommand is a hidden cobra command in `internal/cli/hidden.go`.
 
-Cold starts are serialized by an exclusive flock on `~/.cc-review/locks/start.lock`, so concurrent commands racing to boot the daemon produce exactly one process. The SessionStart hook uses `EnsureCurrentIfRunning` instead, which upgrades a running daemon without ever booting one, because a hook must not be the thing that starts daemons. The edit-guard hook skips the handshake entirely: it talks to whatever daemon answers the socket and fails open when none does.
+Cold starts are serialized by an exclusive flock on `~/.cc-review/v1/locks/start.lock`, so concurrent commands racing to boot the daemon produce exactly one process. The SessionStart hook uses `EnsureCurrentIfRunning` instead, which upgrades a running daemon without ever booting one, because a hook must not be the thing that starts daemons. The edit-guard hook skips the handshake entirely: it talks to whatever daemon answers the socket and fails open when none does.
 
 Version skew resolves newest-wins on first contact. When a CLI finds a daemon built from a strictly older binary, the freshly spawned daemon's `listen()` evicts the holder: it asks the old daemon to shut down over the socket, escalates to SIGKILL if it wedges, and waits for the old process to exit before binding. A same-or-newer holder is never evicted — the spawned daemon exits with an error instead, and the spawning client accepts the running daemon. The tie refusal is what prevents two daemons from evicting each other in a loop, and the newer-holder refusal is what stops sessions pinned to older plugin builds from tearing down the shared daemon every turn. A dev build counts as newest: a dev daemon is never evicted, and a dev binary always takes over a release daemon.
 
-The HTTP plane binds a 127.0.0.1 port and publishes it to `~/.cc-review/http.json` so the CLI and stream consumers can find it. The file is left in place on shutdown, and a booting daemon tries that previous port first before falling back to an ephemeral one, so printed review URLs survive a daemon swap. With `cc-review daemon --dev` the port is pinned to 8787, which is where the Vite dev proxy expects to find the API during frontend work.
+The HTTP plane binds a 127.0.0.1 port and publishes it to `~/.cc-review/v1/http.json` so the CLI and stream consumers can find it. The file is left in place on shutdown, and a booting daemon tries that previous port first before falling back to an ephemeral one, so printed review URLs survive a daemon swap. With `cc-review daemon --dev` the port is pinned to 8787, which is where the Vite dev proxy expects to find the API during frontend work.
 
-Daemons spawned by the CLI append their stdout and stderr to `~/.cc-review/daemon.log` — boot lines, eviction sequences, and panics all land there across daemon generations. A manual `cc-review daemon` run keeps its output on the terminal.
+Daemons spawned by the CLI append their stdout and stderr to `~/.cc-review/v1/daemon.log` — boot lines, eviction sequences, and panics all land there across daemon generations. A manual `cc-review daemon` run keeps its output on the terminal.
 
 ## Two planes
 
 The daemon exposes two surfaces.
 
-The **control plane** is a unix socket at `~/.cc-review/daemon.sock` (mode 0600) speaking newline-delimited JSON, one request per connection. This is what CLI commands call. The ops dispatched in `internal/daemon/server.go` are `health`, `shutdown`, `start`, `resolve`, `reply`, `feedback`, `status`, `session-record`, `guard-edit`, `file-states`, `update-ai-request`, `submit-organization`, and `review-files`. Requests carry a protocol version; a mismatch returns an error saying the session is pinned to an older plugin version and needs a restart to pick up the current one.
+The **control plane** is a unix socket at `~/.cc-review/v1/daemon.sock` (mode 0600) speaking exact protocol v1. This is what CLI commands call. The ops dispatched in `internal/daemon` are `health`, `shutdown`, `start`, `resolve`, `reply`, `feedback`, `status`, `session-record`, `guard-edit`, `file-states`, `update-ai-request`, `submit-organization`, and `review-files`. A mismatched protocol is rejected before dispatch.
 
 The **HTTP plane** (`internal/httpapi`) binds 127.0.0.1 only, and that bind is the entire access-control story. It serves the embedded SPA at `/`, a JSON REST surface, and one SSE stream. These routes are registered in `internal/httpapi/server.go`.
 
@@ -56,22 +56,22 @@ Presence alone never proves delivery: Claude Code silently drops channel notific
 
 State lives in a single SQLite database via `modernc.org/sqlite` (pure Go, no cgo). `internal/store` opens it with `SetMaxOpenConns(1)`, WAL journaling, and a 5s busy timeout; every other package goes through the store, never the driver.
 
-The schema declares eight tables: `reviews`, `review_versions`, `comments`, `replies`, `file_states`, `ai_requests`, `organizations`, and `events`. Rows are never deleted; status flags carry state. There are no migrations either: on a schema change, wipe `~/.cc-review` and let the daemon recreate it. Large patches stay out of the database; a version row stores only the patch path and a files summary.
+The database carries an exact v1 schema marker and fingerprint. There are no migrations: a future schema epoch uses a fresh namespace, while the derived `~/.cc-review/v1` tree can be discarded and rebuilt. Large patches stay out of the database; a version row stores only the patch path and a files summary.
 
 ## State directory layout
 
-`internal/paths` owns the layout under `~/.cc-review`. The directory is always under the home directory; `CLAUDE_CONFIG_DIR` does not move it.
+`internal/paths` owns the layout under `~/.cc-review/v1`. The directory is always under the home directory; `CLAUDE_CONFIG_DIR` does not move it.
 
 ```
-~/.cc-review/
-├── review.db               # SQLite database
+~/.cc-review/v1/
+├── state.db                # SQLite database
 ├── daemon.sock             # control-plane unix socket
 ├── daemon.log              # spawned daemons append stdout/stderr here
 ├── http.json               # HTTP port handshake, kept across restarts for port reuse
 ├── channels-setup.json     # marker: the one-time channels offer was made
 ├── locks/
 │   └── start.lock          # flock serializing lazy daemon starts
-└── reviews/<review-id>/
+└── subjects/<review-id>/
     ├── snap_N.patch        # unified patch for version N
     ├── feedback_N.json     # frozen feedback for version N (written on Submit)
     ├── watch.cursor        # per-consumer last-delivered event seq

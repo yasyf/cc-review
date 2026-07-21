@@ -19,7 +19,7 @@ func TestVersionFileFlags(t *testing.T) {
 	}
 	v := Version{ID: 7, FilesJSON: string(raw)}
 
-	t.Run("Files decodes the base subset, ignoring the extra keys", func(t *testing.T) {
+	t.Run("Files projects the exact v1 classified records", func(t *testing.T) {
 		files, err := v.Files()
 		if err != nil {
 			t.Fatal(err)
@@ -51,27 +51,22 @@ func TestVersionFileFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("a key-less files_json yields zero flags", func(t *testing.T) {
+	t.Run("a pre-classification files_json is rejected", func(t *testing.T) {
 		plain, err := json.Marshal([]vcs.FileChange{{Path: "old.go", Status: "A", Fingerprint: "f0"}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		v := Version{ID: 8, FilesJSON: string(plain)}
-		flags, err := v.FileFlags()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(flags) != 1 || flags[0].Path != "old.go" || flags[0].Generated || flags[0].Vendored {
-			t.Errorf("FileFlags() = %+v, want a single old.go with zero flags", flags)
+		if _, err := v.FileFlags(); err == nil {
+			t.Fatal("FileFlags() accepted pre-classification JSON")
 		}
 	})
 
-	t.Run("omitempty keeps both-false bytes identical to the plain encoding", func(t *testing.T) {
+	t.Run("both false flags remain explicit", func(t *testing.T) {
 		fc := vcs.FileChange{Path: "main.go", Status: "A", Fingerprint: "f3"}
-		plain, _ := json.Marshal(fc)
 		wrapped, _ := json.Marshal(ClassifiedFile{FileChange: fc})
-		if string(plain) != string(wrapped) {
-			t.Errorf("encodings differ:\n plain   = %s\n wrapped = %s", plain, wrapped)
+		if string(wrapped) != `{"path":"main.go","status":"A","fingerprint":"f3","generated":false,"vendored":false}` {
+			t.Errorf("classified encoding = %s", wrapped)
 		}
 	})
 }

@@ -131,7 +131,7 @@ func (req Request) body() json.RawMessage {
 func testServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir()) // keep handleStart's ~/.cc-review review dirs out of the real home
-	cc, err := ccstore.Open(filepath.Join(t.TempDir(), "t.db"), store.ReviewMigrate)
+	cc, err := ccstore.Open(filepath.Join(t.TempDir(), "t.db"), store.ApplySchemaV1)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

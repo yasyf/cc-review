@@ -109,7 +109,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		OnPresenceChange:  rv.onPresenceChange,
 		PresenceEventType: store.EventChannelChanged,
 		BootReconcile:     rv.bootReconcile,
-		Migrate:           store.ReviewMigrate,
+		Migrate:           store.ApplySchemaV1,
 		FixedPort:         fixedPort,
 	})
 	if err != nil {

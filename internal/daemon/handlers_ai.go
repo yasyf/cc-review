@@ -47,7 +47,10 @@ func reviewWithLatest(hc ccd.HandlerCtx, st *store.Store) (subject.Subject, stor
 
 func (rv *review) handleFileStates(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	if len(b.Files) == 0 {
 		return errReply("file-states requires at least one file")
 	}
@@ -74,7 +77,10 @@ func (rv *review) handleFileStates(hc ccd.HandlerCtx) ccd.Reply {
 // paths (the filter-and-flip shortcut behind "mark all mechanical as viewed").
 func (rv *review) handleFileStatesByRisk(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	if len(b.Risk) == 0 {
 		return errReply("file-states-by-risk requires at least one risk level")
 	}
@@ -200,7 +206,10 @@ func isOpenAIStatus(status string) bool {
 
 func (rv *review) handleUpdateAIRequest(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	switch b.AIStatus {
 	case "working", "done", "failed", "awaiting_input":
 	default:
@@ -245,7 +254,10 @@ func (rv *review) handleUpdateAIRequest(hc ccd.HandlerCtx) ccd.Reply {
 
 func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	if b.Organization == nil {
 		return errReply("submit-organization requires chapters")
 	}
@@ -290,7 +302,10 @@ func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
 // reviewer's submit. AIRequestID ties highlights to the request for undo.
 func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	if len(b.Annotations) == 0 {
 		return errReply("annotate requires at least one annotation")
 	}
@@ -406,7 +421,10 @@ func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 	for _, s := range states {
 		byPath[s.Path] = s
 	}
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	filtering := b.Status != "" || b.Reviewed != nil || b.Hidden != nil
 	entries := make([]map[string]any, 0, len(files))
 	selected := make([]map[string]any, 0)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	ccevent "github.com/yasyf/cc-interact/event"
+	ccstore "github.com/yasyf/cc-interact/store"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -19,6 +21,55 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func TestSchemaV1ReopensAndRejectsUnversionedTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open v1: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close v1: %v", err)
+	}
+	if s, err = Open(path); err != nil {
+		t.Fatalf("reopen exact v1: %v", err)
+	}
+	_ = s.Close()
+
+	oldPath := filepath.Join(t.TempDir(), "old.db")
+	old, err := ccstore.Open(oldPath, func(ctx context.Context, db *sql.DB) error {
+		_, err := db.ExecContext(ctx, `CREATE TABLE review_meta(subject_id TEXT PRIMARY KEY)`)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("create unversioned database: %v", err)
+	}
+	_ = old.Close()
+	if _, err := Open(oldPath); !errors.Is(err, ErrForeignSchema) {
+		t.Fatalf("Open(unversioned) = %v, want ErrForeignSchema", err)
+	}
+}
+
+func TestSchemaV1RejectsMarkerFingerprintMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open v1: %v", err)
+	}
+	_ = s.Close()
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE cc_review_schema SET fingerprint='foreign' WHERE singleton=1`); err != nil {
+		t.Fatalf("corrupt marker: %v", err)
+	}
+	_ = db.Close()
+	if _, err := Open(path); !errors.Is(err, ErrForeignSchema) {
+		t.Fatalf("Open(foreign marker) = %v, want ErrForeignSchema", err)
+	}
 }
 
 func TestVersionNumbersAreMonotonic(t *testing.T) {

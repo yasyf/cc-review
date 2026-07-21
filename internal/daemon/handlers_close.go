@@ -53,7 +53,10 @@ func (rv *review) sweepStaleOpen(ctx context.Context, st *store.Store, ap ccd.Ap
 // arm stays window-scoped by construction.
 func (rv *review) handleClose(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	if b.Stale {
 		return rv.closeStale(hc, st)
 	}

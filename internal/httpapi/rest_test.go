@@ -32,7 +32,7 @@ func newTestServer(t *testing.T) (*store.Store, *ccstore.Store, *httptest.Server
 func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *ccstore.Store, *httptest.Server) {
 	t.Helper()
 	dir := t.TempDir()
-	cc, err := ccstore.Open(filepath.Join(dir, "t.db"), store.ReviewMigrate)
+	cc, err := ccstore.Open(filepath.Join(dir, "t.db"), store.ApplySchemaV1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func boolPtr(b bool) *bool { return &b }
 func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	review, _ := createReviewVersion(t, st,
-		`[{"path":"a.go","status":"M","fingerprint":"fp-a"},{"path":"b.go","status":"A","fingerprint":"fp-b"}]`)
+		`[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false},{"path":"b.go","status":"A","fingerprint":"fp-b","generated":false,"vendored":false}]`)
 
 	resp := postJSON(t, srv.URL+"/api/file-states", map[string]any{
 		"reviewId": review.ID,
@@ -217,7 +217,7 @@ func TestAnswerAIRequest(t *testing.T) {
 	t.Run("awaiting_input is answered and re-dispatched", func(t *testing.T) {
 		st, cc, srv := newTestServer(t)
 		ctx := context.Background()
-		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
+		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark the boring ones")
 		if err != nil {
 			t.Fatal(err)
@@ -265,7 +265,7 @@ func TestAnswerAIRequest(t *testing.T) {
 	t.Run("stale-version question is 409", func(t *testing.T) {
 		st, _, srv := newTestServer(t)
 		ctx := context.Background()
-		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
+		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "q")
 		if err != nil {
 			t.Fatal(err)
@@ -277,7 +277,7 @@ func TestAnswerAIRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 		// A newer version supersedes the question's version.
-		if _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","fingerprint":"fp-a2"}]`, ""); err != nil {
+		if _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","fingerprint":"fp-a2","generated":false,"vendored":false}]`, ""); err != nil {
 			t.Fatal(err)
 		}
 		resp := postJSON(t, srv.URL+"/api/ai-requests/"+strconv.FormatInt(ar.ID, 10)+"/answer",
@@ -293,7 +293,7 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			st, cc, srv := newTestServer(t)
 			ctx := context.Background()
-			review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
+			review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 			ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark a.go")
 			if err != nil {
 				t.Fatal(err)
@@ -342,7 +342,7 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
-	review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a"}]`)
+	review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 	ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark a.go")
 	if err != nil {
 		t.Fatal(err)
@@ -549,8 +549,8 @@ func getSessionBody(t *testing.T, srv *httptest.Server, ref string) []byte {
 func TestSessionFilesPassThroughGeneratedFlag(t *testing.T) {
 	st, _, srv := newTestServer(t)
 	review, _ := createReviewVersion(t, st,
-		`[{"path":"package-lock.json","status":"A","fingerprint":"fp-a","generated":true},`+
-			`{"path":"main.go","status":"A","fingerprint":"fp-b"}]`)
+		`[{"path":"package-lock.json","status":"A","fingerprint":"fp-a","generated":true,"vendored":false},`+
+			`{"path":"main.go","status":"A","fingerprint":"fp-b","generated":false,"vendored":false}]`)
 
 	var session struct {
 		Files json.RawMessage `json:"files"`

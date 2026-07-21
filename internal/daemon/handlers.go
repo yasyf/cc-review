@@ -25,7 +25,10 @@ import (
 
 func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	// The repo lock spans both the patch capture and attributeVersion's tree
 	// snapshot, so they describe the same working tree; turn-start/turn-end
 	// snapshot under the same lock.
@@ -292,7 +295,10 @@ func (rv *review) startReply(hc ccd.HandlerCtx, sub subject.Subject, version int
 
 func (rv *review) handleReply(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	for _, in := range b.Replies {
 		if in.AnswerTo != 0 {
 			if reply := rv.handleAnswer(hc, st, in); !reply.OK {

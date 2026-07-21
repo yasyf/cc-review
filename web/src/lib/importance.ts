@@ -29,7 +29,7 @@ export function buildImportanceIndex(org: Organization | null): ImportanceIndex 
   if (!org) return map;
   for (const chapter of org.chapters) {
     for (const file of chapter.files) {
-      if (!file.lines || file.lines.length === 0) continue;
+      if (file.lines.length === 0) continue;
       if (map.has(file.path)) continue;
       map.set(file.path, [...file.lines].sort((a, b) => a.start - b.start));
     }

@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/yasyf/cc-interact/vcs"
@@ -25,26 +27,56 @@ type Version struct {
 
 // Files decodes the version's files_json summary.
 func (v Version) Files() ([]vcs.FileChange, error) {
-	var files []vcs.FileChange
-	if err := json.Unmarshal([]byte(v.FilesJSON), &files); err != nil {
-		return nil, fmt.Errorf("version %d: decode files: %w", v.ID, err)
+	classified, err := v.FileFlags()
+	if err != nil {
+		return nil, err
+	}
+	files := make([]vcs.FileChange, len(classified))
+	for i, file := range classified {
+		files[i] = file.FileChange
 	}
 	return files, nil
 }
 
 // ClassifiedFile is a version file widened with advisory generated/vendored
 // flags. It embeds vcs.FileChange so the path/old_path/status/fingerprint tags
-// pass through unchanged; omitempty keeps the files_json bytes identical to the
-// plain FileChange encoding when both flags are false.
+// pass through unchanged.
 type ClassifiedFile struct {
 	vcs.FileChange
-	Generated bool `json:"generated,omitempty"`
-	Vendored  bool `json:"vendored,omitempty"`
+	Generated bool `json:"generated"`
+	Vendored  bool `json:"vendored"`
 }
 
-// FileFlags decodes files_json as the classified superset, reading the
-// generated/vendored flags alongside the base file fields. A key-less blob
-// (written before classification existed) yields zero-value flags.
+// UnmarshalJSON accepts only the exact v1 classified-file shape.
+func (f *ClassifiedFile) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Path        *string `json:"path"`
+		OldPath     string  `json:"old_path"`
+		Status      *string `json:"status"`
+		Fingerprint string  `json:"fingerprint"`
+		Generated   *bool   `json:"generated"`
+		Vendored    *bool   `json:"vendored"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return fmt.Errorf("decode classified file v1: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("decode classified file v1: trailing JSON")
+	}
+	if raw.Path == nil || raw.Status == nil || raw.Generated == nil || raw.Vendored == nil {
+		return fmt.Errorf("decode classified file v1: path, status, generated, and vendored are required")
+	}
+	*f = ClassifiedFile{
+		FileChange: vcs.FileChange{Path: *raw.Path, OldPath: raw.OldPath, Status: *raw.Status, Fingerprint: raw.Fingerprint},
+		Generated:  *raw.Generated,
+		Vendored:   *raw.Vendored,
+	}
+	return nil
+}
+
+// FileFlags decodes files_json as exact v1 classified files.
 func (v Version) FileFlags() ([]ClassifiedFile, error) {
 	var files []ClassifiedFile
 	if err := json.Unmarshal([]byte(v.FilesJSON), &files); err != nil {
@@ -173,6 +205,98 @@ type Chapter struct {
 type Organization struct {
 	Overview *string   `json:"overview"`
 	Chapters []Chapter `json:"chapters"`
+}
+
+type lineNoteV1 struct {
+	Start *int    `json:"start"`
+	End   *int    `json:"end"`
+	Level *string `json:"level"`
+	Note  *string `json:"note"`
+}
+
+type chapterFileV1 struct {
+	Path      *string       `json:"path"`
+	Risk      *string       `json:"risk"`
+	Rationale *string       `json:"rationale"`
+	Focus     *string       `json:"focus"`
+	Lines     *[]lineNoteV1 `json:"lines"`
+}
+
+type chapterV1 struct {
+	Title   *string          `json:"title"`
+	Summary *string          `json:"summary"`
+	Files   *[]chapterFileV1 `json:"files"`
+}
+
+type organizationV1 struct {
+	Overview json.RawMessage `json:"overview"`
+	Chapters *[]chapterV1    `json:"chapters"`
+}
+
+// MarshalJSON emits the exact v1 organization shape with concrete arrays.
+func (o Organization) MarshalJSON() ([]byte, error) {
+	chapters := make([]map[string]any, len(o.Chapters))
+	for i, chapter := range o.Chapters {
+		files := make([]map[string]any, len(chapter.Files))
+		for j, file := range chapter.Files {
+			lines := make([]LineNote, len(file.Lines))
+			copy(lines, file.Lines)
+			files[j] = map[string]any{
+				"path": file.Path, "risk": file.Risk, "rationale": file.Rationale,
+				"focus": file.Focus, "lines": lines,
+			}
+		}
+		chapters[i] = map[string]any{
+			"title": chapter.Title, "summary": chapter.Summary, "files": files,
+		}
+	}
+	return json.Marshal(map[string]any{"overview": o.Overview, "chapters": chapters})
+}
+
+// UnmarshalJSON accepts only the exact v1 organization shape.
+func (o *Organization) UnmarshalJSON(data []byte) error {
+	var raw organizationV1
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return fmt.Errorf("decode organization v1: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("decode organization v1: trailing JSON")
+	}
+	if raw.Overview == nil || raw.Chapters == nil {
+		return fmt.Errorf("decode organization v1: overview and chapters are required")
+	}
+	var overview *string
+	if err := json.Unmarshal(raw.Overview, &overview); err != nil {
+		return fmt.Errorf("decode organization v1 overview: %w", err)
+	}
+	chapters := make([]Chapter, len(*raw.Chapters))
+	for i, chapter := range *raw.Chapters {
+		if chapter.Title == nil || chapter.Summary == nil || chapter.Files == nil {
+			return fmt.Errorf("decode organization v1: chapter %d requires title, summary, and files", i)
+		}
+		files := make([]ChapterFile, len(*chapter.Files))
+		for j, file := range *chapter.Files {
+			if file.Path == nil || file.Risk == nil || file.Rationale == nil || file.Focus == nil || file.Lines == nil {
+				return fmt.Errorf("decode organization v1: chapter %d file %d requires path, risk, rationale, focus, and lines", i, j)
+			}
+			lines := make([]LineNote, len(*file.Lines))
+			for k, line := range *file.Lines {
+				if line.Start == nil || line.End == nil || line.Level == nil || line.Note == nil {
+					return fmt.Errorf("decode organization v1: chapter %d file %d line %d requires start, end, level, and note", i, j, k)
+				}
+				lines[k] = LineNote{Start: *line.Start, End: *line.End, Level: *line.Level, Note: *line.Note}
+			}
+			files[j] = ChapterFile{
+				Path: *file.Path, Risk: *file.Risk, Rationale: *file.Rationale,
+				Focus: *file.Focus, Lines: lines,
+			}
+		}
+		chapters[i] = Chapter{Title: *chapter.Title, Summary: *chapter.Summary, Files: files}
+	}
+	*o = Organization{Overview: overview, Chapters: chapters}
+	return nil
 }
 
 // Comment is an inline comment anchored to a line range of a version's diff.

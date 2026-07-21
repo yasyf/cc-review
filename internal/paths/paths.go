@@ -1,5 +1,5 @@
 // Package paths owns cc-review's domain artifact layout on top of cc-interact's
-// canonical state-directory layout (~/.cc-review). The substrate paths (socket,
+// canonical v1 state-directory layout (~/.cc-review/v1). The substrate paths (socket,
 // db, http handshake, locks, turns, per-consumer cursors) come from App(); this
 // package adds the per-review snapshot/feedback files under the same state dir.
 package paths
@@ -11,17 +11,16 @@ import (
 	ccpaths "github.com/yasyf/cc-interact/paths"
 )
 
-// app is the state-dir basename shared by every cc-review process.
-const app = ".cc-review"
+const app = ".cc-review/v1"
 
 // App is the cc-interact state-directory layout for cc-review: the socket, db,
 // http handshake, lock dir, turn-snapshot scratch, and per-consumer cursors.
 func App() ccpaths.Paths { return ccpaths.Paths{App: app} }
 
-// StateDir is cc-review's private state directory (~/.cc-review).
+// StateDir is cc-review's private v1 state directory (~/.cc-review/v1).
 func StateDir() string { return App().StateDir() }
 
-// EnsureStateDir creates ~/.cc-review (0700) if missing.
+// EnsureStateDir creates ~/.cc-review/v1 (0700) if missing.
 func EnsureStateDir() error { return App().EnsureStateDir() }
 
 // ReviewDir is the on-disk artifact directory for a single review, the same dir

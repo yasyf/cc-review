@@ -69,7 +69,7 @@ You pressed Submit, Claude applied the feedback, and now you owe round two. Run 
 /cc-review:start
 ```
 
-The review resumes as a new version against the fresh diff. Prior threads carry over, files you already marked reviewed stay marked, and only files whose diff changed come back for re-reading. Everything persists in local SQLite under `~/.cc-review`, and a review idle for 24 hours expires on its own, so an abandoned one never wedges Claude.
+The review resumes as a new version against the fresh diff. Prior threads carry over, files you already marked reviewed stay marked, and only files whose diff changed come back for re-reading. Everything persists in the derived v1 namespace under `~/.cc-review/v1`, and a review idle for 24 hours expires on its own, so an abandoned one never wedges Claude.
 
 ## More in the docs
 

@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -141,13 +143,28 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 				var in struct {
 					Overview      *string         `json:"overview"`
 					VersionNumber int             `json:"version_number"`
-					Chapters      []store.Chapter `json:"chapters"`
+					Chapters      json.RawMessage `json:"chapters"`
 					Partial       bool            `json:"partial"`
 				}
-				if err := json.Unmarshal(args, &in); err != nil {
+				decoder := json.NewDecoder(bytes.NewReader(args))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&in); err != nil {
 					return "bad tool arguments: " + err.Error(), true
 				}
-				org := store.Organization{Overview: in.Overview, Chapters: in.Chapters}
+				if err := decoder.Decode(&struct{}{}); err != io.EOF {
+					return "bad tool arguments: trailing JSON", true
+				}
+				raw, err := json.Marshal(struct {
+					Overview *string         `json:"overview"`
+					Chapters json.RawMessage `json:"chapters"`
+				}{Overview: in.Overview, Chapters: in.Chapters})
+				if err != nil {
+					return "bad tool arguments: " + err.Error(), true
+				}
+				var org store.Organization
+				if err := json.Unmarshal(raw, &org); err != nil {
+					return "bad tool arguments: " + err.Error(), true
+				}
 				if err := rc.SubmitOrganization(ctx, session, scope, org, in.VersionNumber, in.Partial); err != nil {
 					return err.Error(), true
 				}
@@ -373,7 +390,7 @@ func submitOrganizationToolSchema() map[string]any {
 									"focus":     map[string]any{"type": "string", "description": "what to focus on in this file and why it carries this risk"},
 									"lines": map[string]any{
 										"type":        "array",
-										"description": "importance ranges over NEW-side added lines (1-based); omit for files reviewed normally",
+										"description": "importance ranges over NEW-side added lines (1-based); use an empty array for files reviewed normally",
 										"items": map[string]any{
 											"type": "object",
 											"properties": map[string]any{
@@ -382,11 +399,11 @@ func submitOrganizationToolSchema() map[string]any {
 												"level": map[string]any{"type": "string", "enum": []string{"focus", "mechanical"}},
 												"note":  map[string]any{"type": "string", "description": "focus hint shown on hover; give it for focus ranges"},
 											},
-											"required": []string{"start", "end", "level"},
+											"required": []string{"start", "end", "level", "note"},
 										},
 									},
 								},
-								"required": []string{"path", "risk", "rationale", "focus"},
+								"required": []string{"path", "risk", "rationale", "focus", "lines"},
 							},
 						},
 					},

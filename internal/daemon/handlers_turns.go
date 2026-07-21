@@ -33,7 +33,10 @@ const sliceSchema = "cc-transcript.slice/1"
 
 func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
 	ts := vcs.NewTurnStore(hc.DB)
-	b := decodeBody(hc.Env.Body)
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
 	repoRoot := hc.Scope
 	hc.RepoLock.Lock()
 	defer hc.RepoLock.Unlock()

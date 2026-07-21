@@ -8,7 +8,7 @@ The channel loads with no dialog only once cc-review is on Claude's *approved* a
 
 1. **`managed-settings.json`** (the only file Claude reads `allowedChannelPlugins` from): sets `channelsEnabled: true` and adds `{ "marketplace": "cc-review", "plugin": "cc-review" }`. This file is machine-wide and root-owned, so the write goes through a macOS admin-password prompt (`osascript … with administrator privileges`). Other keys in the file are preserved.
 
-It then writes a marker at `~/.cc-review/channels-setup.json` so the offer is never made again.
+It then writes a marker at `~/.cc-review/v1/channels-setup.json` so the offer is never made again.
 
 ## After applying
 
@@ -20,4 +20,4 @@ Launch with `--channels plugin:cc-review@cc-review`, replacing `--dangerously-lo
 
 ## Undo
 
-Delete the cc-review entry (and, if you added nothing else, `channelsEnabled`) from `managed-settings.json`. Remove `~/.cc-review/channels-setup.json` to be offered again.
+Delete the cc-review entry (and, if you added nothing else, `channelsEnabled`) from `managed-settings.json`. Remove `~/.cc-review/v1/channels-setup.json` to be offered again.

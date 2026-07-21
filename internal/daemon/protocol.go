@@ -6,7 +6,10 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
@@ -133,12 +136,20 @@ type result struct {
 	Reviews      []ReviewInfo      `json:"reviews,omitempty"`       // list
 }
 
-func decodeBody(raw json.RawMessage) body {
+func decodeBody(raw json.RawMessage) (body, error) {
 	var b body
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &b)
+	if len(raw) == 0 {
+		return b, nil
 	}
-	return b
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&b); err != nil {
+		return body{}, fmt.Errorf("decode cc-review protocol v1 body: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return body{}, fmt.Errorf("decode cc-review protocol v1 body: trailing JSON")
+	}
+	return b, nil
 }
 
 func okReply(r result) ccd.Reply {

@@ -10,8 +10,10 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,17 +32,17 @@ type Store struct {
 	db *sql.DB
 }
 
-// reviewSchema is the review domain schema layered on cc-interact's core
+// schemaV1 is the review domain schema layered on cc-interact's core
 // subjects/events tables. review_meta pins each review's diff base and creation
 // branch (the per-version base_ref still lives on review_versions). Foreign keys
 // point at the core subjects table the core schema created first.
-const reviewSchema = `
-CREATE TABLE IF NOT EXISTS review_meta (
+const schemaV1 = `
+CREATE TABLE review_meta (
   subject_id TEXT PRIMARY KEY REFERENCES subjects(id),
   base_ref   TEXT NOT NULL DEFAULT '',
   branch     TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS review_versions (
+CREATE TABLE review_versions (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   review_id      TEXT NOT NULL REFERENCES subjects(id),
   version_number INTEGER NOT NULL,
@@ -52,7 +54,7 @@ CREATE TABLE IF NOT EXISTS review_versions (
   created_at     INTEGER NOT NULL,
   UNIQUE(review_id, version_number)
 );
-CREATE TABLE IF NOT EXISTS comments (
+CREATE TABLE comments (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   version_id   INTEGER NOT NULL REFERENCES review_versions(id),
   file_path    TEXT NOT NULL,
@@ -68,8 +70,8 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_comments_version ON comments(version_id);
-CREATE TABLE IF NOT EXISTS replies (
+CREATE INDEX idx_comments_version ON comments(version_id);
+CREATE TABLE replies (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   comment_id   INTEGER NOT NULL REFERENCES comments(id),
   origin       TEXT NOT NULL,
@@ -82,9 +84,9 @@ CREATE TABLE IF NOT EXISTS replies (
   created_at   INTEGER NOT NULL,
   dedup_key    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_replies_dedup ON replies(dedup_key) WHERE dedup_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS file_states (
+CREATE INDEX idx_replies_comment ON replies(comment_id);
+CREATE UNIQUE INDEX idx_replies_dedup ON replies(dedup_key) WHERE dedup_key IS NOT NULL;
+CREATE TABLE file_states (
   review_id            TEXT NOT NULL REFERENCES subjects(id),
   path                 TEXT NOT NULL,
   reviewed             INTEGER NOT NULL DEFAULT 0,
@@ -93,7 +95,7 @@ CREATE TABLE IF NOT EXISTS file_states (
   updated_at           INTEGER NOT NULL,
   PRIMARY KEY (review_id, path)
 );
-CREATE TABLE IF NOT EXISTS ai_requests (
+CREATE TABLE ai_requests (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   review_id      TEXT NOT NULL REFERENCES subjects(id),
   version_number INTEGER NOT NULL,
@@ -110,21 +112,21 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   answer_json    TEXT NOT NULL DEFAULT '',
   attempt        INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_ai_requests_review ON ai_requests(review_id);
-CREATE TABLE IF NOT EXISTS organizations (
+CREATE INDEX idx_ai_requests_review ON ai_requests(review_id);
+CREATE TABLE organizations (
   version_id    INTEGER PRIMARY KEY REFERENCES review_versions(id),
   chapters_json TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS turn_attributions (
+CREATE TABLE turn_attributions (
   version_id  INTEGER NOT NULL REFERENCES review_versions(id),
   file_path   TEXT NOT NULL,
   ranges_json TEXT NOT NULL DEFAULT '[]',
   created_at  INTEGER NOT NULL,
   PRIMARY KEY (version_id, file_path)
 );
-CREATE TABLE IF NOT EXISTS annotations (
+CREATE TABLE annotations (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   version_id    INTEGER NOT NULL REFERENCES review_versions(id),
   file_path     TEXT NOT NULL,
@@ -135,18 +137,69 @@ CREATE TABLE IF NOT EXISTS annotations (
   ai_request_id INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_annotations_version ON annotations(version_id);
+CREATE INDEX idx_annotations_version ON annotations(version_id);
 `
 
-// ReviewMigrate applies the turn-snapshot tables and the review domain schema on
-// top of cc-interact's core. It is the migrate callback handed to the daemon's
-// store.Open: idempotent CREATE TABLE IF NOT EXISTS, no migrations beyond it.
-func ReviewMigrate(ctx context.Context, db *sql.DB) error {
+const schemaMarkerV1 = `
+CREATE TABLE cc_review_schema (
+  singleton   INTEGER PRIMARY KEY CHECK(singleton = 1),
+  version     INTEGER NOT NULL CHECK(version = 1),
+  fingerprint TEXT NOT NULL
+);
+`
+
+var schemaFingerprintV1 = fmt.Sprintf("%x", sha256.Sum256([]byte(schemaV1)))
+
+// ErrForeignSchema means a database is not the exact cc-review v1 schema.
+var ErrForeignSchema = errors.New("cc-review database is not exact schema v1; discard the derived state namespace")
+
+// ApplySchemaV1 creates or verifies the exact review schema in the v1 namespace.
+func ApplySchemaV1(ctx context.Context, db *sql.DB) error {
 	if err := vcs.TurnsMigrate(ctx, db); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, reviewSchema); err != nil {
-		return fmt.Errorf("apply review schema: %w", err)
+	var markerExists int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cc_review_schema'`).Scan(&markerExists); err != nil {
+		return fmt.Errorf("inspect review schema: %w", err)
+	}
+	if markerExists == 1 {
+		var version int
+		var fingerprint string
+		if err := db.QueryRowContext(ctx,
+			`SELECT version, fingerprint FROM cc_review_schema WHERE singleton=1`).Scan(&version, &fingerprint); err != nil {
+			return fmt.Errorf("%w: read marker: %w", ErrForeignSchema, err)
+		}
+		if version != 1 || fingerprint != schemaFingerprintV1 {
+			return fmt.Errorf("%w: version=%d fingerprint=%q", ErrForeignSchema, version, fingerprint)
+		}
+		return nil
+	}
+
+	var oldTables int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+		'review_meta','review_versions','comments','replies','file_states','ai_requests','organizations','turn_attributions','annotations'
+	)`).Scan(&oldTables); err != nil {
+		return fmt.Errorf("inspect pre-v1 review tables: %w", err)
+	}
+	if oldTables != 0 {
+		return fmt.Errorf("%w: found %d unversioned review tables", ErrForeignSchema, oldTables)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin review schema v1: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, schemaMarkerV1+schemaV1); err != nil {
+		return fmt.Errorf("apply review schema v1: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO cc_review_schema(singleton, version, fingerprint) VALUES(1,1,?)`, schemaFingerprintV1); err != nil {
+		return fmt.Errorf("mark review schema v1: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit review schema v1: %w", err)
 	}
 	return nil
 }
@@ -155,7 +208,7 @@ func ReviewMigrate(ctx context.Context, db *sql.DB) error {
 // and returns a Store that owns its Close. The daemon does not use this — its
 // store is opened inside daemon.New — but the export command and the tests do.
 func Open(path string) (*Store, error) {
-	cc, err := ccstore.Open(path, ReviewMigrate)
+	cc, err := ccstore.Open(path, ApplySchemaV1)
 	if err != nil {
 		return nil, err
 	}

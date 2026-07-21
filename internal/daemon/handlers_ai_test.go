@@ -215,8 +215,8 @@ func TestHandleSubmitOrganization(t *testing.T) {
 	req, started := startedReview(ctx, t, s, repo)
 
 	chapters := []store.Chapter{{Title: "All", Summary: "everything", Files: []store.ChapterFile{
-		{Path: "a.go", Risk: "low", Rationale: "r"},
-		{Path: "b.go", Risk: "mechanical", Rationale: "r"},
+		{Path: "a.go", Risk: "low", Rationale: "r", Lines: []store.LineNote{}},
+		{Path: "b.go", Risk: "mechanical", Rationale: "r", Lines: []store.LineNote{}},
 	}}}
 
 	t.Run("missing version_number rejected", func(t *testing.T) {
@@ -243,7 +243,7 @@ func TestHandleSubmitOrganization(t *testing.T) {
 		r := req
 		r.Organization = &store.Organization{Chapters: []store.Chapter{{
 			Title: "Partial", Summary: "s",
-			Files: []store.ChapterFile{{Path: "a.go", Risk: "low", Rationale: "r"}},
+			Files: []store.ChapterFile{{Path: "a.go", Risk: "low", Rationale: "r", Lines: []store.LineNote{}}},
 		}}}
 		r.VersionNumber = started.Version
 		resp := s.handleSubmitOrganization(ctx, r)
@@ -855,7 +855,7 @@ func submitOrg(ctx context.Context, t *testing.T, s *Server, req Request, versio
 	t.Helper()
 	files := make([]store.ChapterFile, 0, len(paths))
 	for _, p := range paths {
-		files = append(files, store.ChapterFile{Path: p, Risk: "low", Rationale: "r"})
+		files = append(files, store.ChapterFile{Path: p, Risk: "low", Rationale: "r", Lines: []store.LineNote{}})
 	}
 	org := store.Organization{Chapters: []store.Chapter{{Title: "All", Summary: "s", Files: files}}}
 	r := req
@@ -1091,11 +1091,11 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 // the origin-joined entry degrades to removed.
 func TestOrganizationContextDirectMatchWinsOverOriginJoin(t *testing.T) {
 	basis := store.Version{VersionNumber: 1, FilesJSON: `[
-		{"path":"p.go","status":"A","fingerprint":"fpA"},
-		{"path":"x.go","status":"D","fingerprint":"fpD"}
+		{"path":"p.go","status":"A","fingerprint":"fpA","generated":false,"vendored":false},
+		{"path":"x.go","status":"D","fingerprint":"fpD","generated":false,"vendored":false}
 	]`}
 	current := store.Version{VersionNumber: 2, FilesJSON: `[
-		{"path":"p.go","old_path":"x.go","status":"R","fingerprint":"fpR"}
+		{"path":"p.go","old_path":"x.go","status":"R","fingerprint":"fpR","generated":false,"vendored":false}
 	]`}
 	org := store.Organization{Chapters: []store.Chapter{{
 		Title: "Both",

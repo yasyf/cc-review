@@ -14,4 +14,4 @@ Every command is a thin call to the local daemon, which lazy-starts on first use
 | `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" setup-channels [--check\|--apply\|--decline]` | Approve cc-review's channel. The skill reads the offer from `start`'s `setup:` line, not from `--check` (which prints the same `{offer,reason}` and remains for manual use); `--apply` writes the approved-channels config (admin prompt); `--decline` records a no. See `channels-setup.md`. |
 | `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session <id> --cwd <dir>` | Mark this window's channel proven after the first delivered `<channel>` tag, flipping later `start`s to `channel: active`. Hidden, like `setup-channels`. Run it once when a tag arrives while the Monitor is armed, then stop the Monitor. |
 
-The daemon keeps state under `~/.cc-review` (sqlite db, per-review patch + feedback files, the control socket, and the HTTP handshake). It is never relocated by an environment variable.
+The daemon keeps derived state under `~/.cc-review/v1` (sqlite db, per-review patch + feedback files, the control socket, and the HTTP handshake). It is never relocated by an environment variable.

@@ -11,7 +11,7 @@ import (
 func chapter(title string, paths ...string) Chapter {
 	files := make([]ChapterFile, 0, len(paths))
 	for _, p := range paths {
-		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r"})
+		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r", Lines: []LineNote{}})
 	}
 	return Chapter{Title: title, Summary: "s", Files: files}
 }
@@ -22,7 +22,7 @@ func chapterWithLines(title, path string, lines []LineNote, rest ...string) Chap
 	files := make([]ChapterFile, 0, 1+len(rest))
 	files = append(files, ChapterFile{Path: path, Risk: "low", Rationale: "r", Focus: "f", Lines: lines})
 	for _, p := range rest {
-		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r"})
+		files = append(files, ChapterFile{Path: p, Risk: "low", Rationale: "r", Lines: []LineNote{}})
 	}
 	return Chapter{Title: title, Summary: "s", Files: files}
 }
@@ -105,7 +105,7 @@ func TestLatestOrganization(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v1, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p1", `[{"path":"a.go","status":"M"}]`, "")
+	v1, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p1", `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`, "")
 
 	if _, _, ok, err := s.LatestOrganization(ctx, rid); err != nil || ok {
 		t.Fatalf("unorganized review: ok=%v err=%v, want absent", ok, err)
@@ -116,7 +116,7 @@ func TestLatestOrganization(t *testing.T) {
 		t.Fatalf("upsert v1: %v", err)
 	}
 	// An org-less newer version is skipped: v1's organization stays the latest.
-	if _, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M"},{"path":"b.go","status":"A"}]`, ""); err != nil {
+	if _, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","generated":false,"vendored":false},{"path":"b.go","status":"A","generated":false,"vendored":false}]`, ""); err != nil {
 		t.Fatalf("create v2: %v", err)
 	}
 	org, owner, ok, err := s.LatestOrganization(ctx, rid)
@@ -130,7 +130,7 @@ func TestLatestOrganization(t *testing.T) {
 		t.Fatalf("org = %+v, want %+v", org, v1Org)
 	}
 
-	v3, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p3", `[{"path":"a.go","status":"M"}]`, "")
+	v3, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p3", `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`, "")
 	v3Org := Organization{Chapters: []Chapter{chapter("Third", "a.go")}}
 	if err := s.UpsertOrganization(ctx, v3.ID, v3Org); err != nil {
 		t.Fatalf("upsert v3: %v", err)
@@ -159,7 +159,7 @@ func TestOrganizationUpsertRoundTrip(t *testing.T) {
 
 	overview := "Adds per-file review state."
 	org := Organization{Overview: &overview, Chapters: []Chapter{
-		{Title: "Store", Summary: "DDL first.", Files: []ChapterFile{{Path: "store.go", Risk: "high", Rationale: "new DDL"}}},
+		{Title: "Store", Summary: "DDL first.", Files: []ChapterFile{{Path: "store.go", Risk: "high", Rationale: "new DDL", Lines: []LineNote{}}}},
 	}}
 	if err := s.UpsertOrganization(ctx, v.ID, org); err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -183,20 +183,26 @@ func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	}
 }
 
-// A legacy blob written before focus/lines existed decodes with zero values, so
-// older organizations keep loading without a migration.
-func TestOrganizationDecodeLegacyBlob(t *testing.T) {
-	const legacy = `{"overview":"o","chapters":[{"title":"t","summary":"s","files":[{"path":"a.go","risk":"low","rationale":"r"}]}]}`
+func TestOrganizationDecodeRequiresExactV1(t *testing.T) {
+	for _, body := range []string{
+		`{"overview":"o","chapters":[{"title":"t","summary":"s","files":[{"path":"a.go","risk":"low","rationale":"r"}]}]}`,
+		`{"overview":"o","chapters":[{"title":"t","summary":"s","files":[{"path":"a.go","risk":"low","rationale":"r","focus":"f"}]}]}`,
+		`{"overview":"o","chapters":[],"legacy":true}`,
+		`{"chapters":[]}`,
+	} {
+		var org Organization
+		if err := json.Unmarshal([]byte(body), &org); err == nil {
+			t.Fatalf("json.Unmarshal(%s) succeeded", body)
+		}
+	}
+
+	const current = `{"overview":null,"chapters":[{"title":"t","summary":"s","files":[{"path":"a.go","risk":"low","rationale":"r","focus":"f","lines":[]}]}]}`
 	var org Organization
-	if err := json.Unmarshal([]byte(legacy), &org); err != nil {
-		t.Fatalf("decode: %v", err)
+	if err := json.Unmarshal([]byte(current), &org); err != nil {
+		t.Fatalf("decode exact v1: %v", err)
 	}
-	f := org.Chapters[0].Files[0]
-	if f.Focus != "" {
-		t.Fatalf("focus = %q, want empty", f.Focus)
-	}
-	if f.Lines != nil {
-		t.Fatalf("lines = %v, want nil", f.Lines)
+	if len(org.Chapters) != 1 || len(org.Chapters[0].Files) != 1 || org.Chapters[0].Files[0].Lines == nil {
+		t.Fatalf("decoded exact v1 = %+v", org)
 	}
 }
 
@@ -211,7 +217,7 @@ func TestOrganizationUpsertRoundTripWithLines(t *testing.T) {
 			{Start: 1, End: 4, Level: "focus", Note: "the guard"},
 			{Start: 10, End: 12, Level: "mechanical"},
 		}},
-		{Path: "plain.go", Risk: "low", Rationale: "r"},
+		{Path: "plain.go", Risk: "low", Rationale: "r", Lines: []LineNote{}},
 	}}}}
 	if err := s.UpsertOrganization(ctx, v.ID, org); err != nil {
 		t.Fatalf("upsert: %v", err)

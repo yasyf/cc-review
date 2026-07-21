@@ -120,7 +120,7 @@ export interface ChapterFile {
   risk: Risk;
   rationale: string;
   focus: string;
-  lines?: LineNote[];
+  lines: LineNote[];
 }
 
 export interface Chapter {
