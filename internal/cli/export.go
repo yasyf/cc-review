@@ -76,7 +76,7 @@ func newExportActivityCmd() *cobra.Command {
 			if err := paths.EnsureStateDir(); err != nil {
 				return err
 			}
-			st, err := store.Open(paths.App().DBPath())
+			st, err := store.Open(cmd.Context(), paths.DBPath())
 			if err != nil {
 				return err
 			}

@@ -20,7 +20,12 @@ func newListCmd() *cobra.Command {
 			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			reviews, err := daemon.NewReviewClient().List(ctx, "", mustCwd(cwd))
+			rc, err := daemon.NewReviewClient(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rc.Close() }()
+			reviews, err := rc.List(ctx, "", mustCwd(cwd))
 			if err != nil {
 				return err
 			}

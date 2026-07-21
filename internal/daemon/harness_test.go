@@ -129,9 +129,13 @@ func (req Request) body() json.RawMessage {
 }
 
 func testServer(t *testing.T) (*Server, string) {
+	return testServerContext(t.Context(), t)
+}
+
+func testServerContext(ctx context.Context, t *testing.T) (*Server, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir()) // keep handleStart's ~/.cc-review review dirs out of the real home
-	cc, err := ccstore.Open(filepath.Join(t.TempDir(), "t.db"), store.ApplySchemaV1)
+	cc, err := ccstore.Open(ctx, filepath.Join(t.TempDir(), "t.db"), store.Schema())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

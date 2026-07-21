@@ -54,7 +54,7 @@ Presence alone never proves delivery: Claude Code silently drops channel notific
 
 ## Storage
 
-State lives in a single SQLite database via `modernc.org/sqlite` (pure Go, no cgo). `internal/store` opens it with `SetMaxOpenConns(1)`, WAL journaling, and a 5s busy timeout; every other package goes through the store, never the driver.
+State lives in a single SQLite database via `modernc.org/sqlite` (pure Go, no cgo). `cc-interact/store` owns the single-writer connection, WAL journaling, busy timeout, core tables, and exact schema fingerprint; `internal/store` contributes cc-review's declarative schema and domain CRUD.
 
 The database carries an exact v1 schema marker and fingerprint. There are no migrations: a future schema epoch uses a fresh namespace, while the derived `~/.cc-review/v1` tree can be discarded and rebuilt. Large patches stay out of the database; a version row stores only the patch path and a files summary.
 
@@ -64,18 +64,20 @@ The database carries an exact v1 schema marker and fingerprint. There are no mig
 
 ```
 ~/.cc-review/v1/
-├── state.db                # SQLite database
 ├── daemon.sock             # control-plane unix socket
 ├── daemon.log              # spawned daemons append stdout/stderr here
 ├── http.json               # HTTP port handshake, kept across restarts for port reuse
 ├── channels-setup.json     # marker: the one-time channels offer was made
 ├── locks/
 │   └── start.lock          # flock serializing lazy daemon starts
+├── cc-interact-v1/
+│   ├── state.db            # exact core + review + turn schema
+│   └── subjects/<review-id>/
+│       ├── watch.cursor
+│       └── channel.cursor
 └── subjects/<review-id>/
     ├── snap_N.patch        # unified patch for version N
-    ├── feedback_N.json     # frozen feedback for version N (written on Submit)
-    ├── watch.cursor        # per-consumer last-delivered event seq
-    └── channel.cursor
+    └── feedback_N.json     # frozen feedback for version N (written on Submit)
 ```
 
 ## Working-tree snapshots

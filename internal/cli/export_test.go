@@ -24,7 +24,7 @@ func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) 
 	if err := paths.EnsureStateDir(); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(paths.App().DBPath())
+	st, err := store.Open(t.Context(), paths.DBPath())
 	if err != nil {
 		t.Fatal(err)
 	}

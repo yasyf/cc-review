@@ -32,7 +32,7 @@ func newTestServer(t *testing.T) (*store.Store, *ccstore.Store, *httptest.Server
 func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *ccstore.Store, *httptest.Server) {
 	t.Helper()
 	dir := t.TempDir()
-	cc, err := ccstore.Open(filepath.Join(dir, "t.db"), store.ApplySchemaV1)
+	cc, err := ccstore.Open(t.Context(), filepath.Join(dir, "t.db"), store.Schema())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+
+	dkversion "github.com/yasyf/daemonkit/version"
 )
 
 var releaseTriple = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)`)
@@ -68,6 +70,9 @@ func Tag() string {
 	}
 	return Version
 }
+
+// Build returns the exact lifecycle identity for the running binary.
+func Build() string { return dkversion.Running(Tag()) }
 
 // String renders a human-readable version line: the tag plus the commit when
 // one was stamped.

@@ -10,10 +10,8 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"time"
 
@@ -140,75 +138,17 @@ CREATE TABLE annotations (
 CREATE INDEX idx_annotations_version ON annotations(version_id);
 `
 
-const schemaMarkerV1 = `
-CREATE TABLE cc_review_schema (
-  singleton   INTEGER PRIMARY KEY CHECK(singleton = 1),
-  version     INTEGER NOT NULL CHECK(version = 1),
-  fingerprint TEXT NOT NULL
-);
-`
-
-var schemaFingerprintV1 = fmt.Sprintf("%x", sha256.Sum256([]byte(schemaV1)))
-
-// ErrForeignSchema means a database is not the exact cc-review v1 schema.
-var ErrForeignSchema = errors.New("cc-review database is not exact schema v1; discard the derived state namespace")
-
-// ApplySchemaV1 creates or verifies the exact review schema in the v1 namespace.
-func ApplySchemaV1(ctx context.Context, db *sql.DB) error {
-	if err := vcs.TurnsMigrate(ctx, db); err != nil {
-		return err
-	}
-	var markerExists int
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cc_review_schema'`).Scan(&markerExists); err != nil {
-		return fmt.Errorf("inspect review schema: %w", err)
-	}
-	if markerExists == 1 {
-		var version int
-		var fingerprint string
-		if err := db.QueryRowContext(ctx,
-			`SELECT version, fingerprint FROM cc_review_schema WHERE singleton=1`).Scan(&version, &fingerprint); err != nil {
-			return fmt.Errorf("%w: read marker: %w", ErrForeignSchema, err)
-		}
-		if version != 1 || fingerprint != schemaFingerprintV1 {
-			return fmt.Errorf("%w: version=%d fingerprint=%q", ErrForeignSchema, version, fingerprint)
-		}
-		return nil
-	}
-
-	var oldTables int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
-		'review_meta','review_versions','comments','replies','file_states','ai_requests','organizations','turn_attributions','annotations'
-	)`).Scan(&oldTables); err != nil {
-		return fmt.Errorf("inspect pre-v1 review tables: %w", err)
-	}
-	if oldTables != 0 {
-		return fmt.Errorf("%w: found %d unversioned review tables", ErrForeignSchema, oldTables)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin review schema v1: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, schemaMarkerV1+schemaV1); err != nil {
-		return fmt.Errorf("apply review schema v1: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO cc_review_schema(singleton, version, fingerprint) VALUES(1,1,?)`, schemaFingerprintV1); err != nil {
-		return fmt.Errorf("mark review schema v1: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit review schema v1: %w", err)
-	}
-	return nil
+// Schema returns cc-review's exact declarative v1 schema, including the
+// shared turn ledger. cc-interact fingerprints the ordered composition.
+func Schema() ccstore.Schema {
+	return ccstore.Compose(vcs.TurnsSchema(), ccstore.Schema{DDL: schemaV1})
 }
 
 // Open opens the cc-interact core database at path with the review schema applied
 // and returns a Store that owns its Close. The daemon does not use this — its
 // store is opened inside daemon.New — but the export command and the tests do.
-func Open(path string) (*Store, error) {
-	cc, err := ccstore.Open(path, ApplySchemaV1)
+func Open(ctx context.Context, path string) (*Store, error) {
+	cc, err := ccstore.Open(ctx, path, Schema())
 	if err != nil {
 		return nil, err
 	}

@@ -32,7 +32,12 @@ func newCloseCmd() *cobra.Command {
 			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			closed, err := daemon.NewReviewClient().Close(ctx, session, mustCwd(cwd), ref, stale)
+			rc, err := daemon.NewReviewClient(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rc.Close() }()
+			closed, err := rc.CloseReview(ctx, session, mustCwd(cwd), ref, stale)
 			if err != nil {
 				return err
 			}

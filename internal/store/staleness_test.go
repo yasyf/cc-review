@@ -145,7 +145,7 @@ func TestSubjectStatusCAS(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := openTestStore(t)
+			s := openTestStoreContext(ctx, t)
 			id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "b")
 			setReviewStatus(ctx, t, s, id, tc.from)
 

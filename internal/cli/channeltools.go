@@ -37,14 +37,21 @@ Real review input arrives as other event types such as comment.created, comment.
 // channelTools advertises cc-review's review tools to the agent's MCP channel.
 // The handlers round-trip to the daemon via ReviewClient because the channel
 // server is a separate stdio process and cannot touch the store directly.
-func channelTools(_ context.Context, session, scope string) ([]channel.Tool, string, string, error) {
-	rc := daemon.NewReviewClient()
+func channelTools(ctx context.Context, session, scope string) ([]channel.Tool, string, string, error) {
+	rc, err := daemon.NewReviewClient(ctx)
+	if err != nil {
+		return nil, "", "", err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = rc.Close()
+	}()
 	tools := []channel.Tool{
 		{
 			Name:        "reply",
 			Description: "Post a question, structured ask, or clarification under a cc-review comment, or answer one.",
 			InputSchema: replyToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in daemon.ReplyInput
 				if err := json.Unmarshal(args, &in); err != nil {
 					return "bad tool arguments: " + err.Error(), true
@@ -59,7 +66,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			Name:        "set_file_states",
 			Description: "Batch-set per-file review state (reviewed/hidden) on the open cc-review. ai_request_id ties the batch to an AI request as one undoable unit.",
 			InputSchema: setFileStatesToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in struct {
 					Files       []daemon.FileStateInput `json:"files"`
 					AIRequestID string                  `json:"ai_request_id"`
@@ -81,7 +88,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			Name:        "set_file_states_by_risk",
 			Description: "Flip every file the current organization already tags with one of the given risk levels (high|medium|low|mechanical) to reviewed/hidden in one batch — the server resolves the path set from the organization, so you never enumerate or re-read files. This is the shortcut for requests like \"mark all mechanical changes as viewed\". ai_request_id ties the batch to an AI request as one undoable unit. Returns the affected paths.",
 			InputSchema: setFileStatesByRiskToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in struct {
 					Risk        []string `json:"risk"`
 					Reviewed    *bool    `json:"reviewed"`
@@ -110,7 +117,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			Name:        "update_ai_request",
 			Description: "Move an AI request through its lifecycle: working when you start; done or failed when you finish (with a summary and any unmatched prompt parts); or awaiting_input when the request's INTENT is ambiguous (not merely large) and you must ask the reviewer one clarifying question. awaiting_input ends your run; the reviewer answers and the request is redispatched to you with status answered, carrying the original prompt plus your question and their answer.",
 			InputSchema: updateAIRequestToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in struct {
 					AIRequestID string            `json:"ai_request_id"`
 					Status      string            `json:"status"`
@@ -139,7 +146,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			Name:        "submit_organization",
 			Description: "Submit the review's chapter organization: every changed file in exactly one chapter, each rated by the risk of skimming it. Chapter order is narrative; file order within a chapter is rank, scariest first. On resubmit keep every entry the new information doesn't touch byte-identical — the UI animates only what moved. Pass partial:true to stream an in-progress organization as you classify (files not yet placed are allowed); the reviewer watches chapters fill in. Your final submit must omit partial so full coverage is enforced. A stale version_number is rejected with the current one.",
 			InputSchema: submitOrganizationToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in struct {
 					Overview      *string         `json:"overview"`
 					VersionNumber int             `json:"version_number"`
@@ -175,7 +182,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			Name:        "annotate",
 			Description: "Mark specific line ranges of the diff for the reviewer, on an AI-bar request (e.g. \"highlight the lines actually changed, not just copied from the old file\"). Each item is kind \"highlight\" — a non-blocking colored line-range mark with an optional label — or kind \"comment\" — a Claude-authored comment thread the reviewer can reply to. Annotations never gate the reviewer's submit. Call it per file as you work to stream marks in; ai_request_id ties highlights to the request for undo.",
 			InputSchema: annotateToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in struct {
 					Items       []daemon.AnnotateInput `json:"items"`
 					AIRequestID string                 `json:"ai_request_id"`
@@ -197,7 +204,7 @@ func channelTools(_ context.Context, session, scope string) ([]channel.Tool, str
 			Name:        "get_review_files",
 			Description: "List the open cc-review's current version_number and patch_path (the on-disk unified diff), plus review_files_path (the full file list as JSONL — one {path,status,reviewed,hidden} per line) and organization_path (the latest organization as JSON: overview + chapters with basis_version, per-file delta changed/moved/removed and new_paths). Read those paths from disk. A small file set — or a status/reviewed/hidden-filtered subset — is also inlined as files with match_count, so the result never overflows on a large review.",
 			InputSchema: getReviewFilesToolSchema(),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, bool) {
+			Handler: func(ctx context.Context, args json.RawMessage, _ func(string)) (string, bool) {
 				var in struct {
 					Status   string `json:"status"`
 					Reviewed *bool  `json:"reviewed"`

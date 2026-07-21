@@ -36,7 +36,12 @@ func newStartCmd() *cobra.Command {
 			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			started, err := daemon.NewReviewClient().Start(ctx, session, mustCwd(cwd), fresh, base)
+			rc, err := daemon.NewReviewClient(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rc.Close() }()
+			started, err := rc.Start(ctx, session, mustCwd(cwd), fresh, base)
 			if err != nil {
 				return err
 			}

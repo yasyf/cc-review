@@ -22,7 +22,12 @@ func newFeedbackCmd() *cobra.Command {
 			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			fb, err := daemon.NewReviewClient().Feedback(ctx, session, mustCwd(cwd))
+			rc, err := daemon.NewReviewClient(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rc.Close() }()
+			fb, err := rc.Feedback(ctx, session, mustCwd(cwd))
 			if err != nil {
 				return err
 			}

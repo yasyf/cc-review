@@ -14,6 +14,7 @@ import (
 	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
 
+	approle "github.com/yasyf/cc-review/internal/daemonrole"
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/httpapi"
@@ -100,7 +101,9 @@ func Serve(ctx context.Context, fixedPort int) error {
 	s, err := ccd.New(ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
-		Version:           version.String(),
+		Version:           version.Build(),
+		LifecycleBuild:    version.Build(),
+		DaemonRole:        approle.Classifier(),
 		ActiveStatuses:    []string{statusOpen},
 		ScopeResolve:      repoScope,
 		Gate:              rv.gate,
@@ -109,7 +112,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		OnPresenceChange:  rv.onPresenceChange,
 		PresenceEventType: store.EventChannelChanged,
 		BootReconcile:     rv.bootReconcile,
-		Migrate:           store.ApplySchemaV1,
+		StoreSchema:       store.Schema(),
 		FixedPort:         fixedPort,
 	})
 	if err != nil {

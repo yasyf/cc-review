@@ -46,7 +46,12 @@ func newTurnStartCmd() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runTurnHook(cmd, func(ctx context.Context, session, cwd, prompt string) error {
-				return daemon.NewReviewClient().TurnStart(ctx, session, cwd, prompt)
+				rc, err := daemon.NewReviewClient(ctx)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = rc.Close() }()
+				return rc.TurnStart(ctx, session, cwd, prompt)
 			})
 			return nil
 		},
@@ -62,7 +67,12 @@ func newTurnEndCmd() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runTurnHook(cmd, func(ctx context.Context, session, cwd, _ string) error {
-				return daemon.NewReviewClient().TurnEnd(ctx, session, cwd)
+				rc, err := daemon.NewReviewClient(ctx)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = rc.Close() }()
+				return rc.TurnEnd(ctx, session, cwd)
 			})
 			return nil
 		},
@@ -79,7 +89,7 @@ func runTurnHook(cmd *cobra.Command, send func(ctx context.Context, session, cwd
 	}
 	// Deliberate exception to hooks using EnsureCurrentIfRunning: always-on turn
 	// recording must boot the daemon.
-	if err := launcher().EnsureCurrent(15 * time.Second); err != nil {
+	if err := launcher().EnsureCurrent(cmd.Context(), 15*time.Second); err != nil {
 		return
 	}
 	_ = send(cmd.Context(), in.SessionID, in.Cwd, in.Prompt)

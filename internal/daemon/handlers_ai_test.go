@@ -584,7 +584,7 @@ func TestStartUnchangedResumeRescuesOrganize(t *testing.T) {
 		{name: "open user request untouched", sysStatus: "failed", userOpen: true, want: "fresh"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, repo := testServer(t)
+			s, repo := testServerContext(ctx, t)
 			req, started := startedReview(ctx, t, s, repo)
 			var sys struct {
 				ID string `json:"id"`

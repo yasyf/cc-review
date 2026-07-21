@@ -10,6 +10,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/version"
 )
 
 // ReviewClient is the typed control client over cc-interact's generic envelope
@@ -20,9 +21,18 @@ type ReviewClient struct {
 }
 
 // NewReviewClient dials the review daemon's control socket.
-func NewReviewClient() *ReviewClient {
-	return &ReviewClient{c: ccd.NewClient(paths.App().SocketPath())}
+func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
+	c, err := ccd.NewClient(ctx, ccd.ClientConfig{
+		Socket: paths.App().SocketPath(), Build: version.Build(), LifecycleBuild: version.Build(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ReviewClient{c: c}, nil
 }
+
+// Close settles and closes the persistent control session.
+func (rc *ReviewClient) Close() error { return rc.c.Close() }
 
 func (rc *ReviewClient) do(ctx context.Context, op ccd.Op, session, cwd string, b body) (ccd.Reply, result, error) {
 	raw, err := json.Marshal(b)
@@ -166,10 +176,10 @@ func (rc *ReviewClient) TurnEnd(ctx context.Context, session, cwd string) error 
 	return err
 }
 
-// Close terminally closes a review — this window's (empty ref) or any review
+// CloseReview terminally closes a review — this window's (empty ref) or any review
 // by slug/id — or, with stale, expires every open review idle past the TTL.
 // It returns the rows it closed or expired.
-func (rc *ReviewClient) Close(ctx context.Context, session, cwd, ref string, stale bool) ([]ReviewInfo, error) {
+func (rc *ReviewClient) CloseReview(ctx context.Context, session, cwd, ref string, stale bool) ([]ReviewInfo, error) {
 	_, res, err := rc.do(ctx, OpClose, session, cwd, body{Ref: ref, Stale: stale})
 	if err != nil {
 		return nil, err

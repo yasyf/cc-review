@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -14,8 +15,12 @@ import (
 )
 
 func openTestStore(t *testing.T) *Store {
+	return openTestStoreContext(t.Context(), t)
+}
+
+func openTestStoreContext(ctx context.Context, t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -23,37 +28,34 @@ func openTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestSchemaV1ReopensAndRejectsUnversionedTables(t *testing.T) {
+func TestSchemaV1ReopensAndRejectsForeignFingerprint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v1.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatalf("open v1: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("close v1: %v", err)
 	}
-	if s, err = Open(path); err != nil {
+	if s, err = Open(t.Context(), path); err != nil {
 		t.Fatalf("reopen exact v1: %v", err)
 	}
 	_ = s.Close()
 
-	oldPath := filepath.Join(t.TempDir(), "old.db")
-	old, err := ccstore.Open(oldPath, func(ctx context.Context, db *sql.DB) error {
-		_, err := db.ExecContext(ctx, `CREATE TABLE review_meta(subject_id TEXT PRIMARY KEY)`)
-		return err
-	})
+	foreignPath := filepath.Join(t.TempDir(), "foreign.db")
+	foreign, err := ccstore.Open(t.Context(), foreignPath, ccstore.Schema{DDL: `CREATE TABLE foreign_state(id TEXT PRIMARY KEY);`})
 	if err != nil {
-		t.Fatalf("create unversioned database: %v", err)
+		t.Fatalf("create foreign database: %v", err)
 	}
-	_ = old.Close()
-	if _, err := Open(oldPath); !errors.Is(err, ErrForeignSchema) {
-		t.Fatalf("Open(unversioned) = %v, want ErrForeignSchema", err)
+	_ = foreign.Close()
+	if _, err := Open(t.Context(), foreignPath); err == nil || !strings.Contains(err.Error(), "schema fingerprint") {
+		t.Fatalf("Open(foreign) = %v, want fingerprint rejection", err)
 	}
 }
 
-func TestSchemaV1RejectsMarkerFingerprintMismatch(t *testing.T) {
+func TestSchemaV1RejectsFingerprintMismatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v1.db")
-	s, err := Open(path)
+	s, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatalf("open v1: %v", err)
 	}
@@ -63,12 +65,12 @@ func TestSchemaV1RejectsMarkerFingerprintMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open raw database: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE cc_review_schema SET fingerprint='foreign' WHERE singleton=1`); err != nil {
+	if _, err := db.Exec(`UPDATE cc_interact_schema_v1 SET fingerprint='foreign' WHERE id=1`); err != nil {
 		t.Fatalf("corrupt marker: %v", err)
 	}
 	_ = db.Close()
-	if _, err := Open(path); !errors.Is(err, ErrForeignSchema) {
-		t.Fatalf("Open(foreign marker) = %v, want ErrForeignSchema", err)
+	if _, err := Open(t.Context(), path); err == nil || !strings.Contains(err.Error(), "schema fingerprint") {
+		t.Fatalf("Open(foreign marker) = %v, want fingerprint rejection", err)
 	}
 }
 

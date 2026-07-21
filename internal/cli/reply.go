@@ -89,7 +89,12 @@ func newReplyCmd() *cobra.Command {
 			if err := ensureCurrent(ctx); err != nil {
 				return err
 			}
-			return daemon.NewReviewClient().Reply(ctx, session, mustCwd(cwd), []daemon.ReplyInput{in})
+			rc, err := daemon.NewReviewClient(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rc.Close() }()
+			return rc.Reply(ctx, session, mustCwd(cwd), []daemon.ReplyInput{in})
 		},
 	}
 	cmd.Flags().Int64Var(&comment, "comment", 0, "comment id to reply under")

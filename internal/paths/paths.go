@@ -1,20 +1,19 @@
-// Package paths owns cc-review's domain artifact layout on top of cc-interact's
-// canonical v1 state-directory layout (~/.cc-review/v1). The substrate paths (socket,
-// db, http handshake, locks, turns, per-consumer cursors) come from App(); this
-// package adds the per-review snapshot/feedback files under the same state dir.
+// Package paths owns cc-review's exact derived-state layout under ~/.cc-review/v1.
+// Daemonkit supplies process paths, cc-interact owns its nested database and
+// cursor namespace, and this package adds product review artifacts.
 package paths
 
 import (
 	"fmt"
 	"path/filepath"
 
-	ccpaths "github.com/yasyf/cc-interact/paths"
+	ccstore "github.com/yasyf/cc-interact/store"
+	ccpaths "github.com/yasyf/daemonkit/paths"
 )
 
 const app = ".cc-review/v1"
 
-// App is the cc-interact state-directory layout for cc-review: the socket, db,
-// http handshake, lock dir, turn-snapshot scratch, and per-consumer cursors.
+// App is cc-review's daemonkit state-directory layout.
 func App() ccpaths.Paths { return ccpaths.Paths{App: app} }
 
 // StateDir is cc-review's private v1 state directory (~/.cc-review/v1).
@@ -23,8 +22,10 @@ func StateDir() string { return App().StateDir() }
 // EnsureStateDir creates ~/.cc-review/v1 (0700) if missing.
 func EnsureStateDir() error { return App().EnsureStateDir() }
 
-// ReviewDir is the on-disk artifact directory for a single review, the same dir
-// cc-interact keys per-subject artifacts (cursors) under.
+// DBPath is the exact cc-interact v1 database inside cc-review's derived state namespace.
+func DBPath() string { return ccstore.Path(App()) }
+
+// ReviewDir is the product-owned on-disk artifact directory for a single review.
 func ReviewDir(reviewID string) string { return App().SubjectDir(reviewID) }
 
 // SnapshotPath is the patch file for version v of a review.
