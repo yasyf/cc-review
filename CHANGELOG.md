@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vcs` snapshot diffs pass `--no-ext-diff` (via the cc-interact bump), so a
   configured external diff driver no longer corrupts snapshots.
 
+## [0.24.0] - 2026-07-23
+
+### Changed
+- Repin cc-interact to v0.19.0. The composed v1 store now rejects any drift in
+  the normalized live `sqlite_schema` object set or definitions before the
+  daemon starts; there is no migration or repair path.
+
 ## [0.18.0]
 
 ### Changed
@@ -419,7 +426,8 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.6.0...main
+[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.24.0...main
+[0.24.0]: https://github.com/yasyf/cc-review/compare/v0.23.0...v0.24.0
 [0.6.0]: https://github.com/yasyf/cc-review/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yasyf/cc-review/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yasyf/cc-review/compare/v0.2.0...v0.4.0
