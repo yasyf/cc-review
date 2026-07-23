@@ -1,1 +1,1 @@
-{"v":1,"lamport":5,"session":"2042f5b1-4ef5-4c65-b776-19ea74dc1a31","ops":[{"kind":"set_criterion_status","id":"4df955d4fa94ef60fa5982788b7390f6","status":"met","note":"cc-context main render commit 6411d3b: plugin/scripts/install-binary.sh is the shared v2 body (detach + lock + relink) and plugin/scripts/install-binary.extras.sh carries the migration sweep + ensure_rg."}]}
+{"v":1,"lamport":6,"session":"2042f5b1-4ef5-4c65-b776-19ea74dc1a31","ops":[{"kind":"set_status","status":"done"},{"kind":"link_commit","sha":"81e89e26be8c6d9991c1c345a6289cfd7ede3a65"}]}
