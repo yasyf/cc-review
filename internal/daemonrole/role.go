@@ -39,10 +39,28 @@ func provision(rolePath string) error {
 	if err != nil {
 		return err
 	}
+	return provisionRole(rolePath, executable, version.Build())
+}
+
+func provisionRole(rolePath, executable, build string) error {
 	if target, targetErr := filepath.EvalSymlinks(rolePath); targetErr == nil {
 		currentVersion, versionErr := executableVersion(rolePath)
-		if target == executable || (versionErr == nil && !dkversion.Newer(version.Build(), currentVersion)) {
+		if target == executable {
 			return nil
+		}
+		if versionErr == nil {
+			if dkversion.Newer(currentVersion, build) {
+				return nil
+			}
+			if !dkversion.Newer(build, currentVersion) {
+				info, err := os.Lstat(rolePath)
+				if err != nil {
+					return err
+				}
+				if info.Mode()&os.ModeSymlink != 0 {
+					return nil
+				}
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(rolePath), 0o700); err != nil {
