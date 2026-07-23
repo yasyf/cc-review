@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Pin daemonkit v0.9.0 for the exact fleet-wide runtime hard cut.
+- Persisted feedback, stores, and related JSON records now require their exact
+  v1 identity, schema fingerprint, and closed field set; legacy or extended
+  representations fail closed and are migrated manually at the hard cut.
 - `plugin/scripts/install-binary.sh` is rendered from the canonical
   repo-bootstrap template (synced with plugin-template's `render.sh
   --sync-scripts`, provenance-stamped): a brew-installed binary wins, downloads
