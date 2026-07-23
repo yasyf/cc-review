@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@c7533d4083add6e2ffeceb46c9125f94f4cb9994
+    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@3bfe1af3bdc10ec783e79050e7c647152a537801
     secrets: inherit
     with:
       setup-bun: true
