@@ -140,7 +140,7 @@ func testServerContext(ctx context.Context, t *testing.T) (*Server, string) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = cc.Close() })
-	ledger, err := decisions.Open(filepath.Join(t.TempDir(), "decisions.db"))
+	ledger, err := decisions.Open(ctx, filepath.Join(t.TempDir(), "decisions.db"))
 	if err != nil {
 		t.Fatalf("open decisions ledger: %v", err)
 	}

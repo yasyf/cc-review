@@ -91,7 +91,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	if err := paths.EnsureStateDir(); err != nil {
 		return err
 	}
-	ledger, err := decisions.Open(decisionsPath())
+	ledger, err := decisions.Open(ctx, decisionsPath())
 	if err != nil {
 		return err
 	}

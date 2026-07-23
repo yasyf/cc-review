@@ -64,7 +64,7 @@ func DefaultPath() string {
 }
 
 // Open opens the exact v1 ledger, creating it only when it has no user objects.
-func Open(path string) (*Log, error) {
+func Open(ctx context.Context, path string) (*Log, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create ledger dir: %w", err)
 	}
@@ -73,7 +73,7 @@ func Open(path string) (*Log, error) {
 		return nil, fmt.Errorf("open decisions ledger: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	created, err := initializeOrVerify(context.Background(), db)
+	created, err := initializeOrVerify(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, err

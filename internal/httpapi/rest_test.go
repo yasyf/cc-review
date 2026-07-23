@@ -37,7 +37,7 @@ func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *ccsto
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cc.Close() })
-	ledger, err := decisions.Open(filepath.Join(dir, "decisions.db"))
+	ledger, err := decisions.Open(t.Context(), filepath.Join(dir, "decisions.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

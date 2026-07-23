@@ -11,7 +11,7 @@ import (
 
 func openTest(t *testing.T, path string) *Log {
 	t.Helper()
-	log, err := Open(path)
+	log, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatalf("Open(%q): %v", path, err)
 	}
@@ -68,7 +68,7 @@ func TestOpenCreatesAndReopensExactSchemaV1(t *testing.T) {
 	if err := log.Close(); err != nil {
 		t.Fatalf("close exact v1: %v", err)
 	}
-	reopened, err := Open(path)
+	reopened, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatalf("reopen exact v1: %v", err)
 	}
@@ -151,7 +151,7 @@ func mutateDatabase(t *testing.T, path, statement string) {
 
 func createExactDatabase(t *testing.T, path string) {
 	t.Helper()
-	log, err := Open(path)
+	log, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatalf("create exact database: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestOpenCreatesOnlyFromEmptyDatabase(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatalf("create empty database file: %v", err)
 	}
-	log, err := Open(path)
+	log, err := Open(t.Context(), path)
 	if err != nil {
 		t.Fatalf("Open(empty): %v", err)
 	}
@@ -232,7 +232,7 @@ func TestOpenRejectsNonExactShapesWithoutMutation(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "decisions.db")
 			tc.setup(t, path)
 			before := readSchemaSnapshot(t, path)
-			log, err := Open(path)
+			log, err := Open(t.Context(), path)
 			if log != nil {
 				_ = log.Close()
 			}
