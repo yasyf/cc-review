@@ -84,13 +84,6 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/yasyf/cc-review
     description: Local code-review daemon + Claude plugin — review what Claude writes in a PR-like web UI and stream feedback back.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr",
-                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-review"]
-          end
 
 release:
   prerelease: auto
