@@ -1,16 +1,138 @@
 package feedback
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-review/internal/store"
 )
+
+func TestFeedbackSchemaFingerprintPinned(t *testing.T) {
+	digest := sha256.Sum256([]byte(feedbackSchemaIdentity + "\x00v1\x00" + feedbackSchemaDescriptor))
+	want := feedbackSchemaIdentity + "." + hex.EncodeToString(digest[:])
+	if feedbackSchemaFingerprint != want {
+		t.Fatalf("feedbackSchemaFingerprint = %q, want %q", feedbackSchemaFingerprint, want)
+	}
+}
+
+func TestFreezeLoadExactV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "feedback.json")
+	want := Feedback{
+		ReviewID: "review-1", Version: 2, SessionID: "session-1", FrozenAt: 123,
+		Threads: []Thread{}, OpenQuestions: []OpenQuestion{},
+	}
+	if err := Freeze(path, want); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path) //nolint:gosec // test-owned temporary feedback path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact := `{"schema":"` + feedbackSchemaIdentity + `","schemaVersion":1,"schemaFingerprint":"` + feedbackSchemaFingerprint + `","payload":{"review_id":"review-1","version":2,"session_id":"session-1","frozen_at":123,"threads":[],"open_questions":[]}}`
+	if string(written) != exact {
+		t.Fatalf("feedback.json=%s, want %s", written, exact)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Load=%+v, want %+v", got, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("feedback mode=%o, want 600", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".persisted-json-") {
+			t.Fatalf("temporary file leaked: %s", entry.Name())
+		}
+	}
+
+	for _, tc := range []struct {
+		name, data string
+	}{
+		{"legacy", `{"review_id":"review-1"}`},
+		{"foreign", strings.Replace(exact, feedbackSchemaIdentity, "dev.yasyf.foreign", 1)},
+		{"wrong version", strings.Replace(exact, `"schemaVersion":1`, `"schemaVersion":2`, 1)},
+		{"wrong fingerprint", strings.Replace(exact, feedbackSchemaFingerprint, feedbackSchemaIdentity+".stale", 1)},
+		{"missing schema", strings.Replace(exact, `"schema":"`+feedbackSchemaIdentity+`",`, "", 1)},
+		{"null payload", `{"schema":"` + feedbackSchemaIdentity + `","schemaVersion":1,"schemaFingerprint":"` + feedbackSchemaFingerprint + `","payload":null}`},
+		{"missing payload field", strings.Replace(exact, `"session_id":"session-1",`, "", 1)},
+		{"null semantic array", strings.Replace(exact, `"threads":[]`, `"threads":null`, 1)},
+		{"unknown envelope field", strings.TrimSuffix(exact, "}") + `,"legacy":true}`},
+		{"unknown payload field", strings.Replace(exact, `"open_questions":[]`, `"open_questions":[],"legacy":true`, 1)},
+		{"duplicate field", strings.Replace(exact, `"version":2`, `"version":2,"version":2`, 1)},
+		{"trailing", exact + ` {}`},
+		{"corrupt", `{`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatalf("Load accepted %s", tc.data)
+			}
+		})
+	}
+
+	if bytes.Equal(written, []byte(`{"review_id":"review-1"}`)) {
+		t.Fatal("exact envelope unexpectedly equals legacy payload")
+	}
+}
+
+func TestNestedFeedbackPayloadIsExact(t *testing.T) {
+	want := Feedback{
+		ReviewID: "r", Version: 1, SessionID: "s", FrozenAt: 1,
+		Threads: []Thread{{
+			CommentID: 2, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 4,
+			LineContent: "x", Body: "body", Status: "open", Replies: []Reply{{
+				ID: 5, Origin: "claude", Kind: "ask", Body: "choose",
+				Ask:      &store.Ask{Header: "Choice", Options: []store.AskOption{{Label: "A"}}},
+				Answered: true, AskAnswer: &store.AskAnswer{Selected: []string{"A"}}, AnsweredVia: "web",
+			}},
+		}},
+		OpenQuestions: []OpenQuestion{},
+	}
+	encoded, err := encodeFeedback(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeFeedback(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decodeFeedback=%+v, want %+v", got, want)
+	}
+	for _, broken := range []string{
+		strings.Replace(string(encoded), `"line_content":"x"`, `"line_content":"x","legacy":true`, 1),
+		strings.Replace(string(encoded), `"replies":[`, `"replies":null,"discard":[`, 1),
+		strings.Replace(string(encoded), `"description":""`, `"description":null`, 1),
+		strings.Replace(string(encoded), `"selected":["A"]`, `"selected":null`, 1),
+	} {
+		if _, err := decodeFeedback([]byte(broken)); err == nil {
+			t.Fatalf("decodeFeedback accepted %s", broken)
+		}
+	}
+}
 
 func TestBuildCarriesAskShapes(t *testing.T) {
 	ctx := context.Background()

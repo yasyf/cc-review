@@ -6,11 +6,11 @@ package feedback
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/persistedjson"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -100,11 +100,11 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 
 // Freeze writes the snapshot to path (0600), creating nothing else.
 func Freeze(path string, f Feedback) error {
-	b, err := json.MarshalIndent(f, "", "  ")
+	b, err := encodeFeedback(f)
 	if err != nil {
 		return fmt.Errorf("marshal feedback: %w", err)
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := persistedjson.WriteFile(path, b); err != nil {
 		return fmt.Errorf("write feedback %s: %w", path, err)
 	}
 	return nil
@@ -116,8 +116,8 @@ func Load(path string) (Feedback, error) {
 	if err != nil {
 		return Feedback{}, fmt.Errorf("read feedback %s: %w", path, err)
 	}
-	var f Feedback
-	if err := json.Unmarshal(b, &f); err != nil {
+	f, err := decodeFeedback(b)
+	if err != nil {
 		return Feedback{}, fmt.Errorf("unmarshal feedback: %w", err)
 	}
 	return f, nil

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -20,13 +19,13 @@ type AttributionRange struct {
 func (s *Store) PutAttributions(ctx context.Context, versionID int64, byFile map[string][]AttributionRange) error {
 	now := time.Now().UnixMilli()
 	for path, ranges := range byFile {
-		b, err := json.Marshal(ranges)
+		encoded, err := encodeAttributionRanges(ranges)
 		if err != nil {
 			return fmt.Errorf("encode attribution ranges for %s: %w", path, err)
 		}
 		if _, err := s.db.ExecContext(ctx,
 			`INSERT OR REPLACE INTO turn_attributions(version_id, file_path, ranges_json, created_at) VALUES(?,?,?,?)`,
-			versionID, path, string(b), now); err != nil {
+			versionID, path, encoded, now); err != nil {
 			return fmt.Errorf("put attributions for %s: %w", path, err)
 		}
 	}
@@ -67,7 +66,8 @@ func (s *Store) ListAttributionsBySession(ctx context.Context, sessionID string)
 		if err := rows.Scan(&sa.ReviewID, &sa.Version, &sa.FilePath, &rangesJSON); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(rangesJSON), &sa.Ranges); err != nil {
+		var err error
+		if sa.Ranges, err = decodeAttributionRanges(rangesJSON); err != nil {
 			return nil, fmt.Errorf("decode attribution ranges for %s v%d %s: %w", sa.ReviewID, sa.Version, sa.FilePath, err)
 		}
 		out = append(out, sa)
@@ -90,8 +90,8 @@ func (s *Store) ListAttributionsByVersion(ctx context.Context, versionID int64) 
 		if err := rows.Scan(&path, &rangesJSON); err != nil {
 			return nil, err
 		}
-		var ranges []AttributionRange
-		if err := json.Unmarshal([]byte(rangesJSON), &ranges); err != nil {
+		ranges, err := decodeAttributionRanges(rangesJSON)
+		if err != nil {
 			return nil, fmt.Errorf("version %d: decode attribution ranges for %s: %w", versionID, path, err)
 		}
 		byFile[path] = ranges

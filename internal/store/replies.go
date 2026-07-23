@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,7 +12,7 @@ import (
 // between the card render and the POST.
 var ErrReviewNotOpen = errors.New("review is not open")
 
-const replyCols = `id, comment_id, origin, kind, body, ask_json, answered, answer, answered_via, created_at`
+const replyCols = `id, comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at`
 
 // OpenQuestion is a Claude question awaiting an answer, with enough comment
 // context to surface it in the feedback drain.
@@ -29,34 +28,42 @@ type OpenQuestion struct {
 
 func scanReply(row interface{ Scan(...any) error }) (Reply, error) {
 	var (
-		r        Reply
-		askJSON  string
-		answered int
-		answer   string
-		created  int64
+		r                      Reply
+		askJSON, askAnswerJSON sql.NullString
+		answered               int
+		answer                 string
+		created                int64
 	)
 	if err := row.Scan(&r.ID, &r.CommentID, &r.Origin, &r.Kind, &r.Body, &askJSON,
-		&answered, &answer, &r.AnsweredVia, &created); err != nil {
+		&answered, &answer, &askAnswerJSON, &r.AnsweredVia, &created); err != nil {
 		return Reply{}, err
 	}
 	r.Answered = answered != 0
 	r.CreatedAt = fromUnix(created)
 	if r.Kind == "ask" {
-		var ask Ask
-		if err := json.Unmarshal([]byte(askJSON), &ask); err != nil {
+		if !askJSON.Valid {
+			return Reply{}, fmt.Errorf("reply %d: ask kind lacks ask_json", r.ID)
+		}
+		ask, err := decodeReplyAsk(askJSON.String)
+		if err != nil {
 			return Reply{}, fmt.Errorf("reply %d: decode ask: %w", r.ID, err)
 		}
 		r.Ask = &ask
 		if r.Answered {
-			var ans AskAnswer
-			if err := json.Unmarshal([]byte(answer), &ans); err != nil {
+			if !askAnswerJSON.Valid {
+				return Reply{}, fmt.Errorf("reply %d: answered ask lacks ask_answer_json", r.ID)
+			}
+			ans, err := decodeReplyAskAnswer(askAnswerJSON.String)
+			if err != nil {
 				return Reply{}, fmt.Errorf("reply %d: decode ask answer: %w", r.ID, err)
 			}
 			r.AskAnswer = &ans
+		} else if askAnswerJSON.Valid {
+			return Reply{}, fmt.Errorf("reply %d: unanswered ask carries ask_answer_json", r.ID)
 		}
 		return r, nil
 	}
-	if askJSON != "" {
+	if askJSON.Valid || askAnswerJSON.Valid {
 		return Reply{}, fmt.Errorf("reply %d: kind %q carries ask_json", r.ID, r.Kind)
 	}
 	r.Answer = answer
@@ -73,23 +80,29 @@ func (s *Store) CreateReply(ctx context.Context, r Reply) (id int64, inserted bo
 	if (r.Kind == "ask") != (r.Ask != nil) {
 		return 0, false, fmt.Errorf("create reply: kind %q with ask payload %v", r.Kind, r.Ask != nil)
 	}
-	askJSON := ""
+	if r.Kind == "ask" && (r.Answered || r.AskAnswer != nil || r.Answer != "" || r.AnsweredVia != "") {
+		return 0, false, errors.New("create reply: ask must begin unanswered")
+	}
+	if r.Kind != "ask" && r.AskAnswer != nil {
+		return 0, false, fmt.Errorf("create reply: kind %q with ask answer payload", r.Kind)
+	}
+	var askJSON any
 	if r.Ask != nil {
 		if err := r.Ask.Validate(); err != nil {
 			return 0, false, fmt.Errorf("create reply: %w", err)
 		}
-		b, err := json.Marshal(r.Ask)
+		encoded, err := encodeReplyAsk(*r.Ask)
 		if err != nil {
 			return 0, false, fmt.Errorf("create reply: encode ask: %w", err)
 		}
-		askJSON = string(b)
+		askJSON = encoded
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO replies(comment_id, origin, kind, body, ask_json, answered, answer, answered_via, created_at, dedup_key)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO replies(comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at, dedup_key)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
 		r.CommentID, r.Origin, r.Kind, r.Body, askJSON,
-		boolInt(r.Answered), r.Answer, r.AnsweredVia, unix(time.Now()), nullString(r.DedupKey))
+		boolInt(r.Answered), r.Answer, nil, r.AnsweredVia, unix(time.Now()), nullString(r.DedupKey))
 	if err != nil {
 		return 0, false, fmt.Errorf("create reply: %w", err)
 	}
@@ -190,11 +203,11 @@ func (s *Store) answerAsk(ctx context.Context, replyID int64, ans AskAnswer, via
 		// answer must serialize as [] rather than null.
 		ans.Selected = []string{}
 	}
-	answerJSON, err := json.Marshal(ans)
+	answerJSON, err := encodeReplyAskAnswer(ans)
 	if err != nil {
 		return fmt.Errorf("answer ask %d: encode answer: %w", replyID, err)
 	}
-	query := `UPDATE replies SET answered=1, answer=?, answered_via=? WHERE id=?`
+	query := `UPDATE replies SET answered=1, ask_answer_json=?, answered_via=? WHERE id=?`
 	if requireOpen {
 		query += ` AND EXISTS (
 			SELECT 1 FROM comments c
@@ -202,7 +215,7 @@ func (s *Store) answerAsk(ctx context.Context, replyID int64, ans AskAnswer, via
 			JOIN subjects rv ON rv.id = v.review_id
 			WHERE c.id = replies.comment_id AND rv.status = 'open')`
 	}
-	res, err := s.db.ExecContext(ctx, query, string(answerJSON), via, replyID)
+	res, err := s.db.ExecContext(ctx, query, answerJSON, via, replyID)
 	if err != nil {
 		return fmt.Errorf("answer ask %d: %w", replyID, err)
 	}
@@ -234,14 +247,14 @@ func (s *Store) ListOpenQuestions(ctx context.Context, reviewID string) ([]OpenQ
 	for rows.Next() {
 		var (
 			q       OpenQuestion
-			askJSON string
+			askJSON sql.NullString
 		)
 		if err := rows.Scan(&q.ReplyID, &q.CommentID, &q.FilePath, &q.StartLine, &q.CommentBody, &q.Question, &askJSON); err != nil {
 			return nil, err
 		}
-		if askJSON != "" {
-			var ask Ask
-			if err := json.Unmarshal([]byte(askJSON), &ask); err != nil {
+		if askJSON.Valid {
+			ask, err := decodeReplyAsk(askJSON.String)
+			if err != nil {
 				return nil, fmt.Errorf("open question %d: decode ask: %w", q.ReplyID, err)
 			}
 			q.Ask = &ask

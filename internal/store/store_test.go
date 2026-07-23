@@ -324,6 +324,9 @@ func TestAskReplyRoundTrip(t *testing.T) {
 	}{
 		{"ask without payload", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x"}},
 		{"non-ask with payload", Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "x", Ask: ask}},
+		{"answered ask", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x", Ask: ask, Answered: true}},
+		{"ask answer on create", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x", Ask: ask, AskAnswer: &AskAnswer{Selected: []string{"Keep as-is"}}}},
+		{"non-ask with ask answer", Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "x", AskAnswer: &AskAnswer{Selected: []string{"Keep as-is"}}}},
 		{"empty options", Reply{CommentID: cid, Origin: "claude", Kind: "ask", Body: "x", Ask: &Ask{}}},
 		{"duplicate labels", Reply{
 			CommentID: cid, Origin: "claude", Kind: "ask", Body: "x",

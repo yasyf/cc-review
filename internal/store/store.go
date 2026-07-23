@@ -75,9 +75,10 @@ CREATE TABLE replies (
   origin       TEXT NOT NULL,
   kind         TEXT NOT NULL,
   body         TEXT NOT NULL DEFAULT '',
-  ask_json     TEXT NOT NULL DEFAULT '',
+  ask_json     TEXT,
   answered     INTEGER NOT NULL DEFAULT 0,
   answer       TEXT NOT NULL DEFAULT '',
+  ask_answer_json TEXT,
   answered_via TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
   dedup_key    TEXT
@@ -102,12 +103,12 @@ CREATE TABLE ai_requests (
   status         TEXT NOT NULL DEFAULT 'pending',
   summary        TEXT NOT NULL DEFAULT '',
   phase          TEXT NOT NULL DEFAULT '',
-  unmatched_json TEXT NOT NULL DEFAULT '[]',
-  changes_json   TEXT NOT NULL DEFAULT '[]',
+  unmatched_json TEXT NOT NULL,
+  changes_json   TEXT NOT NULL,
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
-  question_json  TEXT NOT NULL DEFAULT '',
-  answer_json    TEXT NOT NULL DEFAULT '',
+  question_json  TEXT,
+  answer_json    TEXT,
   attempt        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_ai_requests_review ON ai_requests(review_id);
@@ -120,7 +121,7 @@ CREATE TABLE organizations (
 CREATE TABLE turn_attributions (
   version_id  INTEGER NOT NULL REFERENCES review_versions(id),
   file_path   TEXT NOT NULL,
-  ranges_json TEXT NOT NULL DEFAULT '[]',
+  ranges_json TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
   PRIMARY KEY (version_id, file_path)
 );

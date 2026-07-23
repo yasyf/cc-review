@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -31,30 +30,32 @@ const aiRequestCols = `id, review_id, version_number, source, prompt, status, su
 
 func scanAIRequest(row interface{ Scan(...any) error }) (AIRequest, error) {
 	var (
-		r                                                    AIRequest
-		unmatchedJSON, changesJSON, questionJSON, answerJSON string
-		created, updated                                     int64
+		r                          AIRequest
+		unmatchedJSON, changesJSON string
+		questionJSON, answerJSON   sql.NullString
+		created, updated           int64
 	)
 	if err := row.Scan(&r.ID, &r.ReviewID, &r.VersionNumber, &r.Source, &r.Prompt, &r.Status,
 		&r.Summary, &unmatchedJSON, &changesJSON, &created, &updated, &questionJSON, &answerJSON, &r.Attempt, &r.Phase); err != nil {
 		return AIRequest{}, err
 	}
-	if err := json.Unmarshal([]byte(unmatchedJSON), &r.Unmatched); err != nil {
+	var err error
+	if r.Unmatched, err = decodeUnmatched(unmatchedJSON); err != nil {
 		return AIRequest{}, fmt.Errorf("ai request %d: decode unmatched: %w", r.ID, err)
 	}
-	if err := json.Unmarshal([]byte(changesJSON), &r.Changes); err != nil {
+	if r.Changes, err = decodeChanges(changesJSON); err != nil {
 		return AIRequest{}, fmt.Errorf("ai request %d: decode changes: %w", r.ID, err)
 	}
-	if questionJSON != "" {
-		var q AIQuestion
-		if err := json.Unmarshal([]byte(questionJSON), &q); err != nil {
+	if questionJSON.Valid {
+		q, err := decodeQuestion(questionJSON.String)
+		if err != nil {
 			return AIRequest{}, fmt.Errorf("ai request %d: decode question: %w", r.ID, err)
 		}
 		r.Question = &q
 	}
-	if answerJSON != "" {
-		var a AIAnswer
-		if err := json.Unmarshal([]byte(answerJSON), &a); err != nil {
+	if answerJSON.Valid {
+		a, err := decodeAnswer(answerJSON.String)
+		if err != nil {
 			return AIRequest{}, fmt.Errorf("ai request %d: decode answer: %w", r.ID, err)
 		}
 		r.Answer = &a
@@ -67,10 +68,18 @@ func scanAIRequest(row interface{ Scan(...any) error }) (AIRequest, error) {
 // CreateAIRequest inserts a new pending request and returns it.
 func (s *Store) CreateAIRequest(ctx context.Context, reviewID string, versionNumber int, source, prompt string) (AIRequest, error) {
 	now := time.Now()
+	unmatchedJSON, err := encodeUnmatched([]Unmatched{})
+	if err != nil {
+		return AIRequest{}, fmt.Errorf("encode initial unmatched: %w", err)
+	}
+	changesJSON, err := encodeChanges([]AIChange{})
+	if err != nil {
+		return AIRequest{}, fmt.Errorf("encode initial changes: %w", err)
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO ai_requests(review_id, version_number, source, prompt, status, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?)`,
-		reviewID, versionNumber, source, prompt, "pending", unix(now), unix(now))
+		`INSERT INTO ai_requests(review_id, version_number, source, prompt, status, unmatched_json, changes_json, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?)`,
+		reviewID, versionNumber, source, prompt, "pending", unmatchedJSON, changesJSON, unix(now), unix(now))
 	if err != nil {
 		return AIRequest{}, fmt.Errorf("create ai request: %w", err)
 	}
@@ -255,12 +264,12 @@ func (s *Store) TransitionAIRequest(ctx context.Context, id int64, to, summary s
 			args = append(args, summary)
 		}
 		if unmatched != nil {
-			b, err := json.Marshal(unmatched)
+			encoded, err := encodeUnmatched(unmatched)
 			if err != nil {
 				return fmt.Errorf("encode unmatched: %w", err)
 			}
 			query += `, unmatched_json=?`
-			args = append(args, string(b))
+			args = append(args, encoded)
 		}
 		if _, err := tx.ExecContext(ctx, query+` WHERE id=?`, append(args, id)...); err != nil {
 			return fmt.Errorf("transition ai request %d: %w", id, err)
@@ -272,13 +281,13 @@ func (s *Store) TransitionAIRequest(ctx context.Context, id int64, to, summary s
 // AskAIRequest parks a working request on a clarifying question (→awaiting_input).
 func (s *Store) AskAIRequest(ctx context.Context, id int64, q AIQuestion) (AIRequest, error) {
 	return s.transitionAIRequest(ctx, id, "awaiting_input", func(ctx context.Context, tx *sql.Tx) error {
-		b, err := json.Marshal(q)
+		encoded, err := encodeQuestion(q)
 		if err != nil {
 			return fmt.Errorf("encode question: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE ai_requests SET status='awaiting_input', question_json=?, updated_at=? WHERE id=?`,
-			string(b), unix(time.Now()), id); err != nil {
+			encoded, unix(time.Now()), id); err != nil {
 			return fmt.Errorf("ask ai request %d: %w", id, err)
 		}
 		return nil
@@ -289,13 +298,13 @@ func (s *Store) AskAIRequest(ctx context.Context, id int64, q AIQuestion) (AIReq
 // redelivery dispatches a fresh agent run with the original prompt plus the Q&A.
 func (s *Store) AnswerAIRequest(ctx context.Context, id int64, a AIAnswer) (AIRequest, error) {
 	return s.transitionAIRequest(ctx, id, "answered", func(ctx context.Context, tx *sql.Tx) error {
-		b, err := json.Marshal(a)
+		encoded, err := encodeAnswer(a)
 		if err != nil {
 			return fmt.Errorf("encode answer: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE ai_requests SET status='answered', answer_json=?, attempt=attempt+1, updated_at=? WHERE id=?`,
-			string(b), unix(time.Now()), id); err != nil {
+			encoded, unix(time.Now()), id); err != nil {
 			return fmt.Errorf("answer ai request %d: %w", id, err)
 		}
 		return nil
@@ -320,8 +329,8 @@ func (s *Store) AppendAIRequestChanges(ctx context.Context, id int64, changes []
 	if err != nil {
 		return fmt.Errorf("read ai request %d changes: %w", id, err)
 	}
-	var existing []AIChange
-	if err := json.Unmarshal([]byte(changesJSON), &existing); err != nil {
+	existing, err := decodeChanges(changesJSON)
+	if err != nil {
 		return fmt.Errorf("ai request %d: decode changes: %w", id, err)
 	}
 	byPath := make(map[string]int, len(existing))
@@ -337,12 +346,12 @@ func (s *Store) AppendAIRequestChanges(ctx context.Context, id int64, changes []
 		byPath[c.Path] = len(existing)
 		existing = append(existing, c)
 	}
-	b, err := json.Marshal(existing)
+	encoded, err := encodeChanges(existing)
 	if err != nil {
 		return fmt.Errorf("encode changes: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE ai_requests SET changes_json=?, updated_at=? WHERE id=?`, string(b), unix(time.Now()), id); err != nil {
+		`UPDATE ai_requests SET changes_json=?, updated_at=? WHERE id=?`, encoded, unix(time.Now()), id); err != nil {
 		return fmt.Errorf("append ai request %d changes: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
