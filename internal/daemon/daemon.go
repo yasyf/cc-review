@@ -101,8 +101,8 @@ func Serve(ctx context.Context, fixedPort int) error {
 	s, err := ccd.New(ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
-		Version:           version.Build(),
-		LifecycleBuild:    version.Build(),
+		WireBuild:         ccd.WireBuild,
+		RuntimeBuild:      version.Build(),
 		DaemonRole:        approle.Classifier(),
 		ActiveStatuses:    []string{statusOpen},
 		ScopeResolve:      repoScope,

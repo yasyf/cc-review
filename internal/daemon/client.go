@@ -10,7 +10,6 @@ import (
 
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
-	"github.com/yasyf/cc-review/internal/version"
 )
 
 // ReviewClient is the typed control client over cc-interact's generic envelope
@@ -23,7 +22,7 @@ type ReviewClient struct {
 // NewReviewClient dials the review daemon's control socket.
 func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
 	c, err := ccd.NewClient(ctx, ccd.ClientConfig{
-		Socket: paths.App().SocketPath(), Build: version.Build(), LifecycleBuild: version.Build(),
+		Socket: paths.App().SocketPath(), WireBuild: ccd.WireBuild,
 	})
 	if err != nil {
 		return nil, err

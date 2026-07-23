@@ -71,7 +71,7 @@ func Tag() string {
 	return Version
 }
 
-// Build returns the exact lifecycle identity for the running binary.
+// Build returns the exact runtime release identity for the running binary.
 func Build() string { return dkversion.Running(Tag()) }
 
 // String renders a human-readable version line: the tag plus the commit when

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/yasyf/cc-interact/vcs"
+	"github.com/yasyf/daemonkit/proc"
 
 	"github.com/yasyf/cc-review/internal/daemon"
 )
@@ -26,6 +27,9 @@ func newDaemonCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := proc.CloseInheritedFDs(); err != nil {
+				return err
+			}
 			port := 0
 			if dev {
 				port = devHTTPPort

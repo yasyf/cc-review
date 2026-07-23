@@ -17,8 +17,8 @@ import (
 // binary's hidden `daemon` subcommand detached.
 func launcher() ccd.Launcher {
 	return ccd.Launcher{
-		Paths: paths.App(), Version: version.Build(), LifecycleBuild: version.Build(),
-		Args: []string{"daemon"}, DaemonRole: approle.Classifier(),
+		Paths: paths.App(), WireBuild: ccd.WireBuild, RuntimeBuild: version.Build(),
+		Args: []string{"daemon"}, StopArgs: []string{ccd.StopControlCommand}, DaemonRole: approle.Classifier(),
 	}
 }
 
@@ -39,6 +39,8 @@ func deps() cmd.Deps {
 		NewClient:              newControlClient,
 		EnsureCurrent:          func(ctx context.Context) error { return launcher().EnsureCurrent(ctx, ccd.UpgradeTimeout) },
 		EnsureCurrentIfRunning: func(ctx context.Context) error { return launcher().EnsureCurrentIfRunning(ctx) },
+		Stop:                   func(ctx context.Context) error { return launcher().Stop(ctx, ccd.UpgradeTimeout) },
+		RunStopControl:         func(ctx context.Context) error { return launcher().RunStopControl(ctx) },
 		ClaudePID:              procs.ClaudePID,
 		WindowAlive:            procs.LiveClaude,
 		TerminalEvent:          func(t string) bool { return t == "submit" },
