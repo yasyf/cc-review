@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -33,20 +35,215 @@ func gateDecision(tsMs int64) Decision {
 	}
 }
 
-func TestOpenAppliesSchemaAndCreatesParents(t *testing.T) {
+func TestOpenCreatesAndReopensExactSchemaV1(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "dir", "decisions.db")
 	log := openTest(t, path)
 
-	var name string
-	if err := log.db.QueryRow(
-		`SELECT name FROM sqlite_master WHERE type='table' AND name='decisions'`).Scan(&name); err != nil {
-		t.Fatalf("decisions table missing: %v", err)
+	var component, storedDDL, storedObjects string
+	var version int
+	if err := log.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
 	}
-	for _, idx := range []string{"idx_decisions_session_ts", "idx_decisions_tool_digest", "idx_decisions_source_file"} {
-		if err := log.db.QueryRow(
-			`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&name); err != nil {
-			t.Fatalf("index %s missing: %v", idx, err)
+	if version != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, schemaVersion)
+	}
+	if err := log.db.QueryRow(
+		`SELECT component, schema_version, ddl_fingerprint, object_fingerprint FROM cc_review_decisions_schema_v1 WHERE id=1`).
+		Scan(&component, &version, &storedDDL, &storedObjects); err != nil {
+		t.Fatalf("read schema marker: %v", err)
+	}
+	if component != schemaComponent || version != schemaVersion || storedDDL != expectedDDLFingerprint || storedObjects != expectedObjectFingerprint {
+		t.Fatalf("schema marker = (%q, %d, %q, %q)", component, version, storedDDL, storedObjects)
+	}
+	gotObjects, err := fingerprintObjects(t.Context(), log.db)
+	if err != nil {
+		t.Fatalf("fingerprint objects: %v", err)
+	}
+	if gotObjects != expectedObjectFingerprint {
+		t.Fatalf("object fingerprint = %q, want %q", gotObjects, expectedObjectFingerprint)
+	}
+	if got := ddlFingerprint(); got != expectedDDLFingerprint {
+		t.Fatalf("DDL fingerprint = %q, want %q", got, expectedDDLFingerprint)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatalf("close exact v1: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen exact v1: %v", err)
+	}
+	_ = reopened.Close()
+}
+
+type schemaObject struct {
+	ObjectType string
+	Name       string
+	Table      string
+	SQL        string
+}
+
+type schemaSnapshot struct {
+	Version int
+	Objects []schemaObject
+	Marker  []any
+}
+
+func readSchemaSnapshot(t *testing.T, path string) schemaSnapshot {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var snapshot schemaSnapshot
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&snapshot.Version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	rows, err := db.Query(`SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name`)
+	if err != nil {
+		t.Fatalf("list schema objects: %v", err)
+	}
+	for rows.Next() {
+		var object schemaObject
+		var statement sql.NullString
+		if err := rows.Scan(&object.ObjectType, &object.Name, &object.Table, &statement); err != nil {
+			t.Fatalf("scan schema object: %v", err)
 		}
+		object.SQL = statement.String
+		snapshot.Objects = append(snapshot.Objects, object)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close schema rows: %v", err)
+	}
+	for _, object := range snapshot.Objects {
+		if object.Name != "cc_review_decisions_schema_v1" {
+			continue
+		}
+		var component, ddlFingerprint, objectFingerprint string
+		var id, version int
+		err := db.QueryRow(
+			`SELECT id, component, schema_version, ddl_fingerprint, object_fingerprint FROM cc_review_decisions_schema_v1`).
+			Scan(&id, &component, &version, &ddlFingerprint, &objectFingerprint)
+		if err == nil {
+			snapshot.Marker = []any{id, component, version, ddlFingerprint, objectFingerprint}
+		} else if err != sql.ErrNoRows {
+			snapshot.Marker = []any{err.Error()}
+		}
+		break
+	}
+	return snapshot
+}
+
+func mutateDatabase(t *testing.T, path, statement string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	if _, err := db.Exec(statement); err != nil {
+		_ = db.Close()
+		t.Fatalf("mutate database: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw database: %v", err)
+	}
+}
+
+func createExactDatabase(t *testing.T, path string) {
+	t.Helper()
+	log, err := Open(path)
+	if err != nil {
+		t.Fatalf("create exact database: %v", err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatalf("close exact database: %v", err)
+	}
+}
+
+func TestOpenCreatesOnlyFromEmptyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decisions.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("create empty database file: %v", err)
+	}
+	log, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(empty): %v", err)
+	}
+	_ = log.Close()
+	if got := readSchemaSnapshot(t, path); len(got.Objects) == 0 {
+		t.Fatal("empty database was not initialized")
+	}
+}
+
+func TestOpenRejectsNonExactShapesWithoutMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(*testing.T, string)
+		needle string
+	}{
+		{
+			name: "old unversioned decisions table",
+			setup: func(t *testing.T, path string) {
+				mutateDatabase(t, path, `CREATE TABLE decisions(id INTEGER PRIMARY KEY)`)
+			},
+			needle: "schema version",
+		},
+		{
+			name: "partial marker only",
+			setup: func(t *testing.T, path string) {
+				mutateDatabase(t, path, `CREATE TABLE cc_review_decisions_schema_v1(id INTEGER PRIMARY KEY)`)
+			},
+			needle: "schema version",
+		},
+		{
+			name: "missing index",
+			setup: func(t *testing.T, path string) {
+				createExactDatabase(t, path)
+				mutateDatabase(t, path, `DROP INDEX idx_decisions_tool_digest`)
+			},
+			needle: "object fingerprint",
+		},
+		{
+			name: "extra table",
+			setup: func(t *testing.T, path string) {
+				createExactDatabase(t, path)
+				mutateDatabase(t, path, `CREATE TABLE foreign_state(id TEXT PRIMARY KEY)`)
+			},
+			needle: "object fingerprint",
+		},
+		{
+			name: "foreign DDL fingerprint",
+			setup: func(t *testing.T, path string) {
+				createExactDatabase(t, path)
+				mutateDatabase(t, path, `UPDATE cc_review_decisions_schema_v1 SET ddl_fingerprint='foreign' WHERE id=1`)
+			},
+			needle: "DDL fingerprint",
+		},
+		{
+			name: "foreign schema version",
+			setup: func(t *testing.T, path string) {
+				createExactDatabase(t, path)
+				mutateDatabase(t, path, `PRAGMA user_version = 2`)
+			},
+			needle: "schema version",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "decisions.db")
+			tc.setup(t, path)
+			before := readSchemaSnapshot(t, path)
+			log, err := Open(path)
+			if log != nil {
+				_ = log.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.needle) {
+				t.Fatalf("Open() = %v, want error containing %q", err, tc.needle)
+			}
+			after := readSchemaSnapshot(t, path)
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected open mutated database:\n before: %#v\n  after: %#v", before, after)
+			}
+		})
 	}
 }
 
