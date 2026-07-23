@@ -6,6 +6,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"io/fs"
 	"log"
 	"net/http"
@@ -26,11 +27,11 @@ import (
 // reach the SSE stream.
 type appendFunc = func(ctx context.Context, e *ccevent.Event) (int64, error)
 
-// Deps is everything the REST plane needs from the daemon process: the domain
-// store, the shared decision ledger, the logger, the Append chokepoint, the
-// named-consumer presence predicate, and the embedded SPA.
+// Deps carries a lazy DB accessor because the daemon's store opens only once
+// its runtime activates, after mount time, plus the REST plane's other process
+// dependencies.
 type Deps struct {
-	Store             *store.Store
+	DB                func() *sql.DB
 	Decisions         *decisions.Log
 	Log               *log.Logger
 	Append            appendFunc
@@ -40,9 +41,7 @@ type Deps struct {
 
 // Server holds the REST handlers' shared state.
 type Server struct {
-	store     *store.Store
-	subjects  subject.Store
-	turns     *vcs.TurnStore
+	db        func() *sql.DB
 	decisions *decisions.Log
 	log       *log.Logger
 	append    appendFunc
@@ -53,14 +52,16 @@ type Server struct {
 	provWarned map[string]bool            // session ids already warned about slice failures
 }
 
+func (s *Server) st() *store.Store            { return store.New(s.db()) }
+func (s *Server) subjectStore() subject.Store { return ccstore.NewSubjectStore(s.db()) }
+func (s *Server) turnStore() *vcs.TurnStore   { return vcs.NewTurnStore(s.db()) }
+
 // RESTMount registers cc-review's REST routes and the SPA static handler on the
 // daemon's mux. The daemon already mounts GET /events; Go's pattern mux gives the
 // more specific /api routes precedence over the catch-all "/".
 func RESTMount(mux *http.ServeMux, d Deps) {
 	s := &Server{
-		store:      d.Store,
-		subjects:   ccstore.NewSubjectStore(d.Store.DB()),
-		turns:      vcs.NewTurnStore(d.Store.DB()),
+		db:         d.DB,
 		decisions:  d.Decisions,
 		log:        d.Log,
 		append:     d.Append,

@@ -45,7 +45,7 @@ func newTestServerWithLedger(t *testing.T) (*store.Store, *decisions.Log, *ccsto
 	st := store.New(cc.DB())
 	mux := http.NewServeMux()
 	RESTMount(mux, Deps{
-		Store: st, Decisions: ledger, Log: log.New(io.Discard, "", 0),
+		DB: cc.DB, Decisions: ledger, Log: log.New(io.Discard, "", 0),
 		Append: cc.AppendEvent, ConsumerConnected: func(string) bool { return false }, Dist: web.Dist(),
 	})
 	srv := httptest.NewServer(mux)

@@ -134,7 +134,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	s.Register(OpList, rv.handleList)
 
 	httpapi.RESTMount(s.Mux(), httpapi.Deps{
-		Store:             store.New(s.DB()),
+		DB:                s.DB,
 		Decisions:         ledger,
 		Log:               rv.log,
 		Append:            s.Append,

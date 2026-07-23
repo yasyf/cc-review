@@ -103,7 +103,7 @@ type answerAIRequestReq struct {
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	review, err := s.store.GetReviewByRef(ctx, r.PathValue("reviewId"))
+	review, err := s.st().GetReviewByRef(ctx, r.PathValue("reviewId"))
 	if err != nil {
 		notFoundOr500(w, err)
 		return
@@ -111,10 +111,10 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	var version store.Version
 	if v := r.URL.Query().Get("version"); v != "" {
 		n, _ := strconv.Atoi(v)
-		version, err = s.store.GetVersion(ctx, review.ID, n)
+		version, err = s.st().GetVersion(ctx, review.ID, n)
 	} else {
 		var ok bool
-		version, ok, err = s.store.LatestVersion(ctx, review.ID)
+		version, ok, err = s.st().LatestVersion(ctx, review.ID)
 		if err == nil && !ok {
 			err = store.ErrNotFound
 		}
@@ -128,21 +128,21 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read patch: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	comments, err := s.store.ListCommentsByVersion(ctx, version.ID)
+	comments, err := s.st().ListCommentsByVersion(ctx, version.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	wired := make([]wire.Comment, 0, len(comments))
 	for _, c := range comments {
-		replies, err := s.store.ListRepliesByComment(ctx, c.ID)
+		replies, err := s.st().ListRepliesByComment(ctx, c.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		wired = append(wired, wire.ToComment(c, replies))
 	}
-	annotations, err := s.store.ListAnnotationsByVersion(ctx, version.ID)
+	annotations, err := s.st().ListAnnotationsByVersion(ctx, version.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -160,7 +160,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for _, f := range files {
 		inVersion[f.Path] = true
 	}
-	states, err := s.store.ListFileStates(ctx, review.ID)
+	states, err := s.st().ListFileStates(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -172,13 +172,13 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var organization *store.Organization
-	if org, ok, err := s.store.GetOrganization(ctx, version.ID); err != nil {
+	if org, ok, err := s.st().GetOrganization(ctx, version.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	} else if ok {
 		organization = &org
 	}
-	requests, err := s.store.ListAIRequests(ctx, review.ID)
+	requests, err := s.st().ListAIRequests(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -187,7 +187,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for _, ar := range requests {
 		aiRequests = append(aiRequests, wire.ToAIRequest(ar))
 	}
-	attrsByFile, err := s.store.ListAttributionsByVersion(ctx, version.ID)
+	attrsByFile, err := s.st().ListAttributionsByVersion(ctx, version.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -208,7 +208,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for tid := range turnIDSet {
 		turnIDs = append(turnIDs, tid)
 	}
-	storeTurns, err := s.turns.ListTurnsByIDs(ctx, turnIDs)
+	storeTurns, err := s.turnStore().ListTurnsByIDs(ctx, turnIDs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -217,7 +217,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for _, t := range storeTurns {
 		turns = append(turns, wire.ToTurn(t))
 	}
-	latestSeq, err := s.store.MaxEventSeq(ctx, review.ID)
+	latestSeq, err := s.st().MaxEventSeq(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -267,12 +267,12 @@ func (s *Server) turnActivity(turns []vcs.Turn) map[string][]wire.Decision {
 }
 
 func (s *Server) handleGetVersions(w http.ResponseWriter, r *http.Request) {
-	review, err := s.store.GetReviewByRef(r.Context(), r.PathValue("reviewId"))
+	review, err := s.st().GetReviewByRef(r.Context(), r.PathValue("reviewId"))
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
-	versions, err := s.store.ListVersions(r.Context(), review.ID)
+	versions, err := s.st().ListVersions(r.Context(), review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -295,7 +295,7 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad versionId", http.StatusBadRequest)
 		return
 	}
-	version, err := s.store.GetVersionByID(ctx, versionID)
+	version, err := s.st().GetVersionByID(ctx, versionID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
@@ -306,7 +306,7 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		StartSide: req.Range.StartSide, EndSide: req.Range.EndSide,
 		LineContent: req.LineContent, Body: req.Body, Author: store.OriginUser, Status: "open",
 	}
-	id, err := s.store.CreateComment(ctx, c)
+	id, err := s.st().CreateComment(ctx, c)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -325,20 +325,20 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	reviewID, versionNumber, err := s.store.ResolveCommentContext(ctx, id)
+	reviewID, versionNumber, err := s.st().ResolveCommentContext(ctx, id)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
 	if req.Body != nil {
-		if err := s.store.UpdateCommentBody(ctx, id, *req.Body); err != nil {
+		if err := s.st().UpdateCommentBody(ctx, id, *req.Body); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	resolved := false
 	if req.Status != "" {
-		if err := s.store.UpdateCommentStatus(ctx, id, req.Status); err != nil {
+		if err := s.st().UpdateCommentStatus(ctx, id, req.Status); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -360,7 +360,7 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	reviewID, versionNumber, err := s.store.ResolveCommentContext(ctx, commentID)
+	reviewID, versionNumber, err := s.st().ResolveCommentContext(ctx, commentID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
@@ -375,7 +375,7 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 		}
 		// The open check rides inside the UPDATE: an answer racing Submit gets
 		// a 409, never a silent write into an already-frozen feedback file.
-		if err := s.store.AnswerAskIfOpen(ctx, qrid, *req.AskAnswer, "web"); err != nil {
+		if err := s.st().AnswerAskIfOpen(ctx, qrid, *req.AskAnswer, "web"); err != nil {
 			switch {
 			case errors.Is(err, store.ErrReviewNotOpen):
 				http.Error(w, "review is submitted: Claude will ask this directly", http.StatusConflict)
@@ -390,7 +390,7 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
-	id, _, err := s.store.CreateReply(ctx, store.Reply{
+	id, _, err := s.st().CreateReply(ctx, store.Reply{
 		CommentID: commentID, Origin: store.OriginUser, Kind: "note", Body: req.Body,
 	})
 	if err != nil {
@@ -416,12 +416,12 @@ func (s *Server) handleSetFileStates(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "files required", http.StatusBadRequest)
 		return
 	}
-	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	review, err := s.st().GetReviewByRef(ctx, req.ReviewID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
-	version, ok, err := s.store.LatestVersion(ctx, review.ID)
+	version, ok, err := s.st().LatestVersion(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -452,7 +452,7 @@ func (s *Server) handleSetFileStates(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown paths: "+strings.Join(unknown, ", "), http.StatusBadRequest)
 		return
 	}
-	results, err := s.store.ApplyFileStates(ctx, review.ID, inputs, fingerprints)
+	results, err := s.st().ApplyFileStates(ctx, review.ID, inputs, fingerprints)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -483,12 +483,12 @@ func (s *Server) handleCreateAIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "prompt required", http.StatusBadRequest)
 		return
 	}
-	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	review, err := s.st().GetReviewByRef(ctx, req.ReviewID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
-	version, ok, err := s.store.LatestVersion(ctx, review.ID)
+	version, ok, err := s.st().LatestVersion(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -497,7 +497,7 @@ func (s *Server) handleCreateAIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "review has no versions", http.StatusBadRequest)
 		return
 	}
-	ar, err := s.store.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, req.Prompt)
+	ar, err := s.st().CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, req.Prompt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -525,7 +525,7 @@ func (s *Server) handleAnswerAIRequest(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ar, err := s.store.GetAIRequest(ctx, id)
+	ar, err := s.st().GetAIRequest(ctx, id)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
@@ -534,7 +534,7 @@ func (s *Server) handleAnswerAIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("ai request %d is %q, only an awaiting_input request can be answered", id, ar.Status), http.StatusConflict)
 		return
 	}
-	version, ok, err := s.store.LatestVersion(ctx, ar.ReviewID)
+	version, ok, err := s.st().LatestVersion(ctx, ar.ReviewID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -564,7 +564,7 @@ func (s *Server) handleAnswerAIRequest(w http.ResponseWriter, r *http.Request) {
 	} else {
 		answer.Text = req.Answer
 	}
-	updated, err := s.store.AnswerAIRequest(ctx, id, answer)
+	updated, err := s.st().AnswerAIRequest(ctx, id, answer)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidTransition) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -593,14 +593,14 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad ai request id", http.StatusBadRequest)
 		return
 	}
-	ar, err := s.store.GetAIRequest(ctx, id)
+	ar, err := s.st().GetAIRequest(ctx, id)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
 	// Both emissions below carry the review's current version, not the version
 	// the request was created on — a later version may be the one on screen.
-	version, ok, err := s.store.LatestVersion(ctx, ar.ReviewID)
+	version, ok, err := s.st().LatestVersion(ctx, ar.ReviewID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -616,11 +616,11 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("ai request %d is %q, only done requests can be undone", id, ar.Status), http.StatusConflict)
 		return
 	}
-	if err := s.store.RestoreFileStates(ctx, ar.ReviewID, ar.Changes); err != nil {
+	if err := s.st().RestoreFileStates(ctx, ar.ReviewID, ar.Changes); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	updated, err := s.store.TransitionAIRequest(ctx, id, "undone", "", nil)
+	updated, err := s.st().TransitionAIRequest(ctx, id, "undone", "", nil)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidTransition) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -639,11 +639,11 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	// Undo also clears any highlights the request added (comment-kind annotations
 	// are real threads and outlive undo, managed via the comment UI).
-	if deleted, err := s.store.DeleteAnnotationsByAIRequest(ctx, id); err != nil {
+	if deleted, err := s.st().DeleteAnnotationsByAIRequest(ctx, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	} else if deleted > 0 {
-		list, err := s.store.ListAnnotationsByVersion(ctx, version.ID)
+		list, err := s.st().ListAnnotationsByVersion(ctx, version.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -666,12 +666,12 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	review, err := s.st().GetReviewByRef(ctx, req.ReviewID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
-	version, ok, err := s.store.LatestVersion(ctx, review.ID)
+	version, ok, err := s.st().LatestVersion(ctx, review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -681,7 +681,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	submittedAt := time.Now()
-	fb, err := feedback.Build(ctx, s.store, review.ID, version, submittedAt)
+	fb, err := feedback.Build(ctx, s.st(), review.ID, version, submittedAt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -701,7 +701,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := corrections.Write(ctx, fb, review.RepoRoot, submittedAt); err != nil {
 		s.log.Printf("corrections: write for review %s failed: %v", review.ID, err)
 	}
-	if err := s.subjects.SetStatus(ctx, review.ID, "submitted"); err != nil {
+	if err := s.subjectStore().SetStatus(ctx, review.ID, "submitted"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -716,12 +716,12 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	review, err := s.store.GetReviewByRef(ctx, req.ReviewID)
+	review, err := s.st().GetReviewByRef(ctx, req.ReviewID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
-	swapped, err := s.store.CloseAndDetach(ctx, s.subjects, review.ID)
+	swapped, err := s.st().CloseAndDetach(ctx, s.subjectStore(), review.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -731,7 +731,7 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 			http.StatusConflict)
 		return
 	}
-	if version, ok, err := s.store.LatestVersion(ctx, review.ID); err != nil {
+	if version, ok, err := s.st().LatestVersion(ctx, review.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	} else if ok {
@@ -751,11 +751,11 @@ func (s *Server) emit(ctx context.Context, reviewID, origin, typ string, version
 
 // emitComment re-reads a comment with its replies and emits it under typ.
 func (s *Server) emitComment(ctx context.Context, reviewID, typ string, version int, commentID int64) {
-	c, err := s.store.GetComment(ctx, commentID)
+	c, err := s.st().GetComment(ctx, commentID)
 	if err != nil {
 		return
 	}
-	replies, err := s.store.ListRepliesByComment(ctx, commentID)
+	replies, err := s.st().ListRepliesByComment(ctx, commentID)
 	if err != nil {
 		return
 	}
