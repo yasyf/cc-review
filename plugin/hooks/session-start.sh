@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# SessionStart hook: ensure the binary is installed and current, then record
-# the session's facts (best-effort — does nothing if the daemon isn't up).
-# Reads the hook JSON on stdin and passes it through to `cc-review
-# session-record`.
+# SessionStart hook: record the session's facts (best-effort — does nothing if
+# the daemon isn't up). Invoking the committed bin/cc-review shim resolves and
+# caches the version-exact binary via binrun, pre-warming it for later hooks.
+# Reads the hook JSON on stdin and passes it through to `cc-review session-record`.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/bin/cc-review"
 
-bash "$ROOT/scripts/install-binary.sh" >/dev/null 2>&1 || true
-[ -x "$BIN" ] && exec "$BIN" session-record
-exit 0
+exec "$BIN" session-record

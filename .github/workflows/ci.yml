@@ -11,6 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The plugin manifest and the binrun descriptor must pin the same version
+      # (the marketplace serves plugin.json; hooks resolve bin/cc-review.binrun).
+      - name: Assert plugin manifest and descriptor agree on version
+        run: |
+          manifest="$(jq -r .version plugin/.claude-plugin/plugin.json)"
+          descriptor="$(tail -n +2 plugin/bin/cc-review.binrun | jq -r .version.static)"
+          test "$manifest" = "$descriptor" \
+            || { echo "version drift: plugin.json=$manifest descriptor=$descriptor" >&2; exit 1; }
+
       # Web build first: //go:embed all:internal/web/dist reads at compile time,
       # so the embed dir must be fresh before the Go build/test/vet run.
       - uses: oven-sh/setup-bun@v2

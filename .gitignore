@@ -65,8 +65,11 @@ web/dist/
 internal/web/dist/*
 !internal/web/dist/index.html
 
-# Plugin binary — built locally or downloaded from release assets, not committed.
-# `.gitkeep` keeps the dir present in fresh checkouts as install-binary.sh's target;
-# Claude Code puts every enabled plugin's bin/ on the Bash PATH unconditionally.
+# Plugin binary artifacts. The binrun shim (bin/cc-review, a symlink to
+# scripts/install-binary.sh) and its version-exact descriptor (bin/cc-review.binrun)
+# are committed; the resolved binary binrun fetches lives in binrun's own cache,
+# never here. Everything else in bin/ stays ignored (Claude Code puts every
+# enabled plugin's bin/ on the Bash PATH unconditionally).
 plugin/bin/*
-!plugin/bin/.gitkeep
+!plugin/bin/cc-review
+!plugin/bin/cc-review.binrun
