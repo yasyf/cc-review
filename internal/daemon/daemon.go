@@ -11,6 +11,7 @@ import (
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 	ccevent "github.com/yasyf/cc-interact/event"
+	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
 
@@ -113,6 +114,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		PresenceEventType: store.EventChannelChanged,
 		BootReconcile:     rv.bootReconcile,
 		StoreSchema:       store.Schema(),
+		UnsupportedSchema: ccstore.ArchiveUnsupportedSchema,
 		FixedPort:         fixedPort,
 	})
 	if err != nil {

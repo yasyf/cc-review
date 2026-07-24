@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of silently preferring `--apply`.
 
 ### Fixed
+- A definitive cc-interact store schema mismatch now archives the wedged
+  database and starts fresh instead of crash-looping the daemon.
 - The old installer's freshness fast-path compared `--version` output against
   `v$VERSION`, but release builds printed `X.Y.Z (sha)` — stale release
   binaries were never refreshed. The canonical installer compares v-stripped
