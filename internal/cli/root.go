@@ -43,7 +43,6 @@ func NewRootCmd() *cobra.Command {
 		cmd.WatchCmd(d),
 		cmd.StatusCmd(d),
 		cmd.StopCmd(d),
-		cmd.DaemonStopControlCmd(d),
 		cmd.SessionRecordCmd(d),
 		cmd.GuardEditCmd(d),
 		cmd.ChannelAckCmd(d),

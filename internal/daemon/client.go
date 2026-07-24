@@ -9,6 +9,7 @@ import (
 	"github.com/yasyf/cc-interact/procs"
 
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -22,7 +23,7 @@ type ReviewClient struct {
 // NewReviewClient dials the review daemon's control socket.
 func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
 	c, err := ccd.NewClient(ctx, ccd.ClientConfig{
-		Socket: paths.App().SocketPath(), WireBuild: ccd.WireBuild,
+		Socket: paths.App().SocketPath(), WireBuild: ccd.WireBuild, Role: runtimeconfig.Roles().Business,
 	})
 	if err != nil {
 		return nil, err

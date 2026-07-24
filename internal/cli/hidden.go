@@ -93,7 +93,11 @@ func runTurnHook(cmd *cobra.Command, send func(ctx context.Context, session, cwd
 	}
 	// Deliberate exception to hooks using EnsureCurrentIfRunning: always-on turn
 	// recording must boot the daemon.
-	if err := launcher().EnsureCurrent(cmd.Context(), 15*time.Second); err != nil {
+	launcher, err := launcher()
+	if err != nil {
+		return
+	}
+	if err := launcher.EnsureCurrent(cmd.Context(), 15*time.Second); err != nil {
 		return
 	}
 	_ = send(cmd.Context(), in.SessionID, in.Cwd, in.Prompt)

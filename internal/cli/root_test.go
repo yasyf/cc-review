@@ -2,27 +2,22 @@ package cli
 
 import (
 	"bytes"
-	"slices"
 	"testing"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 
+	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/version"
 )
 
-func TestRootCarriesExactStopControlRole(t *testing.T) {
-	root := NewRootCmd()
-	control, _, err := root.Find([]string{ccd.StopControlCommand})
+func TestLauncherCarriesExactDaemonkitIdentity(t *testing.T) {
+	l, err := launcher()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if control == root || !control.Hidden || control.Use != ccd.StopControlCommand {
-		t.Fatalf("stop control command = use %q hidden %v", control.Use, control.Hidden)
-	}
-	l := launcher()
 	if l.WireBuild != ccd.WireBuild || l.RuntimeBuild != version.Build() ||
-		!slices.Equal(l.StopArgs, []string{ccd.StopControlCommand}) {
-		t.Fatalf("launcher identity = wire %q runtime %q stop args %v", l.WireBuild, l.RuntimeBuild, l.StopArgs)
+		l.Roles != runtimeconfig.Roles() || l.Agent.Label != "com.yasyf.cc-review" {
+		t.Fatalf("launcher identity = wire %q runtime %q roles %+v agent %+v", l.WireBuild, l.RuntimeBuild, l.Roles, l.Agent)
 	}
 }
 

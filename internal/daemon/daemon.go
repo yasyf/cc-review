@@ -15,11 +15,11 @@ import (
 	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
 
-	approle "github.com/yasyf/cc-review/internal/daemonrole"
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/httpapi"
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/version"
 	"github.com/yasyf/cc-review/internal/web"
@@ -98,13 +98,18 @@ func Serve(ctx context.Context, fixedPort int) error {
 	}
 	defer func() { _ = ledger.Close() }()
 	rv := &review{decisions: ledger, log: log.New(os.Stderr, "[cc-review] ", log.LstdFlags)}
+	trustPolicy, err := runtimeconfig.TrustPolicy()
+	if err != nil {
+		return err
+	}
 
 	s, err := ccd.New(ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
 		WireBuild:         ccd.WireBuild,
 		RuntimeBuild:      version.Build(),
-		DaemonRole:        approle.Classifier(),
+		TrustPolicy:       trustPolicy,
+		Roles:             runtimeconfig.Roles(),
 		ActiveStatuses:    []string{statusOpen},
 		ScopeResolve:      repoScope,
 		Gate:              rv.gate,
