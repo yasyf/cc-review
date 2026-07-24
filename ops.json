@@ -1,1 +1,1 @@
-{"v":1,"lamport":2,"session":"9f54f9e1-0cac-426a-bd75-81f4ed004403","ops":[{"kind":"remove_criterion","id":"2c88fec9fbe62b7d3191d4579b720fe7"}]}
+{"v":1,"lamport":3,"session":"9f54f9e1-0cac-426a-bd75-81f4ed004403","ops":[{"kind":"add_criterion","id":"68f80b9b18f670d53d9b06529352777f","text":"cc-interact: vcs/graphite.go + tests landed on the daemonkit-v0.14 base (post-v0.23.0 fast-forward), go test ./... green, CHANGELOG entry, tagged v0.24.0","script":""}]}
