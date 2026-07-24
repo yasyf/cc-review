@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-24
+
+### Changed
+- Pin daemonkit v0.17.4 so daemon shutdown settles accepted-session terminal
+  acknowledgements before closing transport ownership.
+
 ## [0.29.0] - 2026-07-24
 
 ### Changed
@@ -440,7 +446,8 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.29.0...main
+[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.30.0...main
+[0.30.0]: https://github.com/yasyf/cc-review/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/yasyf/cc-review/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/yasyf/cc-review/compare/v0.27.0...v0.28.0
 [0.24.0]: https://github.com/yasyf/cc-review/compare/v0.23.0...v0.24.0
