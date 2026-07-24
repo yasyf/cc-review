@@ -1,1 +1,1 @@
-{"v":1,"lamport":9,"session":"9f54f9e1-0cac-426a-bd75-81f4ed004403","ops":[{"kind":"remove_criterion","id":"1d3489cf07337a5e9d733a6db931cd77"}]}
+{"v":1,"lamport":10,"session":"9f54f9e1-0cac-426a-bd75-81f4ed004403","ops":[{"kind":"add_criterion","id":"b7f1fc98f0d919809f34e464190fd7a8","text":"cc-interact: graphite capture landed and tagged v0.25.0 (v0.23/v0.24 taken by the concurrent daemonkit workstream), full suite green","script":""}]}
