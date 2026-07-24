@@ -1,1 +1,1 @@
-{"v":1,"lamport":11,"session":"9f54f9e1-0cac-426a-bd75-81f4ed004403","ops":[{"kind":"add_criterion","id":"d72374149017e65c55e849c8f3672695","text":"cc-review: go.mod requires cc-interact v0.25.0 with no replace directive","script":""}]}
+{"v":1,"lamport":12,"session":"9f54f9e1-0cac-426a-bd75-81f4ed004403","ops":[{"kind":"set_criterion_status","id":"b7f1fc98f0d919809f34e464190fd7a8","status":"met","note":"cc-interact 9bd5ea9 pushed to main and tagged v0.25.0; full suite 12 packages ok (incl. daemon on daemonkit v0.15); lint clean after errcheck fixes."}]}
