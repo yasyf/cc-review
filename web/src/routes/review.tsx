@@ -61,7 +61,7 @@ function ReviewContent() {
             sidebar={
               <Sidebar
                 session={data}
-                onSelectFile={(path) => diffRef.current?.scrollToFile(path)}
+                onSelectFile={(ref) => diffRef.current?.scrollToFile(ref)}
                 onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
               />
             }

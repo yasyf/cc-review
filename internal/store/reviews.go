@@ -21,10 +21,13 @@ type Review struct {
 	CreatedAt time.Time
 }
 
-// ReviewMeta is a review's pinned diff base and creation-time branch.
+// ReviewMeta is a review's pinned diff base and creation-time branch. Stack
+// marks a Graphite stacked review, which pins no base and re-detects its
+// sections on every resume.
 type ReviewMeta struct {
 	BaseRef string
 	Branch  string
+	Stack   bool
 }
 
 // ReviewSlug derives a review's URL name from its creation-time branch and a
@@ -90,27 +93,33 @@ func (s *Store) scanReview(row interface{ Scan(...any) error }) (Review, error) 
 	return r, nil
 }
 
-// SetReviewMeta upserts a review's pinned diff base and creation branch.
-func (s *Store) SetReviewMeta(ctx context.Context, subjectID, baseRef, branch string) error {
+// SetReviewMeta upserts a review's pinned diff base, creation branch, and
+// stack flag.
+func (s *Store) SetReviewMeta(ctx context.Context, subjectID, baseRef, branch string, stack bool) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO review_meta(subject_id, base_ref, branch) VALUES(?,?,?)
-		 ON CONFLICT(subject_id) DO UPDATE SET base_ref=excluded.base_ref, branch=excluded.branch`,
-		subjectID, baseRef, branch)
+		`INSERT INTO review_meta(subject_id, base_ref, branch, stack) VALUES(?,?,?,?)
+		 ON CONFLICT(subject_id) DO UPDATE SET base_ref=excluded.base_ref, branch=excluded.branch, stack=excluded.stack`,
+		subjectID, baseRef, branch, boolInt(stack))
 	if err != nil {
 		return errors.New("set review meta: " + err.Error())
 	}
 	return nil
 }
 
-// GetReviewMeta returns a review's pinned base and branch; ok is false when no
-// meta row exists yet (a subject created before its base was pinned).
+// GetReviewMeta returns a review's pinned base, branch, and stack flag; ok is
+// false when no meta row exists yet (a subject created before its base was
+// pinned).
 func (s *Store) GetReviewMeta(ctx context.Context, subjectID string) (ReviewMeta, bool, error) {
-	var m ReviewMeta
+	var (
+		m     ReviewMeta
+		stack int
+	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT base_ref, branch FROM review_meta WHERE subject_id=?`, subjectID).Scan(&m.BaseRef, &m.Branch)
+		`SELECT base_ref, branch, stack FROM review_meta WHERE subject_id=?`, subjectID).Scan(&m.BaseRef, &m.Branch, &stack)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ReviewMeta{}, false, nil
 	}
+	m.Stack = stack != 0
 	return m, err == nil, err
 }
 

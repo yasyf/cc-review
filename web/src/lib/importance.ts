@@ -1,4 +1,5 @@
-import type { LineNote, Organization } from './types';
+import { fileItemId } from './diff';
+import type { LineNote, Section } from './types';
 
 // Injected into each diff's shadow root via the CodeView `unsafeCSS` option.
 // decorateImportance stamps data-cc-importance; the focus tier draws a gutter
@@ -22,16 +23,20 @@ export const IMPORTANCE_UNSAFE_CSS = `
 }
 `;
 
+// itemId → sorted line notes, built across every section's organization.
 export type ImportanceIndex = ReadonlyMap<string, readonly LineNote[]>;
 
-export function buildImportanceIndex(org: Organization | null): ImportanceIndex {
+export function buildImportanceIndex(sections: readonly Section[]): ImportanceIndex {
   const map = new Map<string, LineNote[]>();
-  if (!org) return map;
-  for (const chapter of org.chapters) {
-    for (const file of chapter.files) {
-      if (file.lines.length === 0) continue;
-      if (map.has(file.path)) continue;
-      map.set(file.path, [...file.lines].sort((a, b) => a.start - b.start));
+  for (const section of sections) {
+    if (!section.organization) continue;
+    for (const chapter of section.organization.chapters) {
+      for (const file of chapter.files) {
+        if (file.lines.length === 0) continue;
+        const id = fileItemId(section.sectionKey, file.path);
+        if (map.has(id)) continue;
+        map.set(id, [...file.lines].sort((a, b) => a.start - b.start));
+      }
     }
   }
   return map;

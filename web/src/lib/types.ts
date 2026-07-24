@@ -65,6 +65,11 @@ export type ReplyKind = Reply['kind'];
 export interface Comment {
   id: string;
   versionId: string;
+  // Section identity, denormalized at insert for join-free display/feedback.
+  // The section key is derived `pending ? '' : branch`.
+  sectionId: string;
+  branch: string;
+  pending: boolean;
   filePath: string;
   side: Side;
   range: LineRange;
@@ -91,6 +96,8 @@ export interface FileMeta {
 // AI-bar request. Never gates submit; comment-kind annotations are plain Comments.
 export interface Annotation {
   id: string;
+  // Section key the highlight lands on (`'' ` for pending).
+  sectionKey: string;
   filePath: string;
   side: Side;
   start: number;
@@ -164,6 +171,7 @@ export interface AiRequestAnswer {
 // Per-path state snapshot recorded when Claude applies a batch; `prior` powers
 // one-click undo on the daemon side.
 export interface AiRequestChange {
+  sectionKey: string;
   path: string;
   reason: string;
   prior: { reviewed: boolean; hidden: boolean; fingerprint: string };
@@ -234,26 +242,43 @@ export interface ProvenanceResponse {
   provenance_unavailable: boolean;
 }
 
+// One reviewable diff within a version: a stack branch vs its parent, or the
+// uncommitted working tree (the pending section, `sectionKey === ''`). A flat
+// review is exactly one pending section. Ordered trunk-most first, pending last.
+export interface Section {
+  sectionId: string;
+  position: number;
+  // '' for the pending section, else the branch name.
+  sectionKey: string;
+  branch: string;
+  parentBranch: string;
+  baseRef: string;
+  headRef: string;
+  pending: boolean;
+  patchText: string;
+  files: FileMeta[];
+  // Keyed by path within this section.
+  fileStates: Record<string, FileState>;
+  organization: Organization | null;
+  // Present only on the pending section; keyed by path, ranges sorted by start.
+  attributions?: Record<string, AttributionRange[]>;
+}
+
 export interface SessionResponse {
   review: Review;
   version: number;
   // Stable id of this version row — referenced when creating a comment.
   versionId: string;
-  files: FileMeta[];
-  patchText: string;
+  // Ordered sections (trunk-most first, pending last); a flat review has one.
+  sections: Section[];
   comments: Comment[];
-  // Claude-authored line-range highlights for the displayed version.
+  // Claude-authored line-range highlights for the displayed version; each
+  // carries the section key it lands on.
   annotations: Annotation[];
-  // Keyed by path, filtered to the displayed version's files.
-  fileStates: Record<string, FileState>;
-  // For the displayed version only; null until Claude submits one.
-  organization: Organization | null;
   // Newest first.
   aiRequests: AiRequest[];
   // Ordered; display seq = index + 1.
   turns: Turn[];
-  // Keyed by path; ranges sorted by start within each file.
-  attributions: Record<string, AttributionRange[]>;
   // Keyed by turn id; every listed turn has an entry, possibly empty.
   turnActivity: Record<string, TurnDecision[]>;
   claudeConnected: boolean;
@@ -270,6 +295,7 @@ export interface SessionResponse {
 // browser replays the whole event log from cursor 0 on every load, so every
 // payload must be idempotent.
 export interface FileStateEventEntry {
+  sectionKey: string;
   path: string;
   reviewed: boolean;
   hidden: boolean;
@@ -298,7 +324,12 @@ export type ReviewEvent =
   | { type: 'version.created'; version_number: number }
   | { type: 'ai.request.created'; version_number: number; request: AiRequest }
   | { type: 'ai.request.updated'; version_number: number; request: AiRequest }
-  | { type: 'organization.updated'; version_number: number; organization: Organization }
+  | {
+      type: 'organization.updated';
+      version_number: number;
+      sectionKey: string;
+      organization: Organization;
+    }
   | { type: 'annotations.updated'; version_number: number; annotations: Annotation[] }
   | { type: 'channel.changed'; version_number: number; connected: boolean };
 

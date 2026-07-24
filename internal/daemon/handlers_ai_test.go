@@ -259,11 +259,8 @@ func TestHandleSubmitOrganization(t *testing.T) {
 		if resp := s.handleSubmitOrganization(ctx, r); !resp.OK {
 			t.Fatalf("submit: %s", resp.Error)
 		}
-		v, _, err := s.store.LatestVersion(ctx, started.ReviewID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		org, ok, err := s.store.GetOrganization(ctx, v.ID)
+		sections := s.latestSections(ctx, t, started.ReviewID)
+		org, ok, err := s.store.GetOrganization(ctx, sections[0].ID)
 		if err != nil || !ok {
 			t.Fatalf("get organization: ok=%v err=%v", ok, err)
 		}
@@ -282,25 +279,23 @@ func TestReviewFilesIncludesPatchPath(t *testing.T) {
 	s, repo := testServer(t)
 	req, started := startedReview(ctx, t, s, repo)
 
-	v, _, err := s.store.LatestVersion(ctx, started.ReviewID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v.PatchPath == "" {
-		t.Fatal("version stored without a patch path")
+	sections := s.latestSections(ctx, t, started.ReviewID)
+	if len(sections) != 1 || sections[0].PatchPath == "" {
+		t.Fatalf("sections = %+v, want one pending section with a patch path", sections)
 	}
 	resp := s.handleReviewFiles(ctx, req)
 	if !resp.OK {
 		t.Fatalf("review-files: %s", resp.Error)
 	}
-	var rf struct {
-		PatchPath string `json:"patch_path"`
+	rf := parseReviewFiles(t, resp.ReviewFiles)
+	if rf.Stack || len(rf.Sections) != 1 {
+		t.Fatalf("review-files = %+v, want one flat section", rf)
 	}
-	if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
-		t.Fatal(err)
+	if rf.Sections[0].SectionKey != "" || !rf.Sections[0].Pending {
+		t.Fatalf("section = %+v, want the pending flat section", rf.Sections[0])
 	}
-	if rf.PatchPath != v.PatchPath {
-		t.Fatalf("patch_path = %q, want the stored %q", rf.PatchPath, v.PatchPath)
+	if rf.Sections[0].PatchPath != sections[0].PatchPath {
+		t.Fatalf("patch_path = %q, want the stored %q", rf.Sections[0].PatchPath, sections[0].PatchPath)
 	}
 }
 
@@ -322,19 +317,13 @@ func TestReviewFilesCarryGeneratedVendored(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("review-files: %s", resp.Error)
 	}
-	var rf struct {
-		Files []struct {
-			Path      string `json:"path"`
-			Generated bool   `json:"generated"`
-			Vendored  bool   `json:"vendored"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
-		t.Fatal(err)
+	rf := parseReviewFiles(t, resp.ReviewFiles)
+	if len(rf.Sections) != 1 {
+		t.Fatalf("sections = %d, want one flat section", len(rf.Sections))
 	}
 	type flags struct{ gen, ven bool }
-	byPath := make(map[string]flags, len(rf.Files))
-	for _, f := range rf.Files {
+	byPath := make(map[string]flags, len(rf.Sections[0].Files))
+	for _, f := range rf.Sections[0].Files {
 		byPath[f.Path] = flags{f.Generated, f.Vendored}
 	}
 	if got := byPath["package-lock.json"]; !got.gen || got.ven {
@@ -418,22 +407,11 @@ func TestStartUnmarksChangedFilesAcrossVersions(t *testing.T) {
 	if !rf.OK {
 		t.Fatalf("review-files: %s", rf.Error)
 	}
-	var listing struct {
-		VersionNumber int `json:"version_number"`
-		Files         []struct {
-			Path     string `json:"path"`
-			Status   string `json:"status"`
-			Reviewed bool   `json:"reviewed"`
-			Hidden   bool   `json:"hidden"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(rf.ReviewFiles, &listing); err != nil {
-		t.Fatal(err)
-	}
-	if listing.VersionNumber != 2 || len(listing.Files) != 2 {
+	listing := parseReviewFiles(t, rf.ReviewFiles)
+	if listing.VersionNumber != 2 || len(listing.Sections) != 1 || len(listing.Sections[0].Files) != 2 {
 		t.Fatalf("listing = %+v, want 2 files on version 2", listing)
 	}
-	for _, f := range listing.Files {
+	for _, f := range listing.Sections[0].Files {
 		switch f.Path {
 		case "a.go":
 			if f.Reviewed {
@@ -889,11 +867,8 @@ func TestStartCarriesOrganizationForwardOnRevert(t *testing.T) {
 	if len(third.AIRequests) != 0 {
 		t.Fatalf("carried start re-offered %v, want none", third.AIRequests)
 	}
-	v3, _, err := s.store.LatestVersion(ctx, started.ReviewID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok, err := s.store.GetOrganization(ctx, v3.ID)
+	v3sections := s.latestSections(ctx, t, started.ReviewID)
+	got, ok, err := s.store.GetOrganization(ctx, v3sections[0].ID)
 	if err != nil || !ok {
 		t.Fatalf("v3 organization: ok=%v err=%v", ok, err)
 	}
@@ -941,11 +916,8 @@ func TestStartDoesNotCarryAcrossAChangedDiff(t *testing.T) {
 	if !second.OK || len(second.AIRequests) != 1 {
 		t.Fatalf("second start: ok=%v err=%q ai_requests=%v", second.OK, second.Error, second.AIRequests)
 	}
-	v2, _, err := s.store.LatestVersion(ctx, started.ReviewID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := s.store.GetOrganization(ctx, v2.ID); err != nil || ok {
+	v2sections := s.latestSections(ctx, t, started.ReviewID)
+	if _, ok, err := s.store.GetOrganization(ctx, v2sections[0].ID); err != nil || ok {
 		t.Fatalf("v2 organization: ok=%v err=%v, want absent", ok, err)
 	}
 	if got := len(eventsOfType(ctx, t, s, started.ReviewID, store.EventOrganizationUpdated, false)); got != 1 {
@@ -988,17 +960,14 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 		if !resp.OK {
 			t.Fatalf("review-files: %s", resp.Error)
 		}
-		var rf struct {
-			VersionNumber    int    `json:"version_number"`
-			OrganizationPath string `json:"organization_path"`
+		rf := parseReviewFiles(t, resp.ReviewFiles)
+		if len(rf.Sections) != 1 {
+			t.Fatalf("sections = %d, want one flat section", len(rf.Sections))
 		}
-		if err := json.Unmarshal(resp.ReviewFiles, &rf); err != nil {
-			t.Fatal(err)
-		}
-		if rf.OrganizationPath == "" {
+		if rf.Sections[0].OrganizationPath == "" {
 			return rf.VersionNumber, nil
 		}
-		data, err := os.ReadFile(rf.OrganizationPath)
+		data, err := os.ReadFile(rf.Sections[0].OrganizationPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1090,11 +1059,11 @@ func TestReviewFilesIncludesAnnotatedOrganization(t *testing.T) {
 // path in two chapters and Validate would reject): the direct match wins and
 // the origin-joined entry degrades to removed.
 func TestOrganizationContextDirectMatchWinsOverOriginJoin(t *testing.T) {
-	basis := store.Version{VersionNumber: 1, FilesJSON: `[
+	basis := store.Section{FilesJSON: `[
 		{"path":"p.go","status":"A","fingerprint":"fpA","generated":false,"vendored":false},
 		{"path":"x.go","status":"D","fingerprint":"fpD","generated":false,"vendored":false}
 	]`}
-	current := store.Version{VersionNumber: 2, FilesJSON: `[
+	current := store.Section{FilesJSON: `[
 		{"path":"p.go","old_path":"x.go","status":"R","fingerprint":"fpR","generated":false,"vendored":false}
 	]`}
 	org := store.Organization{Chapters: []store.Chapter{{
@@ -1105,7 +1074,7 @@ func TestOrganizationContextDirectMatchWinsOverOriginJoin(t *testing.T) {
 		},
 	}}}
 
-	out, err := organizationContext(org, basis, current)
+	out, err := organizationContext(org, basis, current, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

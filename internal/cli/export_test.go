@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -60,14 +59,15 @@ func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetReviewMeta(ctx, sub.ID, "base0", branch); err != nil {
+	if err := st.SetReviewMeta(ctx, sub.ID, "base0", branch, false); err != nil {
 		t.Fatal(err)
 	}
-	version, err := st.CreateVersion(ctx, sub.ID, branch, "HEAD", filepath.Join(t.TempDir(), "p.patch"), "[]", "")
+	_, sections, err := st.CreateVersion(ctx, sub.ID, branch, "HEAD", "",
+		[]store.SectionInput{{Position: 0, Branch: branch, BaseRef: "HEAD", Pending: true, FilesJSON: "[]"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutAttributions(ctx, version.ID, map[string][]store.AttributionRange{
+	if err := st.PutAttributions(ctx, sections[0].ID, map[string][]store.AttributionRange{
 		"src/app.py": {{Start: 1, End: 4, TurnID: closed.ID}, {Start: 9, End: 9}},
 	}); err != nil {
 		t.Fatal(err)

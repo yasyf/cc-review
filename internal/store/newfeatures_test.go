@@ -112,19 +112,16 @@ func TestAnnotationsCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	v, sec := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`)
 
 	id1, err := s.CreateAnnotation(ctx, Annotation{
-		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 7, Label: "real change", AIRequestID: 42,
+		VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 7, Label: "real change", AIRequestID: 42,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateAnnotation(ctx, Annotation{
-		VersionID: v.ID, FilePath: "a.go", Side: "deletions", StartLine: 1, EndLine: 1, AIRequestID: 0,
+		VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "deletions", StartLine: 1, EndLine: 1, AIRequestID: 0,
 	}); err != nil {
 		t.Fatal(err)
 	}

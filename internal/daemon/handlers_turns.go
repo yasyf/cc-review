@@ -249,11 +249,11 @@ func sweepStaleScratch(ctx context.Context, ts *vcs.TurnStore, repoRoot string) 
 	_ = os.Remove(filepath.Join(dir, "index"))
 }
 
-// attributeVersion tags a fresh version's added lines with the turns that wrote
-// them. Strictly non-fatal: any failure logs and leaves the version
+// attributeVersion tags the pending section's added lines with the turns that
+// wrote them. Strictly non-fatal: any failure logs and leaves the section
 // unattributed. The caller holds the repo lock, so the tree snapshotted here is
-// the one the version's patch captured.
-func (rv *review) attributeVersion(ctx context.Context, st *store.Store, repoRoot string, versionID int64, patchText string) {
+// the one the section's patch captured.
+func (rv *review) attributeVersion(ctx context.Context, st *store.Store, repoRoot string, sectionID int64, patchText string) {
 	ts := vcs.NewTurnStore(st.DB())
 	scratchDir, err := paths.App().EnsureRepoTurnsDir(repoRoot)
 	if err != nil {
@@ -283,7 +283,7 @@ func (rv *review) attributeVersion(ctx context.Context, st *store.Store, repoRoo
 	if len(byFile) == 0 {
 		return
 	}
-	if err := st.PutAttributions(ctx, versionID, byFile); err != nil {
+	if err := st.PutAttributions(ctx, sectionID, byFile); err != nil {
 		rv.log.Printf("attribution: %v", err)
 	}
 }

@@ -18,25 +18,26 @@ import {
   decorateImportance,
   noteAt,
 } from '../lib/importance';
-import { ANNOTATION_UNSAFE_CSS, annotationsByFile, decorateAnnotations } from '../lib/annotations';
-import { buildItems, parseFiles } from '../lib/diff';
-import type { AnnotationMeta, ComposerDraft, ReviewItem } from '../lib/diff';
+import { ANNOTATION_UNSAFE_CSS, annotationsByItem, decorateAnnotations } from '../lib/annotations';
+import { buildItems, commentItemId, fileItemId, parseFiles, parseItemId } from '../lib/diff';
+import type { AnnotationMeta, ComposerDraft, FileRef, ReviewItem, SectionFiles } from '../lib/diff';
 import { clearDraft, composerDraftKey } from '../lib/drafts';
 import { fileOrder } from '../lib/order';
 import { useReview } from '../lib/review-context';
-import type { Comment, LineLevel, SessionResponse } from '../lib/types';
+import type { AttributionRange, Comment, LineLevel, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import { themes } from '../worker';
 import { CommentThread } from './CommentThread';
 import { FileHeaderControls } from './FileHeaderControls';
 import { FocusPopover } from './FocusPopover';
 import { InlineComposer } from './InlineComposer';
+import { SectionHeader } from './SectionHeader';
 import { TurnPopover } from './TurnPopover';
 
 // The imperative surface the rest of the app uses to navigate the diff; only
 // this component talks to @pierre/diffs directly.
 export interface DiffViewHandle {
-  scrollToFile(path: string): void;
+  scrollToFile(ref: FileRef): void;
   scrollToComment(comment: Comment): void;
   focusNextFile(): void;
   focusPrevFile(): void;
@@ -52,7 +53,7 @@ type CodeViewInstance = NonNullable<ReturnType<CodeViewHandle<AnnotationMeta>['g
 // (under the sticky header); +1px keeps the boundary inclusive.
 const CURRENT_FILE_OFFSET_PX = 1;
 
-type PendingScroll = { kind: 'file'; path: string } | { kind: 'comment'; comment: Comment };
+type PendingScroll = { kind: 'file'; id: string } | { kind: 'comment'; comment: Comment };
 
 type Hover =
   | { kind: 'turn'; entry: TurnIndexEntry; x: number; y: number }
@@ -70,10 +71,14 @@ function commentIndexNearScroll(viewer: CodeViewInstance, comments: readonly Com
   const scrollTop = viewer.getScrollTop();
   let index = 0;
   for (let i = 0; i < comments.length; i++) {
-    const top = viewer.getTopForItem(comments[i].filePath);
+    const top = viewer.getTopForItem(commentItemId(comments[i]));
     if (top !== undefined && top <= scrollTop + CURRENT_FILE_OFFSET_PX) index = i + 1;
   }
   return index;
+}
+
+function isBanner(id: string): boolean {
+  return parseItemId(id).kind === 'banner';
 }
 
 export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref<DiffViewHandle> }) {
@@ -99,63 +104,93 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
 
   const readOnly = session.review.status !== 'open';
 
-  const files = useMemo(() => parseFiles(session.patchText), [session.patchText]);
+  const sectionByKey = useMemo(
+    () => new Map(session.sections.map((s) => [s.sectionKey, s])),
+    [session.sections],
+  );
+  const sectionFiles = useMemo<SectionFiles[]>(
+    () => session.sections.map((section) => ({ section, files: parseFiles(section.patchText) })),
+    [session.sections],
+  );
   const order = useMemo(() => fileOrder(session, viewMode), [session, viewMode]);
-  // Generated/vendored files fold by default (peekable), keyed off session.files
-  // so a Viewed toggle never rethrashes the set.
+  const showBanners = session.sections.length > 1;
+  // Generated/vendored files fold by default (peekable), keyed off the section
+  // files so a Viewed toggle never rethrashes the set.
   const autoCollapse = useMemo(
-    () => new Set(session.files.filter((f) => f.generated || f.vendored).map((f) => f.path)),
-    [session.files],
+    () =>
+      new Set(
+        session.sections.flatMap((s) =>
+          s.files.filter((f) => f.generated || f.vendored).map((f) => fileItemId(s.sectionKey, f.path)),
+        ),
+      ),
+    [session.sections],
   );
   const items = useMemo(
     () =>
       buildItems(
-        files,
+        sectionFiles,
         session.comments,
         draft,
-        session.fileStates,
         order,
         hideReviewed,
         expandOverrides,
         autoCollapse,
+        showBanners,
       ),
-    [
-      files,
-      session.comments,
-      draft,
-      session.fileStates,
-      order,
-      hideReviewed,
-      expandOverrides,
-      autoCollapse,
-    ],
+    [sectionFiles, session.comments, draft, order, hideReviewed, expandOverrides, autoCollapse, showBanners],
   );
 
-  // Comments in display order (file rank, then anchor line) — the cursor `n`/`p`
+  // Comments in display order (item rank, then anchor line) — the cursor `n`/`p`
   // walk. Never derived from getRenderedItems(): off-screen comments must count.
   const orderedComments = useMemo(
     () =>
       [...session.comments].sort((a, b) => {
-        const ra = order.get(a.filePath) ?? Infinity;
-        const rb = order.get(b.filePath) ?? Infinity;
+        const ra = order.get(commentItemId(a)) ?? Infinity;
+        const rb = order.get(commentItemId(b)) ?? Infinity;
         if (ra !== rb) return ra - rb;
         return a.range.end - b.range.end;
       }),
     [session.comments, order],
   );
 
-  // Current-file tracking is DOM-only (a `.file-current` class); routing it
+  // Attribution lives only on the pending section; key it by itemId so the
+  // decorate lookups match the rendered item ids.
+  const attributionIndex = useMemo(() => {
+    const out: Record<string, AttributionRange[]> = {};
+    const pending = session.sections.find((s) => s.pending);
+    if (pending?.attributions) {
+      for (const [path, ranges] of Object.entries(pending.attributions)) {
+        out[fileItemId(pending.sectionKey, path)] = ranges;
+      }
+    }
+    return out;
+  }, [session.sections]);
+
+  // Current-item tracking is DOM-only (a `.file-current` class); routing it
   // through items/version would re-collapse on every scroll.
-  const currentPathRef = useRef<string | null>(null);
+  const currentItemRef = useRef<string | null>(null);
   const itemsRef = useRef(items);
   const orderedCommentsRef = useRef(orderedComments);
-  const fileStatesRef = useRef(session.fileStates);
+  const sectionByKeyRef = useRef(sectionByKey);
 
   // The draft's typed text is intentionally NOT cleared here: replacing the
   // draft (new selection, other file) carries the in-progress comment along.
-  const openDraft = useCallback((filePath: string, range: SelectedLineRange) => {
-    setDraft({ filePath, range, seq: ++seqRef.current });
-  }, []);
+  const openDraft = useCallback(
+    (itemId: string, range: SelectedLineRange) => {
+      const parsed = parseItemId(itemId);
+      if (parsed.kind !== 'file') return;
+      const section = sectionByKeyRef.current.get(parsed.sectionKey);
+      if (!section) return;
+      setDraft({
+        sectionId: section.sectionId,
+        sectionKey: parsed.sectionKey,
+        filePath: parsed.path,
+        range,
+        seq: ++seqRef.current,
+      });
+    },
+    [],
+  );
 
   const closeDraft = useCallback(() => {
     clearDraft(composerDraftKey);
@@ -171,39 +206,41 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
 
   // A hidden or filtered-out file can no longer host the composer.
   useEffect(() => {
-    if (draft && !items.some((item) => item.id === draft.filePath)) closeDraft();
+    if (draft && !items.some((item) => item.id === fileItemId(draft.sectionKey, draft.filePath))) {
+      closeDraft();
+    }
   }, [draft, items, closeDraft]);
 
   const turnIndex = useMemo(() => buildTurnIndex(session.turns), [session.turns]);
   const importanceIndex = useMemo(
-    () => buildImportanceIndex(session.organization),
-    [session.organization],
+    () => buildImportanceIndex(session.sections),
+    [session.sections],
   );
-  const annotationsForFile = useMemo(
-    () => annotationsByFile(session.annotations),
+  const annotationsForItem = useMemo(
+    () => annotationsByItem(session.annotations),
     [session.annotations],
   );
 
-  // Attribution inputs ride through refs so the options identity stays stable
+  // Decoration inputs ride through refs so the options identity stays stable
   // across turn-focus and attribution changes — an options swap would re-render
   // every diff. The decorate effect below repaints what's already on screen;
   // onPostRender covers everything rendered afterwards.
-  const attributionsRef = useRef(session.attributions);
+  const attributionsRef = useRef(attributionIndex);
   const turnIndexRef = useRef(turnIndex);
   const activeTurnIdRef = useRef(activeTurnId);
-  const annotationsRef = useRef(annotationsForFile);
+  const annotationsRef = useRef(annotationsForItem);
   const importanceIndexRef = useRef(importanceIndex);
   const focusModeRef = useRef(focusMode);
   useEffect(() => {
-    attributionsRef.current = session.attributions;
+    attributionsRef.current = attributionIndex;
     turnIndexRef.current = turnIndex;
     activeTurnIdRef.current = activeTurnId;
-    annotationsRef.current = annotationsForFile;
+    annotationsRef.current = annotationsForItem;
     importanceIndexRef.current = importanceIndex;
     focusModeRef.current = focusMode;
     itemsRef.current = items;
     orderedCommentsRef.current = orderedComments;
-    fileStatesRef.current = session.fileStates;
+    sectionByKeyRef.current = sectionByKey;
   });
 
   useEffect(() => {
@@ -212,7 +249,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     for (const rendered of instance.getRenderedItems()) {
       decorateContainer(
         rendered.element,
-        session.attributions[rendered.id] ?? [],
+        attributionIndex[rendered.id] ?? [],
         turnIndex,
         activeTurnId,
       );
@@ -222,16 +259,16 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         focusMode,
         activeTurnId,
       );
-      decorateAnnotations(rendered.element, annotationsForFile[rendered.id] ?? []);
+      decorateAnnotations(rendered.element, annotationsForItem[rendered.id] ?? []);
     }
-  }, [session.attributions, turnIndex, activeTurnId, importanceIndex, focusMode, annotationsForFile]);
+  }, [attributionIndex, turnIndex, activeTurnId, importanceIndex, focusMode, annotationsForItem]);
 
   // Focusing a turn (from the legend) jumps to its first attributed line; a
   // re-fire on attribution updates alone must not re-scroll.
   const prevActiveTurnId = useRef<string | null>(null);
   useEffect(() => {
     if (activeTurnId !== null && activeTurnId !== prevActiveTurnId.current) {
-      const target = firstOccurrence(session.attributions, activeTurnId);
+      const target = firstOccurrence(attributionIndex, activeTurnId);
       if (target) {
         codeView.current?.scrollTo({
           type: 'range',
@@ -243,7 +280,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       }
     }
     prevActiveTurnId.current = activeTurnId;
-  }, [activeTurnId, session.attributions]);
+  }, [activeTurnId, attributionIndex]);
 
   const options = useMemo<CodeViewOptions<AnnotationMeta>>(
     () => ({
@@ -273,6 +310,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         context: { item: { id: string } },
       ) => {
         if (phase === 'unmount') return;
+        node.classList.toggle('section-banner', isBanner(context.item.id));
         decorateContainer(
           node,
           attributionsRef.current[context.item.id] ?? [],
@@ -286,7 +324,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
           activeTurnIdRef.current,
         );
         decorateAnnotations(node, annotationsRef.current[context.item.id] ?? []);
-        node.classList.toggle('file-current', context.item.id === currentPathRef.current);
+        node.classList.toggle('file-current', context.item.id === currentItemRef.current);
       },
       onLineEnter: (
         props: { lineNumber: number; lineElement: HTMLElement; lineType?: LineTypes },
@@ -330,52 +368,56 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       }
       if (!draft || item.type !== 'diff') return null;
       return (
-        <InlineComposer
-          draft={draft}
-          fileDiff={item.fileDiff}
-          versionId={session.versionId}
-          onClose={closeDraft}
-        />
+        <InlineComposer draft={draft} fileDiff={item.fileDiff} onClose={closeDraft} />
       );
     },
-    [draft, session.versionId, closeDraft],
+    [draft, closeDraft],
   );
 
-  const renderHeaderMetadata = useCallback(
-    (item: ReviewItem) => <FileHeaderControls path={item.id} />,
-    [],
-  );
+  const renderHeaderMetadata = useCallback((item: ReviewItem) => {
+    const ref = parseItemId(item.id);
+    return ref.kind === 'banner' ? (
+      <SectionHeader sectionKey={ref.sectionKey} />
+    ) : (
+      <FileHeaderControls sectionKey={ref.sectionKey} path={ref.path} />
+    );
+  }, []);
 
   // Unhide/peek the target up front; the scroll itself waits in the effect
   // below until the revealed item is back in `items`.
   const reveal = useCallback(
-    (path: string) => {
-      const state = session.fileStates[path];
+    (itemId: string) => {
+      const parsed = parseItemId(itemId);
+      if (parsed.kind !== 'file') return;
+      const section = sectionByKey.get(parsed.sectionKey);
+      const state = section?.fileStates[parsed.path];
       // A failed unhide means the target never re-enters items; the scroll
       // must die with it.
       if (state?.hidden) {
-        mutateStates([{ path, hidden: false }], { onError: () => setPendingScroll(null) });
+        mutateStates([{ sectionKey: parsed.sectionKey, path: parsed.path, hidden: false }], {
+          onError: () => setPendingScroll(null),
+        });
       }
-      if ((state?.reviewed || autoCollapse.has(path)) && !expandOverrides.has(path)) {
-        toggleExpandOverride(path);
+      if ((state?.reviewed || autoCollapse.has(itemId)) && !expandOverrides.has(itemId)) {
+        toggleExpandOverride(itemId);
       }
     },
-    [session.fileStates, expandOverrides, toggleExpandOverride, mutateStates, autoCollapse],
+    [sectionByKey, expandOverrides, toggleExpandOverride, mutateStates, autoCollapse],
   );
 
   // Repaint the `.file-current` class on what's mounted now; onPostRender covers
   // rows rendered afterwards (recycled or scrolled into view).
-  const applyCurrentPath = useCallback((path: string | null) => {
-    if (currentPathRef.current === path) return;
-    currentPathRef.current = path;
+  const applyCurrentItem = useCallback((id: string | null) => {
+    if (currentItemRef.current === id) return;
+    currentItemRef.current = id;
     const viewer = codeView.current?.getInstance();
     if (!viewer) return;
     for (const rendered of viewer.getRenderedItems()) {
-      rendered.element.classList.toggle('file-current', rendered.id === path);
+      rendered.element.classList.toggle('file-current', rendered.id === id);
     }
   }, []);
 
-  // Topmost file whose measured top sits at/above the viewport top — the file
+  // Topmost item whose measured top sits at/above the viewport top — the item
   // the sticky header currently represents. Walks the full in-memory order.
   const syncCurrentFromScroll = useCallback(
     (viewer: CodeViewInstance) => {
@@ -388,23 +430,23 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         if (top <= scrollTop + CURRENT_FILE_OFFSET_PX) currentId = item.id;
         else break;
       }
-      applyCurrentPath(currentId);
+      applyCurrentItem(currentId);
     },
-    [applyCurrentPath],
+    [applyCurrentItem],
   );
 
-  // j/k glide: scroll to a file without peeking it open (no reveal()).
-  const goToFile = useCallback(
-    (path: string) => {
-      codeView.current?.scrollTo({ type: 'item', id: path, align: 'start', behavior: 'smooth' });
-      applyCurrentPath(path);
+  // j/k glide: scroll to an item without peeking it open (no reveal()).
+  const goToItem = useCallback(
+    (id: string) => {
+      codeView.current?.scrollTo({ type: 'item', id, align: 'start', behavior: 'smooth' });
+      applyCurrentItem(id);
     },
-    [applyCurrentPath],
+    [applyCurrentItem],
   );
 
   const scrollToCommentImpl = useCallback(
     (comment: Comment) => {
-      reveal(comment.filePath);
+      reveal(commentItemId(comment));
       pendingScrollMisses.current = 0;
       setPendingScroll({ kind: 'comment', comment });
     },
@@ -416,48 +458,77 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     if (viewer) syncCurrentFromScroll(viewer);
   }, [items, syncCurrentFromScroll]);
 
+  // Step to the next/previous file item, skipping section banners.
+  const stepFile = useCallback(
+    (dir: 1 | -1) => {
+      const list = itemsRef.current;
+      const files = list.filter((item) => !isBanner(item.id));
+      if (files.length === 0) return;
+      const currentId = currentItemRef.current;
+      const currentIsBanner = currentId !== null && isBanner(currentId);
+      let idx = files.findIndex((item) => item.id === currentId);
+      if (idx < 0) {
+        // On a banner (or nothing): forward lands on the first file after it,
+        // backward on the last file before it.
+        const listIdx = list.findIndex((item) => item.id === currentId);
+        if (currentIsBanner && listIdx >= 0) {
+          const nextFile = list.slice(listIdx + 1).find((item) => !isBanner(item.id));
+          const prevFile = [...list.slice(0, listIdx)].reverse().find((item) => !isBanner(item.id));
+          const target = dir === 1 ? nextFile ?? prevFile : prevFile ?? nextFile;
+          if (target) goToItem(target.id);
+          return;
+        }
+        idx = 0;
+        goToItem(files[0].id);
+        return;
+      }
+      goToItem(files[Math.max(0, Math.min(idx + dir, files.length - 1))].id);
+    },
+    [goToItem],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
-      scrollToFile(path: string) {
-        reveal(path);
+      scrollToFile(fileRef: FileRef) {
+        const id = fileItemId(fileRef.sectionKey, fileRef.path);
+        reveal(id);
         pendingScrollMisses.current = 0;
-        setPendingScroll({ kind: 'file', path });
+        setPendingScroll({ kind: 'file', id });
       },
       scrollToComment(comment: Comment) {
         scrollToCommentImpl(comment);
       },
       focusNextFile() {
-        const list = itemsRef.current;
-        if (list.length === 0) return;
-        const idx = list.findIndex((item) => item.id === currentPathRef.current);
-        goToFile(list[idx < 0 ? 0 : Math.min(idx + 1, list.length - 1)].id);
+        stepFile(1);
       },
       focusPrevFile() {
-        const list = itemsRef.current;
-        if (list.length === 0) return;
-        const idx = list.findIndex((item) => item.id === currentPathRef.current);
-        goToFile(list[idx < 0 ? 0 : Math.max(idx - 1, 0)].id);
+        stepFile(-1);
       },
       toggleViewedCurrent() {
-        const path = currentPathRef.current;
-        if (!path) return;
-        const reviewed = fileStatesRef.current[path]?.reviewed ?? false;
+        const id = currentItemRef.current;
+        if (!id) return;
+        const parsed = parseItemId(id);
+        if (parsed.kind !== 'file') return;
+        const section = sectionByKeyRef.current.get(parsed.sectionKey);
+        const reviewed = section?.fileStates[parsed.path]?.reviewed ?? false;
         if (reviewed) {
-          mutateStates([{ path, reviewed: false }]);
+          mutateStates([{ sectionKey: parsed.sectionKey, path: parsed.path, reviewed: false }]);
           return;
         }
         // Capture the next file before mutating: with hideReviewed on, the just-
         // viewed file leaves `items` and the indices shift under us.
         const list = itemsRef.current;
-        const nextId = list[list.findIndex((item) => item.id === path) + 1]?.id ?? null;
-        clearExpandOverride(path);
-        mutateStates([{ path, reviewed: true }]);
-        if (nextId) goToFile(nextId);
+        const nextId = list
+          .slice(list.findIndex((item) => item.id === id) + 1)
+          .find((item) => !isBanner(item.id))?.id ?? null;
+        clearExpandOverride(id);
+        mutateStates([{ sectionKey: parsed.sectionKey, path: parsed.path, reviewed: true }]);
+        if (nextId) goToItem(nextId);
       },
       toggleCollapseCurrent() {
-        const path = currentPathRef.current;
-        if (path) toggleExpandOverride(path);
+        const id = currentItemRef.current;
+        if (id && !isBanner(id)) toggleExpandOverride(id);
       },
       focusNextComment() {
         const comments = orderedCommentsRef.current;
@@ -474,23 +545,23 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         scrollToCommentImpl(comments[Math.max(i - 1, 0)]);
       },
     }),
-    [reveal, scrollToCommentImpl, goToFile, mutateStates, toggleExpandOverride, clearExpandOverride],
+    [reveal, scrollToCommentImpl, stepFile, goToItem, mutateStates, toggleExpandOverride, clearExpandOverride],
   );
 
   useEffect(() => {
     if (!pendingScroll) return;
-    const path = pendingScroll.kind === 'file' ? pendingScroll.path : pendingScroll.comment.filePath;
-    if (!items.some((item) => item.id === path)) {
+    const id = pendingScroll.kind === 'file' ? pendingScroll.id : commentItemId(pendingScroll.comment);
+    if (!items.some((item) => item.id === id)) {
       if (++pendingScrollMisses.current >= MAX_PENDING_SCROLL_MISSES) setPendingScroll(null);
       return;
     }
     if (pendingScroll.kind === 'file') {
-      codeView.current?.scrollTo({ type: 'item', id: path, align: 'start', behavior: 'smooth' });
+      codeView.current?.scrollTo({ type: 'item', id, align: 'start', behavior: 'smooth' });
     } else {
       const { comment } = pendingScroll;
       codeView.current?.scrollTo({
         type: 'range',
-        id: comment.filePath,
+        id,
         range: {
           start: comment.range.start,
           end: comment.range.end,

@@ -24,10 +24,23 @@ func seedReview(ctx context.Context, t *testing.T, s *Store, session string, pid
 	if err != nil {
 		t.Fatalf("seed review: %v", err)
 	}
-	if err := s.SetReviewMeta(ctx, sub.ID, base, branch); err != nil {
+	if err := s.SetReviewMeta(ctx, sub.ID, base, branch, false); err != nil {
 		t.Fatalf("seed meta: %v", err)
 	}
 	return sub.ID
+}
+
+// seedFlatVersion creates a version with a single pending section (the flat
+// review shape) and returns both. filesJSON is the section's files summary.
+func seedFlatVersion(ctx context.Context, t *testing.T, s *Store, reviewID, branch, baseRef, sessionID, filesJSON string) (Version, Section) {
+	t.Helper()
+	v, sections, err := s.CreateVersion(ctx, reviewID, branch, baseRef, sessionID, []SectionInput{
+		{Position: 0, Branch: branch, BaseRef: baseRef, Pending: true, FilesJSON: filesJSON},
+	})
+	if err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	return v, sections[0]
 }
 
 // setReviewStatus moves a review subject's lifecycle status (e.g. to

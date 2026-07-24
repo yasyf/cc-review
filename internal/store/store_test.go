@@ -80,7 +80,7 @@ func TestVersionNumbersAreMonotonic(t *testing.T) {
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
 
 	for want := 1; want <= 3; want++ {
-		v, err := s.CreateVersion(ctx, id, "main", "HEAD", "/p.patch", "[]", "")
+		v, _, err := s.CreateVersion(ctx, id, "main", "HEAD", "", []SectionInput{{Position: 0, Pending: true, FilesJSON: "[]"}})
 		if err != nil {
 			t.Fatalf("create version: %v", err)
 		}
@@ -94,12 +94,29 @@ func TestVersionNumbersAreMonotonic(t *testing.T) {
 	}
 }
 
+func TestCreateCommentRejectsStaleSection(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
+	v1, sec1 := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+
+	// A comment on the section while its version is latest succeeds.
+	if _, err := s.CreateComment(ctx, Comment{VersionID: v1.ID, SectionID: sec1.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1}); err != nil {
+		t.Fatalf("comment on latest version: %v", err)
+	}
+	// Minting v2 supersedes v1; a comment on v1's section is now rejected.
+	seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	if _, err := s.CreateComment(ctx, Comment{VersionID: v1.ID, SectionID: sec1.ID, FilePath: "a.go", Side: "additions", StartLine: 2, EndLine: 2}); !errors.Is(err, ErrStaleSection) {
+		t.Fatalf("stale-section comment: err=%v, want ErrStaleSection", err)
+	}
+}
+
 func TestReplyDedupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
-	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+	v, sec := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	id1, ins1, err := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "why?", DedupKey: "k1"})
 	if err != nil || !ins1 {
@@ -126,8 +143,8 @@ func TestConcurrentReplyDedupNeverErrors(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
-	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+	v, sec := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	// Fire many redeliveries of the same reply concurrently. Before the ON
 	// CONFLICT fix the losing writers hit a UNIQUE-constraint error; now every
@@ -292,8 +309,8 @@ func TestAskReplyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
-	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+	v, sec := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	ask := &Ask{Header: "Approach", MultiSelect: true, Options: []AskOption{
 		{Label: "Keep as-is", Description: "minimal churn"},
@@ -345,8 +362,8 @@ func TestAnswerAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
-	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+	v, sec := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	newAsk := func(multi bool) int64 {
 		id, _, err := s.CreateReply(ctx, Reply{
@@ -445,8 +462,8 @@ func TestAnswerQuestion(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
-	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+	v, sec := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 
 	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "Q?"})
 	if err := s.AnswerQuestion(ctx, qid, "because", "web"); err != nil {
@@ -473,8 +490,8 @@ func TestListOpenQuestionsIncludesAsk(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	id := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, id, "main", "HEAD", "/p", "[]", "")
-	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm"})
+	v, sec := seedFlatVersion(ctx, t, s, id, "main", "HEAD", "", "[]")
+	cid, _ := s.CreateComment(ctx, Comment{VersionID: v.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm"})
 
 	qid, _, _ := s.CreateReply(ctx, Reply{CommentID: cid, Origin: "claude", Kind: "question", Body: "free-form?"})
 	ask := &Ask{Options: []AskOption{{Label: "A"}, {Label: "B", Description: "alt"}}}

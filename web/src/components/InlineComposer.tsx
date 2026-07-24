@@ -10,12 +10,10 @@ import type { LineRange, Side } from '../lib/types';
 export function InlineComposer({
   draft,
   fileDiff,
-  versionId,
   onClose,
 }: {
   draft: ComposerDraft;
   fileDiff: FileDiffMetadata;
-  versionId: string;
   onClose(): void;
 }) {
   const { slug } = useReview();
@@ -41,7 +39,7 @@ export function InlineComposer({
       ...(draft.range.endSide ? { endSide: draft.range.endSide } : {}),
     };
     createComment.mutate({
-      versionId,
+      sectionId: draft.sectionId,
       filePath: draft.filePath,
       side,
       range,

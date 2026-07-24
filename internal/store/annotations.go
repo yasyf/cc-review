@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
-const annotationCols = `id, version_id, file_path, side, start_line, end_line, label, ai_request_id, created_at`
+const annotationCols = `id, version_id, section_id, file_path, side, start_line, end_line, label, ai_request_id, created_at`
 
 func scanAnnotation(row interface{ Scan(...any) error }) (Annotation, error) {
 	var (
 		a       Annotation
 		created int64
 	)
-	if err := row.Scan(&a.ID, &a.VersionID, &a.FilePath, &a.Side, &a.StartLine, &a.EndLine,
+	if err := row.Scan(&a.ID, &a.VersionID, &a.SectionID, &a.FilePath, &a.Side, &a.StartLine, &a.EndLine,
 		&a.Label, &a.AIRequestID, &created); err != nil {
 		return Annotation{}, err
 	}
@@ -25,9 +25,9 @@ func scanAnnotation(row interface{ Scan(...any) error }) (Annotation, error) {
 func (s *Store) CreateAnnotation(ctx context.Context, a Annotation) (int64, error) {
 	now := time.Now()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO annotations(version_id, file_path, side, start_line, end_line, label, ai_request_id, created_at)
-		 VALUES(?,?,?,?,?,?,?,?)`,
-		a.VersionID, a.FilePath, a.Side, a.StartLine, a.EndLine, a.Label, a.AIRequestID, unix(now))
+		`INSERT INTO annotations(version_id, section_id, file_path, side, start_line, end_line, label, ai_request_id, created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?)`,
+		a.VersionID, a.SectionID, a.FilePath, a.Side, a.StartLine, a.EndLine, a.Label, a.AIRequestID, unix(now))
 	if err != nil {
 		return 0, fmt.Errorf("create annotation: %w", err)
 	}

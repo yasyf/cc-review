@@ -32,13 +32,15 @@ type Store struct {
 
 // schemaV1 is the review domain schema layered on cc-interact's core
 // subjects/events tables. review_meta pins each review's diff base and creation
-// branch (the per-version base_ref still lives on review_versions). Foreign keys
-// point at the core subjects table the core schema created first.
+// branch and flags a stacked review; each version's diff is its ordered
+// version_sections list (a flat review is exactly one pending section). Foreign
+// keys point at the core subjects table the core schema created first.
 const schemaV1 = `
 CREATE TABLE review_meta (
   subject_id TEXT PRIMARY KEY REFERENCES subjects(id),
   base_ref   TEXT NOT NULL DEFAULT '',
-  branch     TEXT NOT NULL DEFAULT ''
+  branch     TEXT NOT NULL DEFAULT '',
+  stack      INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE review_versions (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,15 +48,30 @@ CREATE TABLE review_versions (
   version_number INTEGER NOT NULL,
   branch         TEXT NOT NULL DEFAULT '',
   base_ref       TEXT NOT NULL DEFAULT '',
-  patch_path     TEXT NOT NULL,
-  files_json     TEXT NOT NULL DEFAULT '[]',
   session_id     TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   UNIQUE(review_id, version_number)
 );
+CREATE TABLE version_sections (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_id    INTEGER NOT NULL REFERENCES review_versions(id),
+  position      INTEGER NOT NULL,
+  branch        TEXT NOT NULL DEFAULT '',
+  parent_branch TEXT NOT NULL DEFAULT '',
+  base_ref      TEXT NOT NULL DEFAULT '',
+  head_ref      TEXT NOT NULL DEFAULT '',
+  pending       INTEGER NOT NULL DEFAULT 0,
+  patch_path    TEXT NOT NULL DEFAULT '',
+  files_json    TEXT NOT NULL DEFAULT '[]',
+  UNIQUE(version_id, position)
+);
+CREATE INDEX idx_version_sections_version ON version_sections(version_id);
 CREATE TABLE comments (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   version_id   INTEGER NOT NULL REFERENCES review_versions(id),
+  section_id   INTEGER NOT NULL REFERENCES version_sections(id),
+  branch       TEXT NOT NULL DEFAULT '',
+  pending      INTEGER NOT NULL DEFAULT 0,
   file_path    TEXT NOT NULL,
   side         TEXT NOT NULL,
   start_line   INTEGER NOT NULL,
@@ -87,12 +104,13 @@ CREATE INDEX idx_replies_comment ON replies(comment_id);
 CREATE UNIQUE INDEX idx_replies_dedup ON replies(dedup_key) WHERE dedup_key IS NOT NULL;
 CREATE TABLE file_states (
   review_id            TEXT NOT NULL REFERENCES subjects(id),
+  section_key          TEXT NOT NULL DEFAULT '',
   path                 TEXT NOT NULL,
   reviewed             INTEGER NOT NULL DEFAULT 0,
   hidden               INTEGER NOT NULL DEFAULT 0,
   reviewed_fingerprint TEXT NOT NULL DEFAULT '',
   updated_at           INTEGER NOT NULL,
-  PRIMARY KEY (review_id, path)
+  PRIMARY KEY (review_id, section_key, path)
 );
 CREATE TABLE ai_requests (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,21 +131,22 @@ CREATE TABLE ai_requests (
 );
 CREATE INDEX idx_ai_requests_review ON ai_requests(review_id);
 CREATE TABLE organizations (
-  version_id    INTEGER PRIMARY KEY REFERENCES review_versions(id),
+  section_id    INTEGER PRIMARY KEY REFERENCES version_sections(id),
   chapters_json TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
 CREATE TABLE turn_attributions (
-  version_id  INTEGER NOT NULL REFERENCES review_versions(id),
+  section_id  INTEGER NOT NULL REFERENCES version_sections(id),
   file_path   TEXT NOT NULL,
   ranges_json TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
-  PRIMARY KEY (version_id, file_path)
+  PRIMARY KEY (section_id, file_path)
 );
 CREATE TABLE annotations (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   version_id    INTEGER NOT NULL REFERENCES review_versions(id),
+  section_id    INTEGER NOT NULL REFERENCES version_sections(id),
   file_path     TEXT NOT NULL,
   side          TEXT NOT NULL,
   start_line    INTEGER NOT NULL,

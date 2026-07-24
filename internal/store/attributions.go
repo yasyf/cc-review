@@ -14,9 +14,9 @@ type AttributionRange struct {
 	TurnID int64 `json:"turnId,omitempty"`
 }
 
-// PutAttributions stores (or replaces) a version's per-file attribution
+// PutAttributions stores (or replaces) a section's per-file attribution
 // ranges, one row per file.
-func (s *Store) PutAttributions(ctx context.Context, versionID int64, byFile map[string][]AttributionRange) error {
+func (s *Store) PutAttributions(ctx context.Context, sectionID int64, byFile map[string][]AttributionRange) error {
 	now := time.Now().UnixMilli()
 	for path, ranges := range byFile {
 		encoded, err := encodeAttributionRanges(ranges)
@@ -24,8 +24,8 @@ func (s *Store) PutAttributions(ctx context.Context, versionID int64, byFile map
 			return fmt.Errorf("encode attribution ranges for %s: %w", path, err)
 		}
 		if _, err := s.db.ExecContext(ctx,
-			`INSERT OR REPLACE INTO turn_attributions(version_id, file_path, ranges_json, created_at) VALUES(?,?,?,?)`,
-			versionID, path, encoded, now); err != nil {
+			`INSERT OR REPLACE INTO turn_attributions(section_id, file_path, ranges_json, created_at) VALUES(?,?,?,?)`,
+			sectionID, path, encoded, now); err != nil {
 			return fmt.Errorf("put attributions for %s: %w", path, err)
 		}
 	}
@@ -49,7 +49,8 @@ func (s *Store) ListAttributionsBySession(ctx context.Context, sessionID string)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT r.id, v.version_number, a.file_path, a.ranges_json
 		 FROM turn_attributions a
-		 JOIN review_versions v ON v.id = a.version_id
+		 JOIN version_sections vs ON vs.id = a.section_id
+		 JOIN review_versions v ON v.id = vs.version_id
 		 JOIN subjects r ON r.id = v.review_id
 		 WHERE r.session_id = ?
 		 ORDER BY r.id, v.version_number, a.file_path`, sessionID)
@@ -75,11 +76,11 @@ func (s *Store) ListAttributionsBySession(ctx context.Context, sessionID string)
 	return out, rows.Err()
 }
 
-// ListAttributionsByVersion returns a version's attribution ranges keyed by
+// ListAttributionsBySection returns a section's attribution ranges keyed by
 // file path.
-func (s *Store) ListAttributionsByVersion(ctx context.Context, versionID int64) (map[string][]AttributionRange, error) {
+func (s *Store) ListAttributionsBySection(ctx context.Context, sectionID int64) (map[string][]AttributionRange, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT file_path, ranges_json FROM turn_attributions WHERE version_id=?`, versionID)
+		`SELECT file_path, ranges_json FROM turn_attributions WHERE section_id=?`, sectionID)
 	if err != nil {
 		return nil, fmt.Errorf("list attributions: %w", err)
 	}
@@ -92,7 +93,7 @@ func (s *Store) ListAttributionsByVersion(ctx context.Context, versionID int64) 
 		}
 		ranges, err := decodeAttributionRanges(rangesJSON)
 		if err != nil {
-			return nil, fmt.Errorf("version %d: decode attribution ranges for %s: %w", versionID, path, err)
+			return nil, fmt.Errorf("section %d: decode attribution ranges for %s: %w", sectionID, path, err)
 		}
 		byFile[path] = ranges
 	}

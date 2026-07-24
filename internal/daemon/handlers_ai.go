@@ -45,6 +45,21 @@ func reviewWithLatest(hc ccd.HandlerCtx, st *store.Store) (subject.Subject, stor
 	return sub, v, nil
 }
 
+// reviewWithSections resolves the window's review, its latest version, and that
+// version's sections; a non-nil Reply is the failure to return as-is.
+func reviewWithSections(hc ccd.HandlerCtx, st *store.Store) (subject.Subject, store.Version, []store.Section, *ccd.Reply) {
+	sub, v, fail := reviewWithLatest(hc, st)
+	if fail != nil {
+		return subject.Subject{}, store.Version{}, nil, fail
+	}
+	sections, err := st.ListSections(hc.Ctx, v.ID)
+	if err != nil {
+		r := errReply(err.Error())
+		return subject.Subject{}, store.Version{}, nil, &r
+	}
+	return sub, v, sections, nil
+}
+
 func (rv *review) handleFileStates(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
 	b, err := decodeBody(hc.Env.Body)
@@ -54,18 +69,18 @@ func (rv *review) handleFileStates(hc ccd.HandlerCtx) ccd.Reply {
 	if len(b.Files) == 0 {
 		return errReply("file-states requires at least one file")
 	}
-	sub, v, fail := reviewWithLatest(hc, st)
+	sub, v, sections, fail := reviewWithSections(hc, st)
 	if fail != nil {
 		return *fail
 	}
-	fingerprints, err := versionFingerprints(v)
+	fingerprints, err := versionSectionFingerprints(sections)
 	if err != nil {
 		return errReply(err.Error())
 	}
 	inputs := make([]store.FileStateInput, 0, len(b.Files))
 	reasons := make([]string, 0, len(b.Files))
 	for _, f := range b.Files {
-		inputs = append(inputs, store.FileStateInput{Path: f.Path, Reviewed: f.Reviewed, Hidden: f.Hidden})
+		inputs = append(inputs, store.FileStateInput{SectionKey: f.SectionKey, Path: f.Path, Reviewed: f.Reviewed, Hidden: f.Hidden})
 		reasons = append(reasons, f.Reason)
 	}
 	return rv.applyFileStateBatch(hc, st, sub, v, fingerprints, inputs, reasons, b.AIRequestID)
@@ -87,18 +102,18 @@ func (rv *review) handleFileStatesByRisk(hc ccd.HandlerCtx) ccd.Reply {
 	if b.Reviewed == nil && b.Hidden == nil {
 		return errReply("file-states-by-risk requires reviewed or hidden to set")
 	}
-	sub, v, fail := reviewWithLatest(hc, st)
+	sub, v, sections, fail := reviewWithSections(hc, st)
 	if fail != nil {
 		return *fail
 	}
-	org, _, ok, err := st.LatestOrganization(hc.Ctx, sub.ID)
+	orgs, err := st.GetOrganizationsByVersion(hc.Ctx, v.ID)
 	if err != nil {
 		return errReply(err.Error())
 	}
-	if !ok {
+	if len(orgs) == 0 {
 		return errReply("no organization yet — the review must be organized before selecting files by risk")
 	}
-	fingerprints, err := versionFingerprints(v)
+	fingerprints, err := versionSectionFingerprints(sections)
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -106,30 +121,35 @@ func (rv *review) handleFileStatesByRisk(hc ccd.HandlerCtx) ccd.Reply {
 	for _, r := range b.Risk {
 		want[r] = true
 	}
-	seen := make(map[string]bool)
+	seen := make(map[store.SectionFileKey]bool)
+	inputs := make([]store.FileStateInput, 0)
+	reasons := make([]string, 0)
 	matched := make([]string, 0)
-	for _, ch := range org.Chapters {
-		for _, f := range ch.Files {
-			if !want[f.Risk] || seen[f.Path] {
-				continue
+	for _, sec := range sections {
+		org, ok := orgs[sec.ID]
+		if !ok {
+			continue
+		}
+		for _, ch := range org.Chapters {
+			for _, f := range ch.Files {
+				key := store.SectionFileKey{SectionKey: sec.Key(), Path: f.Path}
+				if !want[f.Risk] || seen[key] {
+					continue
+				}
+				// Only flip paths the current section still carries; a stale org's
+				// moved/removed file is left for the agent to re-organize.
+				if _, inSection := fingerprints[key]; !inSection {
+					continue
+				}
+				seen[key] = true
+				inputs = append(inputs, store.FileStateInput{SectionKey: sec.Key(), Path: f.Path, Reviewed: b.Reviewed, Hidden: b.Hidden})
+				reasons = append(reasons, b.Reason)
+				matched = append(matched, sectionFileLabel(sec.Key(), f.Path))
 			}
-			// Skip an organization path the current version no longer carries
-			// (a moved/removed file from a stale org); the agent re-organizes.
-			if _, inVersion := fingerprints[f.Path]; !inVersion {
-				continue
-			}
-			seen[f.Path] = true
-			matched = append(matched, f.Path)
 		}
 	}
-	if len(matched) == 0 {
+	if len(inputs) == 0 {
 		return okReply(result{Paths: []string{}})
-	}
-	inputs := make([]store.FileStateInput, 0, len(matched))
-	reasons := make([]string, 0, len(matched))
-	for _, p := range matched {
-		inputs = append(inputs, store.FileStateInput{Path: p, Reviewed: b.Reviewed, Hidden: b.Hidden})
-		reasons = append(reasons, b.Reason)
 	}
 	if reply := rv.applyFileStateBatch(hc, st, sub, v, fingerprints, inputs, reasons, b.AIRequestID); !reply.OK {
 		return reply
@@ -137,15 +157,24 @@ func (rv *review) handleFileStatesByRisk(hc ccd.HandlerCtx) ccd.Reply {
 	return okReply(result{Paths: matched})
 }
 
+// sectionFileLabel qualifies a path with its section branch when the file lives
+// on a committed stack section; the pending section's files stay bare.
+func sectionFileLabel(sectionKey, path string) string {
+	if sectionKey == "" {
+		return path
+	}
+	return sectionKey + ":" + path
+}
+
 // applyFileStateBatch validates, applies, records (when tied to an AI request),
 // and emits one batch of per-file state changes. inputs and reasons are parallel;
 // aiRequestID of 0 means no AI request. Paths absent from the current version are
 // rejected with the unknown list.
-func (rv *review) applyFileStateBatch(hc ccd.HandlerCtx, st *store.Store, sub subject.Subject, v store.Version, fingerprints map[string]string, inputs []store.FileStateInput, reasons []string, aiRequestID int64) ccd.Reply {
+func (rv *review) applyFileStateBatch(hc ccd.HandlerCtx, st *store.Store, sub subject.Subject, v store.Version, fingerprints map[store.SectionFileKey]string, inputs []store.FileStateInput, reasons []string, aiRequestID int64) ccd.Reply {
 	var unknown []string
 	for _, in := range inputs {
-		if _, ok := fingerprints[in.Path]; !ok {
-			unknown = append(unknown, in.Path)
+		if _, ok := fingerprints[store.SectionFileKey{SectionKey: in.SectionKey, Path: in.Path}]; !ok {
+			unknown = append(unknown, sectionFileLabel(in.SectionKey, in.Path))
 		}
 	}
 	if len(unknown) > 0 {
@@ -171,7 +200,7 @@ func (rv *review) applyFileStateBatch(hc ccd.HandlerCtx, st *store.Store, sub su
 		changes := make([]store.AIChange, 0, len(results))
 		for i, res := range results {
 			changes = append(changes, store.AIChange{
-				Path: res.Path, Reason: reasons[i], Prior: res.Prior, Applied: res.Applied,
+				SectionKey: res.SectionKey, Path: res.Path, Reason: reasons[i], Prior: res.Prior, Applied: res.Applied,
 			})
 		}
 		if err := st.AppendAIRequestChanges(hc.Ctx, aiRequestID, changes); err != nil {
@@ -180,7 +209,7 @@ func (rv *review) applyFileStateBatch(hc ccd.HandlerCtx, st *store.Store, sub su
 	}
 	states := make([]map[string]any, 0, len(results))
 	for i, res := range results {
-		s := map[string]any{"path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden}
+		s := map[string]any{"sectionKey": res.SectionKey, "path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden}
 		if reasons[i] != "" {
 			s["reason"] = reasons[i]
 		}
@@ -261,7 +290,7 @@ func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
 	if b.Organization == nil {
 		return errReply("submit-organization requires chapters")
 	}
-	sub, v, fail := reviewWithLatest(hc, st)
+	sub, v, sections, fail := reviewWithSections(hc, st)
 	if fail != nil {
 		return *fail
 	}
@@ -273,7 +302,11 @@ func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
 			"stale version_number %d: the current version is %d — re-run get_review_files against the latest diff and resubmit",
 			b.VersionNumber, v.VersionNumber))
 	}
-	files, err := v.Files()
+	sec, ok := sectionsByKey(sections)[b.SectionKey]
+	if !ok {
+		return errReply(fmt.Sprintf("unknown section %q — take section_key from get_review_files", b.SectionKey))
+	}
+	files, err := sec.Files()
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -288,11 +321,11 @@ func (rv *review) handleSubmitOrganization(hc ccd.HandlerCtx) ccd.Reply {
 	if err := validate(filePaths); err != nil {
 		return errReply(err.Error())
 	}
-	if err := st.UpsertOrganization(hc.Ctx, v.ID, *b.Organization); err != nil {
+	if err := st.UpsertOrganization(hc.Ctx, sec.ID, *b.Organization); err != nil {
 		return errReply(err.Error())
 	}
 	emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginAgent, store.EventOrganizationUpdated, v.VersionNumber,
-		map[string]any{"organization": *b.Organization})
+		map[string]any{"sectionKey": sec.Key(), "organization": *b.Organization})
 	return ccd.Reply{OK: true}
 }
 
@@ -309,11 +342,12 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 	if len(b.Annotations) == 0 {
 		return errReply("annotate requires at least one annotation")
 	}
-	sub, v, fail := reviewWithLatest(hc, st)
+	sub, v, sections, fail := reviewWithSections(hc, st)
 	if fail != nil {
 		return *fail
 	}
-	fingerprints, err := versionFingerprints(v)
+	byKey := sectionsByKey(sections)
+	fingerprints, err := versionSectionFingerprints(sections)
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -338,8 +372,11 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 		if a.Side != "additions" && a.Side != "deletions" {
 			return errReply(fmt.Sprintf("annotation %d: side %q (want additions | deletions)", i, a.Side))
 		}
-		if _, ok := fingerprints[a.FilePath]; !ok {
-			return errReply(fmt.Sprintf("annotation %d: unknown path %q (not in version %d)", i, a.FilePath, v.VersionNumber))
+		if _, ok := byKey[a.SectionKey]; !ok {
+			return errReply(fmt.Sprintf("annotation %d: unknown section %q", i, a.SectionKey))
+		}
+		if _, ok := fingerprints[store.SectionFileKey{SectionKey: a.SectionKey, Path: a.FilePath}]; !ok {
+			return errReply(fmt.Sprintf("annotation %d: unknown path %q (not in section %q)", i, a.FilePath, a.SectionKey))
 		}
 		if a.StartLine < 1 || a.EndLine < a.StartLine {
 			return errReply(fmt.Sprintf("annotation %d: bad line range %d-%d", i, a.StartLine, a.EndLine))
@@ -350,9 +387,10 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 	}
 	createdHighlight := false
 	for _, a := range b.Annotations {
+		sec := byKey[a.SectionKey]
 		if a.Kind == "highlight" {
 			if _, err := st.CreateAnnotation(hc.Ctx, store.Annotation{
-				VersionID: v.ID, FilePath: a.FilePath, Side: a.Side,
+				VersionID: v.ID, SectionID: sec.ID, FilePath: a.FilePath, Side: a.Side,
 				StartLine: a.StartLine, EndLine: a.EndLine, Label: a.Body, AIRequestID: b.AIRequestID,
 			}); err != nil {
 				return errReply(err.Error())
@@ -361,10 +399,14 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 			continue
 		}
 		cid, err := st.CreateComment(hc.Ctx, store.Comment{
-			VersionID: v.ID, FilePath: a.FilePath, Side: a.Side,
+			VersionID: v.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
+			FilePath: a.FilePath, Side: a.Side,
 			StartLine: a.StartLine, EndLine: a.EndLine, Body: a.Body, Author: store.OriginClaude, Status: "open",
 		})
 		if err != nil {
+			if errors.Is(err, store.ErrStaleSection) {
+				return errReply("the diff changed while annotating — re-run get_review_files and retry")
+			}
 			return errReply(err.Error())
 		}
 		c, err := st.GetComment(hc.Ctx, cid)
@@ -389,9 +431,17 @@ func emitAnnotations(ctx context.Context, ap ccd.AppendFunc, st *store.Store, re
 	if err != nil {
 		return err
 	}
+	sections, err := st.ListSections(ctx, v.ID)
+	if err != nil {
+		return err
+	}
+	keyByID := make(map[int64]string, len(sections))
+	for _, sec := range sections {
+		keyByID[sec.ID] = sec.Key()
+	}
 	wired := make([]wire.Annotation, 0, len(list))
 	for _, a := range list {
-		wired = append(wired, wire.ToAnnotation(a))
+		wired = append(wired, wire.ToAnnotation(a, keyByID[a.SectionID]))
 	}
 	emit(ctx, ap, reviewID, ccevent.OriginAgent, store.EventAnnotationsUpdated, v.VersionNumber,
 		map[string]any{"annotations": wired})
@@ -405,11 +455,11 @@ const reviewFilesInlineCap = 50
 
 func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 	st := store.New(hc.DB)
-	sub, v, fail := reviewWithLatest(hc, st)
+	sub, v, sections, fail := reviewWithSections(hc, st)
 	if fail != nil {
 		return *fail
 	}
-	files, err := v.FileFlags()
+	meta, _, err := st.GetReviewMeta(hc.Ctx, sub.ID)
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -417,65 +467,98 @@ func (rv *review) handleReviewFiles(hc ccd.HandlerCtx) ccd.Reply {
 	if err != nil {
 		return errReply(err.Error())
 	}
-	byPath := make(map[string]store.FileState, len(states))
+	byKey := make(map[store.SectionFileKey]store.FileState, len(states))
 	for _, s := range states {
-		byPath[s.Path] = s
+		byKey[store.SectionFileKey{SectionKey: s.SectionKey, Path: s.Path}] = s
+	}
+	orgs, err := st.GetOrganizationsByVersion(hc.Ctx, v.ID)
+	if err != nil {
+		return errReply(err.Error())
 	}
 	b, err := decodeBody(hc.Env.Body)
 	if err != nil {
 		return errReply(err.Error())
 	}
 	filtering := b.Status != "" || b.Reviewed != nil || b.Hidden != nil
-	entries := make([]map[string]any, 0, len(files))
-	selected := make([]map[string]any, 0)
-	for _, f := range files {
-		fs := byPath[f.Path]
-		e := map[string]any{
-			"path": f.Path, "status": f.Status,
-			"reviewed": fs.Reviewed, "hidden": fs.Hidden,
-			"generated": f.Generated, "vendored": f.Vendored,
-		}
-		if f.OldPath != "" {
-			e["old_path"] = f.OldPath
-		}
-		entries = append(entries, e)
-		if matchesReviewFilter(f.FileChange, fs, b) {
-			selected = append(selected, e)
-		}
-	}
-	filesPath, err := writeReviewFilesList(v.PatchPath, entries)
-	if err != nil {
-		return errReply(err.Error())
-	}
-	out := map[string]any{
-		"version_number":    v.VersionNumber,
-		"patch_path":        v.PatchPath,
-		"review_files_path": filesPath,
-	}
-	if org, basis, ok, err := st.LatestOrganization(hc.Ctx, sub.ID); err != nil {
-		return errReply(err.Error())
-	} else if ok {
-		block, err := organizationContext(org, basis, v)
+	sectionsOut := make([]map[string]any, 0, len(sections))
+	for _, sec := range sections {
+		files, err := sec.FileFlags()
 		if err != nil {
 			return errReply(err.Error())
 		}
-		orgPath, err := writeReviewOrganization(v.PatchPath, block)
+		entries := make([]map[string]any, 0, len(files))
+		selected := make([]map[string]any, 0)
+		for _, f := range files {
+			fs := byKey[store.SectionFileKey{SectionKey: sec.Key(), Path: f.Path}]
+			e := map[string]any{
+				"path": f.Path, "status": f.Status,
+				"reviewed": fs.Reviewed, "hidden": fs.Hidden,
+				"generated": f.Generated, "vendored": f.Vendored,
+			}
+			if f.OldPath != "" {
+				e["old_path"] = f.OldPath
+			}
+			entries = append(entries, e)
+			if matchesReviewFilter(f.FileChange, fs, b) {
+				selected = append(selected, e)
+			}
+		}
+		filesPath, err := writeReviewFilesList(sec.PatchPath, entries)
 		if err != nil {
 			return errReply(err.Error())
 		}
-		out["organization_path"] = orgPath
+		out := map[string]any{
+			"section_key":       sec.Key(),
+			"position":          sec.Position,
+			"branch":            sec.Branch,
+			"parent_branch":     sec.ParentBranch,
+			"pending":           sec.Pending,
+			"patch_path":        sec.PatchPath,
+			"review_files_path": filesPath,
+			"organized":         organizedHas(orgs, sec.ID),
+		}
+		// Rebuild context: the latest same-key organization, delta-annotated
+		// against this section, so the agent re-organizes incrementally.
+		if org, owner, ok, err := st.LatestOrganizationForKey(hc.Ctx, sub.ID, sec.Key()); err != nil {
+			return errReply(err.Error())
+		} else if ok {
+			ownerVer, err := st.GetVersionByID(hc.Ctx, owner.VersionID)
+			if err != nil {
+				return errReply(err.Error())
+			}
+			block, err := organizationContext(org, owner, sec, ownerVer.VersionNumber)
+			if err != nil {
+				return errReply(err.Error())
+			}
+			orgPath, err := writeReviewOrganization(sec.PatchPath, block)
+			if err != nil {
+				return errReply(err.Error())
+			}
+			out["organization_path"] = orgPath
+		}
+		if filtering {
+			out["match_count"] = len(selected)
+		}
+		if len(selected) <= reviewFilesInlineCap {
+			out["files"] = selected
+		}
+		sectionsOut = append(sectionsOut, out)
 	}
-	if filtering {
-		out["match_count"] = len(selected)
-	}
-	if len(selected) <= reviewFilesInlineCap {
-		out["files"] = selected
-	}
-	raw, err := json.Marshal(out)
+	raw, err := json.Marshal(map[string]any{
+		"version_number": v.VersionNumber,
+		"stack":          meta.Stack,
+		"sections":       sectionsOut,
+	})
 	if err != nil {
 		return errReply(err.Error())
 	}
 	return okReply(result{ReviewFiles: raw})
+}
+
+// organizedHas reports whether a section has its own organization this version.
+func organizedHas(orgs map[int64]store.Organization, sectionID int64) bool {
+	_, ok := orgs[sectionID]
+	return ok
 }
 
 // matchesReviewFilter reports whether a file passes the get_review_files filter;
@@ -530,7 +613,7 @@ func writeReviewOrganization(patchPath string, block map[string]any) (string, er
 // basis never covered. Files are joined by path first, then by base origin —
 // every version diffs the review's pinned base, so a rename's old_path keys it
 // back to the basis entry. A direct path match always wins over an origin join.
-func organizationContext(org store.Organization, basis, current store.Version) (map[string]any, error) {
+func organizationContext(org store.Organization, basis, current store.Section, basisVersion int) (map[string]any, error) {
 	basisFiles, err := basis.Files()
 	if err != nil {
 		return nil, err
@@ -598,7 +681,7 @@ func organizationContext(org store.Organization, basis, current store.Version) (
 		}
 	}
 	return map[string]any{
-		"basis_version": basis.VersionNumber,
+		"basis_version": basisVersion,
 		"overview":      org.Overview,
 		"chapters":      chapters,
 		"new_paths":     newPaths,
@@ -612,9 +695,9 @@ func emitAIRequest(ctx context.Context, ap ccd.AppendFunc, origin, typ string, v
 	emit(ctx, ap, ar.ReviewID, origin, typ, versionNumber, map[string]any{"request": wire.ToAIRequest(ar)})
 }
 
-// versionFingerprints maps a version's paths to their diff fingerprints.
-func versionFingerprints(v store.Version) (map[string]string, error) {
-	files, err := v.Files()
+// sectionFingerprints maps a section's paths to their diff fingerprints.
+func sectionFingerprints(sec store.Section) (map[string]string, error) {
+	files, err := sec.Files()
 	if err != nil {
 		return nil, err
 	}
@@ -625,25 +708,92 @@ func versionFingerprints(v store.Version) (map[string]string, error) {
 	return out, nil
 }
 
-// carryOrganizationForward copies the review's latest organization onto v when
-// v's path set and per-file fingerprints exactly match the organization's owning
-// version: identical content tells the same story, so no re-organize is needed.
-func carryOrganizationForward(ctx context.Context, st *store.Store, reviewID string, v store.Version, fingerprints map[string]string) (store.Organization, bool, error) {
-	org, owner, ok, err := st.LatestOrganization(ctx, reviewID)
+// versionSectionFingerprints maps every (sectionKey, path) in a version's
+// sections to its diff fingerprint.
+func versionSectionFingerprints(sections []store.Section) (map[store.SectionFileKey]string, error) {
+	out := make(map[store.SectionFileKey]string)
+	for _, sec := range sections {
+		prints, err := sectionFingerprints(sec)
+		if err != nil {
+			return nil, err
+		}
+		for path, fp := range prints {
+			out[store.SectionFileKey{SectionKey: sec.Key(), Path: path}] = fp
+		}
+	}
+	return out, nil
+}
+
+// sectionsByKey indexes a version's sections by their stable key.
+func sectionsByKey(sections []store.Section) map[string]store.Section {
+	out := make(map[string]store.Section, len(sections))
+	for _, sec := range sections {
+		out[sec.Key()] = sec
+	}
+	return out
+}
+
+// allSectionsOrganized reports whether every section of a version has an
+// organization.
+func allSectionsOrganized(ctx context.Context, st *store.Store, sections []store.Section) (bool, error) {
+	if len(sections) == 0 {
+		return false, nil
+	}
+	orgs, err := st.GetOrganizationsByVersion(ctx, sections[0].VersionID)
+	if err != nil {
+		return false, err
+	}
+	for _, sec := range sections {
+		if _, ok := orgs[sec.ID]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// carrySectionOrganizations copies each section's latest same-key organization
+// forward when the section's content is byte-identical, returning the carried
+// orgs keyed by section id and whether every section was carried.
+func (rv *review) carrySectionOrganizations(ctx context.Context, st *store.Store, reviewID string, sections []store.Section) (map[int64]store.Organization, bool, error) {
+	carried := make(map[int64]store.Organization)
+	all := true
+	for _, sec := range sections {
+		org, ok, err := carrySectionOrganizationForward(ctx, st, reviewID, sec)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			carried[sec.ID] = org
+		} else {
+			all = false
+		}
+	}
+	return carried, all, nil
+}
+
+// carrySectionOrganizationForward copies the section's latest same-key
+// organization onto it when their per-file fingerprints match exactly: identical
+// content tells the same story, so no re-organize is needed.
+func carrySectionOrganizationForward(ctx context.Context, st *store.Store, reviewID string, sec store.Section) (store.Organization, bool, error) {
+	org, owner, ok, err := st.LatestOrganizationForKey(ctx, reviewID, sec.Key())
 	if err != nil {
 		return store.Organization{}, false, err
 	}
 	if !ok {
 		return store.Organization{}, false, nil
 	}
-	ownerPrints, err := versionFingerprints(owner)
+	ownerPrints, err := sectionFingerprints(owner)
 	if err != nil {
 		return store.Organization{}, false, err
 	}
-	if !maps.Equal(ownerPrints, fingerprints) {
+	prints, err := sectionFingerprints(sec)
+	if err != nil {
+		return store.Organization{}, false, err
+	}
+	if !maps.Equal(ownerPrints, prints) {
 		return store.Organization{}, false, nil
 	}
-	if err := st.UpsertOrganization(ctx, v.ID, org); err != nil {
+	if err := st.UpsertOrganization(ctx, sec.ID, org); err != nil {
 		return store.Organization{}, false, err
 	}
 	return org, true, nil

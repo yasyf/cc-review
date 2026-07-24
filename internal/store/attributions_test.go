@@ -10,9 +10,9 @@ func TestAttributionsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
+	_, sec := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", "[]")
 
-	empty, err := s.ListAttributionsByVersion(ctx, v.ID)
+	empty, err := s.ListAttributionsBySection(ctx, sec.ID)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("empty list: %+v err=%v, want none", empty, err)
 	}
@@ -21,10 +21,10 @@ func TestAttributionsRoundTrip(t *testing.T) {
 		"a.go": {{Start: 1, End: 4, TurnID: 7}, {Start: 10, End: 10}},
 		"b.go": {{Start: 2, End: 3, TurnID: 9}},
 	}
-	if err := s.PutAttributions(ctx, v.ID, byFile); err != nil {
+	if err := s.PutAttributions(ctx, sec.ID, byFile); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	got, err := s.ListAttributionsByVersion(ctx, v.ID)
+	got, err := s.ListAttributionsBySection(ctx, sec.ID)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -37,23 +37,23 @@ func TestListAttributionsBySession(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	r1id := seedReview(ctx, t, s, "sess-a", 0, "/repo", "main", "base0")
-	v1, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]", "")
-	v2, _ := s.CreateVersion(ctx, r1id, "main", "HEAD", "/p", "[]", "")
+	_, sec1 := seedFlatVersion(ctx, t, s, r1id, "main", "HEAD", "", "[]")
+	_, sec2 := seedFlatVersion(ctx, t, s, r1id, "main", "HEAD", "", "[]")
 	otherid := seedReview(ctx, t, s, "sess-b", 0, "/repo2", "main", "base0")
-	vOther, _ := s.CreateVersion(ctx, otherid, "main", "HEAD", "/p", "[]", "")
+	_, secOther := seedFlatVersion(ctx, t, s, otherid, "main", "HEAD", "", "[]")
 
-	if err := s.PutAttributions(ctx, v1.ID, map[string][]AttributionRange{
+	if err := s.PutAttributions(ctx, sec1.ID, map[string][]AttributionRange{
 		"b.go": {{Start: 2, End: 3, TurnID: 9}},
 		"a.go": {{Start: 1, End: 4, TurnID: 7}, {Start: 10, End: 10}},
 	}); err != nil {
 		t.Fatalf("put v1: %v", err)
 	}
-	if err := s.PutAttributions(ctx, v2.ID, map[string][]AttributionRange{
+	if err := s.PutAttributions(ctx, sec2.ID, map[string][]AttributionRange{
 		"a.go": {{Start: 5, End: 6, TurnID: 9}},
 	}); err != nil {
 		t.Fatalf("put v2: %v", err)
 	}
-	if err := s.PutAttributions(ctx, vOther.ID, map[string][]AttributionRange{
+	if err := s.PutAttributions(ctx, secOther.ID, map[string][]AttributionRange{
 		"c.go": {{Start: 1, End: 1, TurnID: 12}},
 	}); err != nil {
 		t.Fatalf("put other session: %v", err)
@@ -82,20 +82,20 @@ func TestPutAttributionsReplacesOnConflict(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
+	_, sec := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", "[]")
 
-	if err := s.PutAttributions(ctx, v.ID, map[string][]AttributionRange{
+	if err := s.PutAttributions(ctx, sec.ID, map[string][]AttributionRange{
 		"a.go": {{Start: 1, End: 4, TurnID: 7}},
 		"b.go": {{Start: 5, End: 6, TurnID: 8}},
 	}); err != nil {
 		t.Fatalf("first put: %v", err)
 	}
 	replacement := []AttributionRange{{Start: 2, End: 2, TurnID: 11}}
-	if err := s.PutAttributions(ctx, v.ID, map[string][]AttributionRange{"a.go": replacement}); err != nil {
+	if err := s.PutAttributions(ctx, sec.ID, map[string][]AttributionRange{"a.go": replacement}); err != nil {
 		t.Fatalf("second put: %v", err)
 	}
 
-	got, err := s.ListAttributionsByVersion(ctx, v.ID)
+	got, err := s.ListAttributionsBySection(ctx, sec.ID)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

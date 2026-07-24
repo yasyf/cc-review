@@ -144,7 +144,9 @@ export function AiResultCard({
               <button
                 type="button"
                 className="ai-changelink"
-                onClick={() => diffRef.current?.scrollToFile(change.path)}
+                onClick={() =>
+                  diffRef.current?.scrollToFile({ sectionKey: change.sectionKey, path: change.path })
+                }
               >
                 <code>{change.path}</code>
               </button>{' '}

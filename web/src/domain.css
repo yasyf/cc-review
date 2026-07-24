@@ -753,6 +753,57 @@
   cursor: pointer;
 }
 
+/* A section banner: a synthetic collapsed file item marking one stack branch. */
+.section-banner {
+  background: var(--bg-soft);
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+.section-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--dim);
+}
+.section-pending {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  color: var(--accent);
+}
+.section-range {
+  font-size: 0.72rem;
+}
+
+/* Per-section grouping in the sidebar panels (multi-section reviews only). */
+.section-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.25rem 0.2rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.35rem;
+}
+.section-group:first-child .section-group-head {
+  border-top: none;
+  margin-top: 0;
+}
+.section-group-title {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--accent);
+}
+.row-branch {
+  margin-left: 0.4rem;
+  font-size: 0.68rem;
+  color: var(--dim);
+}
+
 .tree-menu {
   display: flex;
   flex-direction: column;

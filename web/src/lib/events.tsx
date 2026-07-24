@@ -2,7 +2,7 @@ import { createEventStream } from '@cc-interact/react';
 import type { StreamToast } from '@cc-interact/react';
 import { sessionKey } from './api';
 import { STATUS_NOTICES } from './status';
-import type { Comment, Reply, ReviewEvent, SessionResponse } from './types';
+import type { Comment, FileStateEventEntry, Reply, ReviewEvent, SessionResponse } from './types';
 
 function upsertReply(comment: Comment, reply: Reply): Comment {
   const exists = comment.replies.some((r) => r.id === reply.id);
@@ -52,13 +52,24 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
         feedbackPath: ev.feedbackPath,
       };
     case 'file.states': {
-      // Entries are absolute per-path values, so merging is idempotent under
-      // the cursor-0 replay every page load performs.
-      const fileStates = { ...session.fileStates };
+      // Entries are absolute per-(section, path) values, so merging is
+      // idempotent under the cursor-0 replay every page load performs.
+      const bySection = new Map<string, FileStateEventEntry[]>();
       for (const state of ev.states) {
-        fileStates[state.path] = { reviewed: state.reviewed, hidden: state.hidden };
+        const list = bySection.get(state.sectionKey) ?? [];
+        list.push(state);
+        bySection.set(state.sectionKey, list);
       }
-      return { ...session, fileStates };
+      const sections = session.sections.map((section) => {
+        const updates = bySection.get(section.sectionKey);
+        if (!updates) return section;
+        const fileStates = { ...section.fileStates };
+        for (const state of updates) {
+          fileStates[state.path] = { reviewed: state.reviewed, hidden: state.hidden };
+        }
+        return { ...section, fileStates };
+      });
+      return { ...session, sections };
     }
     case 'ai.request.created':
     case 'ai.request.updated': {
@@ -69,7 +80,12 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
       return { ...session, aiRequests };
     }
     case 'organization.updated':
-      return { ...session, organization: ev.organization };
+      return {
+        ...session,
+        sections: session.sections.map((s) =>
+          s.sectionKey === ev.sectionKey ? { ...s, organization: ev.organization } : s,
+        ),
+      };
     case 'annotations.updated':
       return { ...session, annotations: ev.annotations };
     case 'channel.changed':

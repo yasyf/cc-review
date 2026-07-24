@@ -160,12 +160,10 @@ func TestStartTwoLiveWindowsGetSeparateReviews(t *testing.T) {
 
 	// Comments and events stay isolated per review: a reply under A's comment
 	// never lands in B's log.
-	v, ok, err := s.store.LatestVersion(ctx, a.ReviewID)
-	if err != nil || !ok {
-		t.Fatalf("latest version: ok=%v err=%v", ok, err)
-	}
+	aSections := s.latestSections(ctx, t, a.ReviewID)
 	cid, err := s.store.CreateComment(ctx, store.Comment{
-		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "hm",
+		VersionID: aSections[0].VersionID, SectionID: aSections[0].ID, Branch: aSections[0].Branch, Pending: aSections[0].Pending,
+		FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "hm",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -407,7 +405,11 @@ func TestHandleStartPinnedBaseAndDedupAcrossCommits(t *testing.T) {
 	if v.BaseRef != review.BaseRef {
 		t.Fatalf("v2 base = %q, want pinned %q", v.BaseRef, review.BaseRef)
 	}
-	patch, err := os.ReadFile(v.PatchPath)
+	sections, err := s.store.ListSections(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch, err := os.ReadFile(sections[0].PatchPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,11 +476,8 @@ func TestHandleStartCreateUsesCreateSemantics(t *testing.T) {
 	if review.BaseRef != headB {
 		t.Fatalf("created review pinned to %q, want create-semantics HEAD %q (not the stolen orphan's %q)", review.BaseRef, headB, headA)
 	}
-	v, ok, err := s.store.LatestVersion(ctx, resp.ReviewID)
-	if err != nil || !ok {
-		t.Fatalf("latest version: ok=%v err=%v", ok, err)
-	}
-	patch, err := os.ReadFile(v.PatchPath)
+	sections := s.latestSections(ctx, t, resp.ReviewID)
+	patch, err := os.ReadFile(sections[0].PatchPath)
 	if err != nil {
 		t.Fatal(err)
 	}

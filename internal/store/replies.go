@@ -15,12 +15,15 @@ var ErrReviewNotOpen = errors.New("review is not open")
 const replyCols = `id, comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at`
 
 // OpenQuestion is a Claude question awaiting an answer, with enough comment
-// context to surface it in the feedback drain.
+// context to surface it in the feedback drain. Branch/Pending are copied off the
+// comment's section so the drain knows which branch the question lands on.
 type OpenQuestion struct {
 	ReplyID     int64
 	CommentID   int64
 	FilePath    string
 	StartLine   int
+	Branch      string
+	Pending     bool
 	CommentBody string
 	Question    string
 	Ask         *Ask // kind=ask only
@@ -233,7 +236,7 @@ func (s *Store) answerAsk(ctx context.Context, replyID int64, ans AskAnswer, via
 // across every version, with their comment anchor.
 func (s *Store) ListOpenQuestions(ctx context.Context, reviewID string) ([]OpenQuestion, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT r.id, r.comment_id, c.file_path, c.start_line, c.body, r.body, r.ask_json
+		`SELECT r.id, r.comment_id, c.file_path, c.start_line, c.branch, c.pending, c.body, r.body, r.ask_json
 		   FROM replies r
 		   JOIN comments c ON c.id = r.comment_id
 		   JOIN review_versions v ON v.id = c.version_id
@@ -247,11 +250,13 @@ func (s *Store) ListOpenQuestions(ctx context.Context, reviewID string) ([]OpenQ
 	for rows.Next() {
 		var (
 			q       OpenQuestion
+			pending int
 			askJSON sql.NullString
 		)
-		if err := rows.Scan(&q.ReplyID, &q.CommentID, &q.FilePath, &q.StartLine, &q.CommentBody, &q.Question, &askJSON); err != nil {
+		if err := rows.Scan(&q.ReplyID, &q.CommentID, &q.FilePath, &q.StartLine, &q.Branch, &pending, &q.CommentBody, &q.Question, &askJSON); err != nil {
 			return nil, err
 		}
+		q.Pending = pending != 0
 		if askJSON.Valid {
 			ask, err := decodeReplyAsk(askJSON.String)
 			if err != nil {

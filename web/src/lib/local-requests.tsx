@@ -1,22 +1,23 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { FileRef } from './diff';
 
 // A ⚡ instant-lane edit: file-state changes the reviewer applied client-side,
-// bypassing the agent. `prior` is snapshotted at click time so undo restores the
-// exact pre-edit state without a server round-trip. Shaped to render alongside
-// server AiRequests in the deck's result stream.
+// bypassing the agent. `prior` is snapshotted at click time (keyed by itemId) so
+// undo restores the exact pre-edit state without a server round-trip. Shaped to
+// render alongside server AiRequests in the deck's result stream.
 export interface LocalRequest {
   id: string;
   kind: 'local';
   label: string;
-  paths: string[];
+  refs: FileRef[];
   prior: Record<string, { reviewed: boolean; hidden: boolean }>;
   createdAt: string;
 }
 
 interface LocalRequestsValue {
   requests: LocalRequest[];
-  add(label: string, paths: string[], prior: LocalRequest['prior']): LocalRequest;
+  add(label: string, refs: FileRef[], prior: LocalRequest['prior']): LocalRequest;
   remove(id: string): void;
 }
 
@@ -43,12 +44,12 @@ export function LocalRequestsProvider({
   // fresh (the old paths and their undo no longer apply).
   useEffect(() => setRequests([]), [versionId]);
 
-  const add = useCallback((label: string, paths: string[], prior: LocalRequest['prior']) => {
+  const add = useCallback((label: string, refs: FileRef[], prior: LocalRequest['prior']) => {
     const req: LocalRequest = {
       id: `local:${++seq}`,
       kind: 'local',
       label,
-      paths,
+      refs,
       prior,
       createdAt: new Date().toISOString(),
     };

@@ -27,17 +27,23 @@ type Reply struct {
 	AnsweredVia string           `json:"answered_via,omitempty"`
 }
 
-// Thread is a comment plus its replies.
+// Thread is a comment plus its replies. Branch names the section it lands on;
+// Pending true means fix in the working tree, else gt modify that branch.
+// VersionNumber is the thread's origin version — equal to the review's current
+// version for a normal thread, lower for one a version bump stranded.
 type Thread struct {
-	CommentID   int64   `json:"comment_id"`
-	FilePath    string  `json:"file_path"`
-	Side        string  `json:"side"`
-	StartLine   int     `json:"start_line"`
-	EndLine     int     `json:"end_line"`
-	LineContent string  `json:"line_content,omitempty"`
-	Body        string  `json:"body"`
-	Status      string  `json:"status"`
-	Replies     []Reply `json:"replies"`
+	CommentID     int64   `json:"comment_id"`
+	FilePath      string  `json:"file_path"`
+	Side          string  `json:"side"`
+	StartLine     int     `json:"start_line"`
+	EndLine       int     `json:"end_line"`
+	LineContent   string  `json:"line_content,omitempty"`
+	Body          string  `json:"body"`
+	Status        string  `json:"status"`
+	Branch        string  `json:"branch"`
+	Pending       bool    `json:"pending"`
+	VersionNumber int     `json:"version_number"`
+	Replies       []Reply `json:"replies"`
 }
 
 // OpenQuestion is a Claude question still awaiting an answer at submit time.
@@ -46,6 +52,8 @@ type OpenQuestion struct {
 	CommentID   int64      `json:"comment_id"`
 	FilePath    string     `json:"file_path"`
 	StartLine   int        `json:"start_line"`
+	Branch      string     `json:"branch"`
+	Pending     bool       `json:"pending"`
 	CommentBody string     `json:"comment_body"`
 	Question    string     `json:"question"`
 	Ask         *store.Ask `json:"ask,omitempty"`
@@ -78,7 +86,29 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 		threads = append(threads, Thread{
 			CommentID: c.ID, FilePath: c.FilePath, Side: c.Side, StartLine: c.StartLine,
 			EndLine: c.EndLine, LineContent: c.LineContent, Body: c.Body, Status: c.Status,
-			Replies: toReplies(replies),
+			Branch: c.Branch, Pending: c.Pending, VersionNumber: version.VersionNumber, Replies: toReplies(replies),
+		})
+	}
+	// Open comments a version bump stranded on an earlier, unsubmitted version of
+	// this round — latest-version-scoped drains drop them, losing human feedback.
+	sinceVersion, err := st.LastSubmittedVersion(ctx, reviewID)
+	if err != nil {
+		return Feedback{}, fmt.Errorf("last submitted version: %w", err)
+	}
+	stranded, err := st.ListStrandedOpenComments(ctx, reviewID, sinceVersion, version.VersionNumber)
+	if err != nil {
+		return Feedback{}, fmt.Errorf("list stranded comments: %w", err)
+	}
+	for _, sc := range stranded {
+		replies, err := st.ListRepliesByComment(ctx, sc.Comment.ID)
+		if err != nil {
+			return Feedback{}, fmt.Errorf("list replies: %w", err)
+		}
+		c := sc.Comment
+		threads = append(threads, Thread{
+			CommentID: c.ID, FilePath: c.FilePath, Side: c.Side, StartLine: c.StartLine,
+			EndLine: c.EndLine, LineContent: c.LineContent, Body: c.Body, Status: c.Status,
+			Branch: c.Branch, Pending: c.Pending, VersionNumber: sc.VersionNumber, Replies: toReplies(replies),
 		})
 	}
 	open, err := st.ListOpenQuestions(ctx, reviewID)
@@ -89,7 +119,7 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 	for _, q := range open {
 		questions = append(questions, OpenQuestion{
 			ReplyID: q.ReplyID, CommentID: q.CommentID, FilePath: q.FilePath, StartLine: q.StartLine,
-			CommentBody: q.CommentBody, Question: q.Question, Ask: q.Ask,
+			Branch: q.Branch, Pending: q.Pending, CommentBody: q.CommentBody, Question: q.Question, Ask: q.Ask,
 		})
 	}
 	return Feedback{

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yasyf/cc-review/internal/daemon"
 )
 
 func TestStartExtraLines(t *testing.T) {
@@ -17,6 +19,7 @@ func TestStartExtraLines(t *testing.T) {
 		offer        bool
 		reason       string
 		offerErr     error
+		stack        *daemon.StackInfo
 		organizes    []json.RawMessage
 		want         []string
 	}{
@@ -66,9 +69,21 @@ func TestStartExtraLines(t *testing.T) {
 				`organize: ` + string(userReq),
 			},
 		},
+		{
+			name:         "stack review emits a stack line after setup",
+			channelState: "active",
+			offer:        false,
+			reason:       "already approved",
+			stack:        &daemon.StackInfo{Trunk: "main", Branches: []string{"feat-a", "feat-b"}},
+			want: []string{
+				"channel: active",
+				`setup: {"offer":false,"reason":"already approved"}`,
+				`stack: {"trunk":"main","branches":["feat-a","feat-b"]}`,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := startExtraLines(tc.channelState, tc.offer, tc.reason, tc.offerErr, tc.organizes)
+			got := startExtraLines(tc.channelState, tc.offer, tc.reason, tc.offerErr, tc.stack, tc.organizes)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("lines = %q, want %q", got, tc.want)
 			}

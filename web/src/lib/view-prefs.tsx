@@ -32,7 +32,7 @@ function readPrefs(reviewId: string): StoredPrefs {
 }
 
 interface ViewPrefsValue extends StoredPrefs {
-  // Paths the user explicitly peeked at: an override both expands a collapsed
+  // itemIds the user explicitly peeked at: an override both expands a collapsed
   // reviewed file and exempts it from the hide-reviewed filter. In-memory only.
   expandOverrides: ReadonlySet<string>;
   // The turn whose attributed lines are highlighted in the diff; everything
@@ -41,8 +41,8 @@ interface ViewPrefsValue extends StoredPrefs {
   setViewMode(mode: ViewMode): void;
   setHideReviewed(hide: boolean): void;
   setFocusMode(focus: boolean): void;
-  toggleExpandOverride(path: string): void;
-  clearExpandOverride(path: string): void;
+  toggleExpandOverride(id: string): void;
+  clearExpandOverride(id: string): void;
   setActiveTurnId(id: string | null): void;
 }
 
@@ -91,20 +91,20 @@ export function ViewPrefsProvider({
     setPrefs((prev) => ({ ...prev, focusMode }));
   }, []);
 
-  const toggleExpandOverride = useCallback((path: string) => {
+  const toggleExpandOverride = useCallback((id: string) => {
     setExpandOverrides((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }, []);
 
-  const clearExpandOverride = useCallback((path: string) => {
+  const clearExpandOverride = useCallback((id: string) => {
     setExpandOverrides((prev) => {
-      if (!prev.has(path)) return prev;
+      if (!prev.has(id)) return prev;
       const next = new Set(prev);
-      next.delete(path);
+      next.delete(id);
       return next;
     });
   }, []);

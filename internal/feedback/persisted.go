@@ -12,8 +12,8 @@ import (
 
 const (
 	feedbackSchemaIdentity    = "dev.yasyf.cc-review.feedback"
-	feedbackSchemaDescriptor  = "payload:{review_id:string,version:int,session_id:string,frozen_at:int64,threads:array<thread{comment_id:int64,file_path:string,side:string,start_line:int,end_line:int,line_content:string,body:string,status:string,replies:array<reply{id:int64,origin:string,kind:string,body:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>},answered:bool,answer:string,ask_answer:null|askAnswer{selected:array<string>,other:string,notes:string},answered_via:string}>}>,open_questions:array<question{reply_id:int64,comment_id:int64,file_path:string,start_line:int,comment_body:string,question:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>}}>}"
-	feedbackSchemaFingerprint = "dev.yasyf.cc-review.feedback.3c5a42b31804aa4f3d056eb0fd17a8d415f287e6c5ecac4cb016f86ba4a83197"
+	feedbackSchemaDescriptor  = "payload:{review_id:string,version:int,session_id:string,frozen_at:int64,threads:array<thread{comment_id:int64,file_path:string,side:string,start_line:int,end_line:int,line_content:string,body:string,status:string,branch:string,pending:bool,version_number:int,replies:array<reply{id:int64,origin:string,kind:string,body:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>},answered:bool,answer:string,ask_answer:null|askAnswer{selected:array<string>,other:string,notes:string},answered_via:string}>}>,open_questions:array<question{reply_id:int64,comment_id:int64,file_path:string,start_line:int,branch:string,pending:bool,comment_body:string,question:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>}}>}"
+	feedbackSchemaFingerprint = "dev.yasyf.cc-review.feedback.9c7ec43e570bcad67a65303ce99d7776c520b6c84aeab3b80463efcb6416d738"
 )
 
 type feedbackV1 struct {
@@ -26,15 +26,18 @@ type feedbackV1 struct {
 }
 
 type threadV1 struct {
-	CommentID   *int64     `json:"comment_id"`
-	FilePath    *string    `json:"file_path"`
-	Side        *string    `json:"side"`
-	StartLine   *int       `json:"start_line"`
-	EndLine     *int       `json:"end_line"`
-	LineContent *string    `json:"line_content"`
-	Body        *string    `json:"body"`
-	Status      *string    `json:"status"`
-	Replies     *[]replyV1 `json:"replies"`
+	CommentID     *int64     `json:"comment_id"`
+	FilePath      *string    `json:"file_path"`
+	Side          *string    `json:"side"`
+	StartLine     *int       `json:"start_line"`
+	EndLine       *int       `json:"end_line"`
+	LineContent   *string    `json:"line_content"`
+	Body          *string    `json:"body"`
+	Status        *string    `json:"status"`
+	Branch        *string    `json:"branch"`
+	Pending       *bool      `json:"pending"`
+	VersionNumber *int       `json:"version_number"`
+	Replies       *[]replyV1 `json:"replies"`
 }
 
 type replyV1 struct {
@@ -54,6 +57,8 @@ type openQuestionV1 struct {
 	CommentID   *int64          `json:"comment_id"`
 	FilePath    *string         `json:"file_path"`
 	StartLine   *int            `json:"start_line"`
+	Branch      *string         `json:"branch"`
+	Pending     *bool           `json:"pending"`
 	CommentBody *string         `json:"comment_body"`
 	Question    *string         `json:"question"`
 	Ask         json.RawMessage `json:"ask"`
@@ -104,7 +109,8 @@ func encodeFeedback(value Feedback) ([]byte, error) {
 		threads[i] = threadV1{
 			CommentID: ptr(thread.CommentID), FilePath: ptr(thread.FilePath), Side: ptr(thread.Side),
 			StartLine: ptr(thread.StartLine), EndLine: ptr(thread.EndLine), LineContent: ptr(thread.LineContent),
-			Body: ptr(thread.Body), Status: ptr(thread.Status), Replies: &replies,
+			Body: ptr(thread.Body), Status: ptr(thread.Status), Branch: ptr(thread.Branch), Pending: ptr(thread.Pending),
+			VersionNumber: ptr(thread.VersionNumber), Replies: &replies,
 		}
 	}
 	questions := make([]openQuestionV1, len(value.OpenQuestions))
@@ -115,7 +121,8 @@ func encodeFeedback(value Feedback) ([]byte, error) {
 		}
 		questions[i] = openQuestionV1{
 			ReplyID: ptr(question.ReplyID), CommentID: ptr(question.CommentID), FilePath: ptr(question.FilePath),
-			StartLine: ptr(question.StartLine), CommentBody: ptr(question.CommentBody), Question: ptr(question.Question), Ask: ask,
+			StartLine: ptr(question.StartLine), Branch: ptr(question.Branch), Pending: ptr(question.Pending),
+			CommentBody: ptr(question.CommentBody), Question: ptr(question.Question), Ask: ask,
 		}
 	}
 	payload := feedbackV1{
@@ -137,7 +144,8 @@ func decodeFeedback(data []byte) (Feedback, error) {
 	threads := make([]Thread, len(*payload.Threads))
 	for i, thread := range *payload.Threads {
 		if thread.CommentID == nil || thread.FilePath == nil || thread.Side == nil || thread.StartLine == nil ||
-			thread.EndLine == nil || thread.LineContent == nil || thread.Body == nil || thread.Status == nil || thread.Replies == nil {
+			thread.EndLine == nil || thread.LineContent == nil || thread.Body == nil || thread.Status == nil ||
+			thread.Branch == nil || thread.Pending == nil || thread.VersionNumber == nil || thread.Replies == nil {
 			return Feedback{}, fmt.Errorf("thread %d is incomplete", i)
 		}
 		replies := make([]Reply, len(*thread.Replies))
@@ -162,13 +170,14 @@ func decodeFeedback(data []byte) (Feedback, error) {
 		threads[i] = Thread{
 			CommentID: *thread.CommentID, FilePath: *thread.FilePath, Side: *thread.Side,
 			StartLine: *thread.StartLine, EndLine: *thread.EndLine, LineContent: *thread.LineContent,
-			Body: *thread.Body, Status: *thread.Status, Replies: replies,
+			Body: *thread.Body, Status: *thread.Status, Branch: *thread.Branch, Pending: *thread.Pending,
+			VersionNumber: *thread.VersionNumber, Replies: replies,
 		}
 	}
 	questions := make([]OpenQuestion, len(*payload.OpenQuestions))
 	for i, question := range *payload.OpenQuestions {
 		if question.ReplyID == nil || question.CommentID == nil || question.FilePath == nil || question.StartLine == nil ||
-			question.CommentBody == nil || question.Question == nil || question.Ask == nil {
+			question.Branch == nil || question.Pending == nil || question.CommentBody == nil || question.Question == nil || question.Ask == nil {
 			return Feedback{}, fmt.Errorf("open question %d is incomplete", i)
 		}
 		ask, err := decodeOptionalAsk(question.Ask)
@@ -177,7 +186,8 @@ func decodeFeedback(data []byte) (Feedback, error) {
 		}
 		questions[i] = OpenQuestion{
 			ReplyID: *question.ReplyID, CommentID: *question.CommentID, FilePath: *question.FilePath,
-			StartLine: *question.StartLine, CommentBody: *question.CommentBody, Question: *question.Question, Ask: ask,
+			StartLine: *question.StartLine, Branch: *question.Branch, Pending: *question.Pending,
+			CommentBody: *question.CommentBody, Question: *question.Question, Ask: ask,
 		}
 	}
 	return Feedback{

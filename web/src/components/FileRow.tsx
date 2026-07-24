@@ -14,6 +14,7 @@ export function FileRow({
   reviewed,
   commentCount,
   needsReply,
+  branch,
   onSelect,
   onToggle,
 }: {
@@ -21,6 +22,8 @@ export function FileRow({
   reviewed: boolean;
   commentCount: number;
   needsReply?: boolean;
+  // Owning branch, shown when the review spans more than one section.
+  branch?: string;
   onSelect(): void;
   onToggle(): void;
 }) {
@@ -34,6 +37,7 @@ export function FileRow({
       <button type="button" className="chapter-row-path" onClick={onSelect}>
         {name}
       </button>
+      {branch ? <span className="row-branch">{branch}</span> : null}
       {file.risk ? <span className={`risk-chip risk-${file.risk}`}>{file.risk}</span> : null}
       {needsReply ? <span className="needs-reply-chip">needs reply</span> : null}
       {commentCount > 0 ? <span className="comment-card-count">{commentCount}</span> : null}

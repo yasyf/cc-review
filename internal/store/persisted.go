@@ -15,8 +15,8 @@ const (
 	unmatchedSchemaFingerprint = "dev.yasyf.cc-review.ai-request-unmatched.6b5c3807f383a671c52be520faa0176d1ee41286720c8f20fc10cf6da897f6d0"
 
 	changesSchemaIdentity    = "dev.yasyf.cc-review.ai-request-changes"
-	changesSchemaDescriptor  = "payload:array<change{path:string,reason:string,prior:{reviewed:bool,hidden:bool,fingerprint:string},applied:{reviewed:bool,hidden:bool}}>"
-	changesSchemaFingerprint = "dev.yasyf.cc-review.ai-request-changes.654684ed37478d762cb6aa142c9e388ce6d9dd2134c7cf00ceb67d6189b9872d"
+	changesSchemaDescriptor  = "payload:array<change{section_key:string,path:string,reason:string,prior:{reviewed:bool,hidden:bool,fingerprint:string},applied:{reviewed:bool,hidden:bool}}>"
+	changesSchemaFingerprint = "dev.yasyf.cc-review.ai-request-changes.05968e200b76dbf1483b5627af7dcbbea0deb0c2912958d80e29e78fc4176c82"
 
 	questionSchemaIdentity    = "dev.yasyf.cc-review.ai-request-question"
 	questionSchemaDescriptor  = "payload:{body:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>}}"
@@ -56,10 +56,11 @@ type appliedStateV1 struct {
 }
 
 type changeV1 struct {
-	Path    *string         `json:"path"`
-	Reason  *string         `json:"reason"`
-	Prior   *priorStateV1   `json:"prior"`
-	Applied *appliedStateV1 `json:"applied"`
+	SectionKey *string         `json:"section_key"`
+	Path       *string         `json:"path"`
+	Reason     *string         `json:"reason"`
+	Prior      *priorStateV1   `json:"prior"`
+	Applied    *appliedStateV1 `json:"applied"`
 }
 
 type askOptionV1 struct {
@@ -129,7 +130,7 @@ func encodeChanges(values []AIChange) (string, error) {
 	payload := make([]changeV1, len(values))
 	for i, value := range values {
 		payload[i] = changeV1{
-			Path: ptr(value.Path), Reason: ptr(value.Reason),
+			SectionKey: ptr(value.SectionKey), Path: ptr(value.Path), Reason: ptr(value.Reason),
 			Prior: &priorStateV1{
 				Reviewed: ptr(value.Prior.Reviewed), Hidden: ptr(value.Prior.Hidden), Fingerprint: ptr(value.Prior.Fingerprint),
 			},
@@ -146,13 +147,13 @@ func decodeChanges(data string) ([]AIChange, error) {
 	}
 	values := make([]AIChange, len(payload))
 	for i, value := range payload {
-		if value.Path == nil || value.Reason == nil || value.Prior == nil || value.Applied == nil ||
+		if value.SectionKey == nil || value.Path == nil || value.Reason == nil || value.Prior == nil || value.Applied == nil ||
 			value.Prior.Reviewed == nil || value.Prior.Hidden == nil || value.Prior.Fingerprint == nil ||
 			value.Applied.Reviewed == nil || value.Applied.Hidden == nil {
 			return nil, fmt.Errorf("change %d is incomplete", i)
 		}
 		values[i] = AIChange{
-			Path: *value.Path, Reason: *value.Reason,
+			SectionKey: *value.SectionKey, Path: *value.Path, Reason: *value.Reason,
 			Prior: PriorState{
 				Reviewed: *value.Prior.Reviewed, Hidden: *value.Prior.Hidden, Fingerprint: *value.Prior.Fingerprint,
 			},

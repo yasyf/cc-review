@@ -17,6 +17,19 @@ func (s *Store) MaxEventSeq(ctx context.Context, reviewID string) (int64, error)
 	return seq, nil
 }
 
+// LastSubmittedVersion returns the highest version number the review has a
+// submit event for, or 0 when it has never been submitted — the boundary
+// feedback uses to bound stranded-thread collection to the current round.
+func (s *Store) LastSubmittedVersion(ctx context.Context, reviewID string) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(CAST(json_extract(payload,'$.version_number') AS INTEGER)), 0)
+		   FROM events WHERE subject_id=? AND type=?`, reviewID, EventSubmit).Scan(&n); err != nil {
+		return 0, fmt.Errorf("last submitted version: %w", err)
+	}
+	return n, nil
+}
+
 // StaleConnectedReviews returns the ids of reviews whose most recent
 // channel.changed event reports connected:true — the set the daemon's boot
 // reconcile closes out after a daemon death lost the SSE detach.

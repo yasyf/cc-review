@@ -1,7 +1,15 @@
+import { commentItemId } from '../lib/diff';
 import { fileOrder } from '../lib/order';
 import { isUnread, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
+
+interface CommentGroup {
+  filePath: string;
+  branch: string;
+  pending: boolean;
+  comments: Comment[];
+}
 
 function excerpt(text: string, max = 120): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -17,13 +25,17 @@ export function CommentsPanel({
 }) {
   const { seen } = useUnread();
   const { viewMode } = useViewPrefs();
+  const showBranch = session.sections.length > 1;
 
   const order = fileOrder(session, viewMode);
-  const groups = new Map<string, Comment[]>();
+  const groups = new Map<string, CommentGroup>();
   for (const comment of session.comments) {
-    const list = groups.get(comment.filePath) ?? [];
-    list.push(comment);
-    groups.set(comment.filePath, list);
+    const id = commentItemId(comment);
+    const group =
+      groups.get(id) ??
+      { filePath: comment.filePath, branch: comment.branch, pending: comment.pending, comments: [] };
+    group.comments.push(comment);
+    groups.set(id, group);
   }
   const ordered = [...groups.entries()].sort(
     ([a], [b]) => (order.get(a) ?? Infinity) - (order.get(b) ?? Infinity),
@@ -35,10 +47,15 @@ export function CommentsPanel({
 
   return (
     <div className="comments-panel">
-      {ordered.map(([filePath, group]) => (
-        <div key={filePath} className="comment-group">
-          <div className="comment-group-file">{filePath}</div>
-          {group
+      {ordered.map(([id, group]) => (
+        <div key={id} className="comment-group">
+          <div className="comment-group-file">
+            {group.filePath}
+            {showBranch ? (
+              <span className="row-branch">{group.pending ? 'pending' : group.branch}</span>
+            ) : null}
+          </div>
+          {group.comments
             .slice()
             .sort((a, b) => a.range.end - b.range.end)
             .map((comment) => {

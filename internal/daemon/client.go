@@ -64,6 +64,7 @@ type Started struct {
 	Version      int
 	Resumed      bool
 	ChannelState string
+	Stack        *StackInfo
 	AIRequests   []json.RawMessage
 	HTTPPort     int
 }
@@ -76,7 +77,7 @@ func (rc *ReviewClient) Start(ctx context.Context, session, cwd string, fresh bo
 	}
 	return Started{
 		URL: res.URL, ReviewID: reply.SubjectID, Version: res.Version, Resumed: res.Resumed,
-		ChannelState: res.ChannelState, AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort,
+		ChannelState: res.ChannelState, Stack: res.Stack, AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort,
 	}, nil
 }
 
@@ -140,8 +141,8 @@ func (rc *ReviewClient) UpdateAIRequest(ctx context.Context, session, cwd string
 // version. partial accepts an in-progress organization (files not yet placed are
 // allowed) so the agent can stream chapters as they firm up; the final submit
 // must be non-partial to enforce full coverage.
-func (rc *ReviewClient) SubmitOrganization(ctx context.Context, session, cwd string, org store.Organization, versionNumber int, partial bool) error {
-	_, _, err := rc.do(ctx, OpSubmitOrganization, session, cwd, body{Organization: &org, VersionNumber: versionNumber, Partial: partial})
+func (rc *ReviewClient) SubmitOrganization(ctx context.Context, session, cwd string, org store.Organization, versionNumber int, sectionKey string, partial bool) error {
+	_, _, err := rc.do(ctx, OpSubmitOrganization, session, cwd, body{Organization: &org, VersionNumber: versionNumber, SectionKey: sectionKey, Partial: partial})
 	return err
 }
 

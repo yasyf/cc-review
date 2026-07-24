@@ -91,7 +91,7 @@ func (e *eventLog) none() {
 	}
 }
 
-func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store.Review, store.Version) {
+func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store.Review, store.Version, store.Section) {
 	t.Helper()
 	ctx := context.Background()
 	ss := ccstore.NewSubjectStore(st.DB())
@@ -99,22 +99,27 @@ func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetReviewMeta(ctx, sub.ID, "base0", "main"); err != nil {
+	if err := st.SetReviewMeta(ctx, sub.ID, "base0", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	version, sections, err := st.CreateVersion(ctx, sub.ID, "main", "HEAD", "",
+		[]store.SectionInput{{Position: 0, Branch: "main", BaseRef: "HEAD", Pending: true, FilesJSON: filesJSON}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	patch := filepath.Join(t.TempDir(), "p.patch")
 	if err := os.WriteFile(patch, []byte("diff --git a/a.go b/a.go\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	version, err := st.CreateVersion(ctx, sub.ID, "main", "HEAD", patch, filesJSON, "")
-	if err != nil {
+	if err := st.UpdateSectionPatchPath(ctx, sections[0].ID, patch); err != nil {
 		t.Fatal(err)
 	}
+	sections[0].PatchPath = patch
 	review, err := st.GetReview(ctx, sub.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return review, version
+	return review, version, sections[0]
 }
 
 func postJSON(t *testing.T, url string, body any) *http.Response {
@@ -135,7 +140,7 @@ func boolPtr(b bool) *bool { return &b }
 
 func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 	st, cc, srv := newTestServer(t)
-	review, _ := createReviewVersion(t, st,
+	review, _, _ := createReviewVersion(t, st,
 		`[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false},{"path":"b.go","status":"A","fingerprint":"fp-b","generated":false,"vendored":false}]`)
 
 	resp := postJSON(t, srv.URL+"/api/file-states", map[string]any{
@@ -201,7 +206,7 @@ func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 
 func TestCreateAIRequestEmptyPromptIs400(t *testing.T) {
 	st, cc, srv := newTestServer(t)
-	review, _ := createReviewVersion(t, st, `[]`)
+	review, _, _ := createReviewVersion(t, st, `[]`)
 
 	resp := postJSON(t, srv.URL+"/api/ai-requests", map[string]any{"reviewId": review.ID, "prompt": "   "})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -217,7 +222,7 @@ func TestAnswerAIRequest(t *testing.T) {
 	t.Run("awaiting_input is answered and re-dispatched", func(t *testing.T) {
 		st, cc, srv := newTestServer(t)
 		ctx := context.Background()
-		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
+		review, version, _ := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark the boring ones")
 		if err != nil {
 			t.Fatal(err)
@@ -250,7 +255,7 @@ func TestAnswerAIRequest(t *testing.T) {
 	t.Run("non-awaiting request is 409", func(t *testing.T) {
 		st, _, srv := newTestServer(t)
 		ctx := context.Background()
-		review, version := createReviewVersion(t, st, `[]`)
+		review, version, _ := createReviewVersion(t, st, `[]`)
 		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "x")
 		if err != nil {
 			t.Fatal(err)
@@ -265,7 +270,7 @@ func TestAnswerAIRequest(t *testing.T) {
 	t.Run("stale-version question is 409", func(t *testing.T) {
 		st, _, srv := newTestServer(t)
 		ctx := context.Background()
-		review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
+		review, version, _ := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 		ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "q")
 		if err != nil {
 			t.Fatal(err)
@@ -277,7 +282,8 @@ func TestAnswerAIRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 		// A newer version supersedes the question's version.
-		if _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","fingerprint":"fp-a2","generated":false,"vendored":false}]`, ""); err != nil {
+		if _, _, err := st.CreateVersion(ctx, review.ID, "main", "HEAD", "",
+			[]store.SectionInput{{Position: 0, Branch: "main", BaseRef: "HEAD", Pending: true, FilesJSON: `[{"path":"a.go","status":"M","fingerprint":"fp-a2","generated":false,"vendored":false}]`}}); err != nil {
 			t.Fatal(err)
 		}
 		resp := postJSON(t, srv.URL+"/api/ai-requests/"+strconv.FormatInt(ar.ID, 10)+"/answer",
@@ -293,7 +299,7 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			st, cc, srv := newTestServer(t)
 			ctx := context.Background()
-			review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
+			review, version, _ := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 			ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark a.go")
 			if err != nil {
 				t.Fatal(err)
@@ -304,7 +310,7 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 				}
 			}
 			results, err := st.ApplyFileStates(ctx, review.ID,
-				[]store.FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, map[string]string{"a.go": "fp-a"})
+				[]store.FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, map[store.SectionFileKey]string{{Path: "a.go"}: "fp-a"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -342,13 +348,13 @@ func TestUndoAIRequestNotDoneIs409(t *testing.T) {
 func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
-	review, version := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
+	review, version, _ := createReviewVersion(t, st, `[{"path":"a.go","status":"M","fingerprint":"fp-a","generated":false,"vendored":false}]`)
 	ar, err := st.CreateAIRequest(ctx, review.ID, version.VersionNumber, store.OriginUser, "mark a.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	results, err := st.ApplyFileStates(ctx, review.ID,
-		[]store.FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, map[string]string{"a.go": "fp-a"})
+		[]store.FileStateInput{{Path: "a.go", Reviewed: boolPtr(true)}}, map[store.SectionFileKey]string{{Path: "a.go"}: "fp-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +435,7 @@ func TestUndoAIRequestRestoresStatesThenUpdatesRequest(t *testing.T) {
 func TestCloseReviewDetachesAndEmits(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
-	review, version := createReviewVersion(t, st, `[]`)
+	review, version, _ := createReviewVersion(t, st, `[]`)
 
 	resp := postJSON(t, srv.URL+"/api/close", map[string]any{"reviewId": review.ID})
 	if resp.StatusCode != http.StatusOK {
@@ -477,7 +483,7 @@ func TestCloseReviewDetachesAndEmits(t *testing.T) {
 func TestCloseSubmittedReviewIs409(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
-	review, _ := createReviewVersion(t, st, `[]`)
+	review, _, _ := createReviewVersion(t, st, `[]`)
 	ss := ccstore.NewSubjectStore(st.DB())
 	if err := ss.SetStatus(ctx, review.ID, "submitted"); err != nil {
 		t.Fatal(err)
@@ -503,7 +509,7 @@ func TestCloseSubmittedReviewIs409(t *testing.T) {
 func TestSessionCarriesLatestEventSeq(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	ctx := context.Background()
-	review, _ := createReviewVersion(t, st, `[]`)
+	review, _, _ := createReviewVersion(t, st, `[]`)
 
 	if got := getSessionLatestSeq(t, srv, review.ID); got != "0" {
 		t.Fatalf("latestEventSeq = %q before any events, want \"0\"", got)
@@ -548,25 +554,27 @@ func getSessionBody(t *testing.T, srv *httptest.Server, ref string) []byte {
 
 func TestSessionFilesPassThroughGeneratedFlag(t *testing.T) {
 	st, _, srv := newTestServer(t)
-	review, _ := createReviewVersion(t, st,
+	review, _, _ := createReviewVersion(t, st,
 		`[{"path":"package-lock.json","status":"A","fingerprint":"fp-a","generated":true,"vendored":false},`+
 			`{"path":"main.go","status":"A","fingerprint":"fp-b","generated":false,"vendored":false}]`)
 
 	var session struct {
-		Files json.RawMessage `json:"files"`
+		Sections []struct {
+			Files json.RawMessage `json:"files"`
+		} `json:"sections"`
 	}
 	if err := json.Unmarshal(getSessionBody(t, srv, review.ID), &session); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(session.Files, []byte(`"generated":true`)) {
-		t.Fatalf("session files JSON dropped the generated flag (raw passthrough broken): %s", session.Files)
+	if len(session.Sections) != 1 || !bytes.Contains(session.Sections[0].Files, []byte(`"generated":true`)) {
+		t.Fatalf("session files JSON dropped the generated flag (raw passthrough broken): %+v", session.Sections)
 	}
 }
 
 func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 	st, _, srv := newTestServer(t)
 	ctx := context.Background()
-	review, version := createReviewVersion(t, st, `[]`)
+	review, _, section := createReviewVersion(t, st, `[]`)
 	turns := vcs.NewTurnStore(st.DB())
 
 	t1, err := turns.CreateTurn(ctx, vcs.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
@@ -583,7 +591,7 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 	if err := turns.CloseOpenTurnsForWindow(ctx, "/repo", 100); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutAttributions(ctx, version.ID, map[string][]store.AttributionRange{
+	if err := st.PutAttributions(ctx, section.ID, map[string][]store.AttributionRange{
 		"a.go": {{Start: 1, End: 3, TurnID: t2.ID}, {Start: 7, End: 9}},
 		"b.go": {{Start: 2, End: 2, TurnID: t1.ID}},
 	}); err != nil {
@@ -592,8 +600,10 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 
 	body := getSessionBody(t, srv, review.ID)
 	var out struct {
-		Turns        []wire.Turn                        `json:"turns"`
-		Attributions map[string][]wire.AttributionRange `json:"attributions"`
+		Turns    []wire.Turn `json:"turns"`
+		Sections []struct {
+			Attributions map[string][]wire.AttributionRange `json:"attributions"`
+		} `json:"sections"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatal(err)
@@ -620,24 +630,26 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 		"a.go": {{Start: 1, End: 3, TurnID: strconv.FormatInt(t2.ID, 10)}, {Start: 7, End: 9}},
 		"b.go": {{Start: 2, End: 2, TurnID: strconv.FormatInt(t1.ID, 10)}},
 	}
-	if !reflect.DeepEqual(out.Attributions, wantAttrs) {
-		t.Fatalf("attributions = %+v, want %+v", out.Attributions, wantAttrs)
+	if len(out.Sections) != 1 || !reflect.DeepEqual(out.Sections[0].Attributions, wantAttrs) {
+		t.Fatalf("attributions = %+v, want %+v", out.Sections, wantAttrs)
 	}
 
 	var raw struct {
-		Attributions map[string][]map[string]json.RawMessage `json:"attributions"`
+		Sections []struct {
+			Attributions map[string][]map[string]json.RawMessage `json:"attributions"`
+		} `json:"sections"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := raw.Attributions["a.go"][1]["turnId"]; ok {
+	if _, ok := raw.Sections[0].Attributions["a.go"][1]["turnId"]; ok {
 		t.Fatalf("untagged range serialized a turnId key: %s", body)
 	}
 }
 
 func TestSessionEmptyTurnsAndAttributionsSerializeNonNull(t *testing.T) {
 	st, _, srv := newTestServer(t)
-	review, _ := createReviewVersion(t, st, `[]`)
+	review, _, _ := createReviewVersion(t, st, `[]`)
 
 	body := getSessionBody(t, srv, review.ID)
 	if !bytes.Contains(body, []byte(`"turns":[]`)) {
@@ -654,13 +666,13 @@ func TestSessionEmptyTurnsAndAttributionsSerializeNonNull(t *testing.T) {
 func TestSessionCarriesTurnActivity(t *testing.T) {
 	st, ledger, _, srv := newTestServerWithLedger(t)
 	ctx := context.Background()
-	review, version := createReviewVersion(t, st, `[]`)
+	review, _, section := createReviewVersion(t, st, `[]`)
 
 	turn, err := vcs.NewTurnStore(st.DB()).CreateTurn(ctx, vcs.Turn{RepoRoot: "/repo", Backend: "git", SessionID: "s1", ClaudePID: 100, PromptExcerpt: "add parser"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutAttributions(ctx, version.ID, map[string][]store.AttributionRange{
+	if err := st.PutAttributions(ctx, section.ID, map[string][]store.AttributionRange{
 		"a.go": {{Start: 1, End: 3, TurnID: turn.ID}},
 	}); err != nil {
 		t.Fatal(err)

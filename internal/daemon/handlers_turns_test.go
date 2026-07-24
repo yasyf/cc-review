@@ -263,11 +263,8 @@ func TestHandleStartAttributesTurnLines(t *testing.T) {
 	if !started.OK {
 		t.Fatalf("start: %s", started.Error)
 	}
-	v, ok, err := s.store.LatestVersion(ctx, started.ReviewID)
-	if err != nil || !ok {
-		t.Fatalf("latest version: ok=%v err=%v", ok, err)
-	}
-	byFile, err := s.store.ListAttributionsByVersion(ctx, v.ID)
+	sections := s.latestSections(ctx, t, started.ReviewID)
+	byFile, err := s.store.ListAttributionsBySection(ctx, sections[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}

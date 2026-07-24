@@ -1,11 +1,12 @@
 import { useSession, useSetFileStates } from '../lib/api';
+import { fileItemId } from '../lib/diff';
 import { chapterFileOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import { useViewPrefs } from '../lib/view-prefs';
 
 // Rendered through CodeView's renderHeaderMetadata portal; like CommentThread
 // it self-subscribes to the session cache instead of receiving it via props.
-export function FileHeaderControls({ path }: { path: string }) {
+export function FileHeaderControls({ sectionKey, path }: { sectionKey: string; path: string }) {
   const { slug, version } = useReview();
   const { data } = useSession(slug, version);
   const { expandOverrides, toggleExpandOverride, clearExpandOverride } = useViewPrefs();
@@ -13,18 +14,22 @@ export function FileHeaderControls({ path }: { path: string }) {
 
   if (!data) return null;
 
-  const state = data.fileStates[path] ?? { reviewed: false, hidden: false };
-  const cf = chapterFileOf(data.organization, path);
-  const meta = data.files.find((f) => f.path === path);
+  const section = data.sections.find((s) => s.sectionKey === sectionKey);
+  if (!section) return null;
+
+  const itemId = fileItemId(sectionKey, path);
+  const state = section.fileStates[path] ?? { reviewed: false, hidden: false };
+  const cf = chapterFileOf(section.organization, path);
+  const meta = section.files.find((f) => f.path === path);
   const generated = meta?.generated;
   const vendored = meta?.vendored;
   const collapsible = state.reviewed || !!generated || !!vendored;
-  const expanded = expandOverrides.has(path) || !collapsible;
+  const expanded = expandOverrides.has(itemId) || !collapsible;
 
   function setReviewed(reviewed: boolean) {
     // A fresh "Viewed" always re-collapses, even after an earlier peek.
-    if (reviewed) clearExpandOverride(path);
-    setStates.mutate([{ path, reviewed }]);
+    if (reviewed) clearExpandOverride(itemId);
+    setStates.mutate([{ sectionKey, path, reviewed }]);
   }
 
   return (
@@ -50,7 +55,7 @@ export function FileHeaderControls({ path }: { path: string }) {
           type="button"
           className="file-expand"
           title={expanded ? 'Collapse' : 'Expand'}
-          onClick={() => toggleExpandOverride(path)}
+          onClick={() => toggleExpandOverride(itemId)}
         >
           {expanded ? '▾' : '▸'}
         </button>

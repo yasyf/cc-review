@@ -82,56 +82,61 @@ func (o Organization) validate(versionPaths []string, partial bool) error {
 	return fmt.Errorf("organization: every changed file must appear in exactly one chapter — %s", strings.Join(problems, "; "))
 }
 
-// UpsertOrganization stores (or replaces) a version's organization.
-func (s *Store) UpsertOrganization(ctx context.Context, versionID int64, org Organization) error {
+// UpsertOrganization stores (or replaces) a section's organization.
+func (s *Store) UpsertOrganization(ctx context.Context, sectionID int64, org Organization) error {
 	b, err := json.Marshal(org)
 	if err != nil {
 		return fmt.Errorf("encode organization: %w", err)
 	}
 	now := unix(time.Now())
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO organizations(version_id, chapters_json, created_at, updated_at) VALUES(?,?,?,?)
-		 ON CONFLICT(version_id) DO UPDATE SET chapters_json=excluded.chapters_json, updated_at=excluded.updated_at`,
-		versionID, string(b), now, now); err != nil {
+		`INSERT INTO organizations(section_id, chapters_json, created_at, updated_at) VALUES(?,?,?,?)
+		 ON CONFLICT(section_id) DO UPDATE SET chapters_json=excluded.chapters_json, updated_at=excluded.updated_at`,
+		sectionID, string(b), now, now); err != nil {
 		return fmt.Errorf("upsert organization: %w", err)
 	}
 	return nil
 }
 
-// LatestOrganization returns the review's newest organization and the version
-// that owns it (the highest version_number with an organization row); ok is
-// false when no version of the review has been organized.
-func (s *Store) LatestOrganization(ctx context.Context, reviewID string) (Organization, Version, bool, error) {
+// LatestOrganizationForKey returns the newest organization for a section key
+// across the review's versions and the section that owns it; ok is false when
+// no version has organized that section. The stack's positions are stable, so a
+// key resolves the same section across versions.
+func (s *Store) LatestOrganizationForKey(ctx context.Context, reviewID, sectionKey string) (Organization, Section, bool, error) {
 	var (
 		chaptersJSON string
-		v            Version
-		created      int64
+		sec          Section
+		pending      int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT o.chapters_json, v.id, v.review_id, v.version_number, v.branch, v.base_ref, v.patch_path, v.files_json, v.created_at
-		 FROM organizations o JOIN review_versions v ON v.id = o.version_id
-		 WHERE v.review_id=? ORDER BY v.version_number DESC LIMIT 1`, reviewID).
-		Scan(&chaptersJSON, &v.ID, &v.ReviewID, &v.VersionNumber, &v.Branch, &v.BaseRef, &v.PatchPath, &v.FilesJSON, &created)
+		`SELECT o.chapters_json, vs.id, vs.version_id, vs.position, vs.branch, vs.parent_branch, vs.base_ref, vs.head_ref, vs.pending, vs.patch_path, vs.files_json
+		 FROM organizations o
+		 JOIN version_sections vs ON vs.id = o.section_id
+		 JOIN review_versions v ON v.id = vs.version_id
+		 WHERE v.review_id=? AND (CASE WHEN vs.pending=1 THEN '' ELSE vs.branch END)=?
+		 ORDER BY v.version_number DESC LIMIT 1`, reviewID, sectionKey).
+		Scan(&chaptersJSON, &sec.ID, &sec.VersionID, &sec.Position, &sec.Branch, &sec.ParentBranch,
+			&sec.BaseRef, &sec.HeadRef, &pending, &sec.PatchPath, &sec.FilesJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Organization{}, Version{}, false, nil
+		return Organization{}, Section{}, false, nil
 	}
 	if err != nil {
-		return Organization{}, Version{}, false, err
+		return Organization{}, Section{}, false, err
 	}
-	v.CreatedAt = fromUnix(created)
+	sec.Pending = pending != 0
 	var org Organization
 	if err := json.Unmarshal([]byte(chaptersJSON), &org); err != nil {
-		return Organization{}, Version{}, false, fmt.Errorf("version %d: decode organization: %w", v.ID, err)
+		return Organization{}, Section{}, false, fmt.Errorf("section %d: decode organization: %w", sec.ID, err)
 	}
-	return org, v, true, nil
+	return org, sec, true, nil
 }
 
-// GetOrganization returns a version's organization; ok is false when none has
+// GetOrganization returns a section's organization; ok is false when none has
 // been submitted yet.
-func (s *Store) GetOrganization(ctx context.Context, versionID int64) (Organization, bool, error) {
+func (s *Store) GetOrganization(ctx context.Context, sectionID int64) (Organization, bool, error) {
 	var chaptersJSON string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT chapters_json FROM organizations WHERE version_id=?`, versionID).Scan(&chaptersJSON)
+		`SELECT chapters_json FROM organizations WHERE section_id=?`, sectionID).Scan(&chaptersJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Organization{}, false, nil
 	}
@@ -140,7 +145,35 @@ func (s *Store) GetOrganization(ctx context.Context, versionID int64) (Organizat
 	}
 	var org Organization
 	if err := json.Unmarshal([]byte(chaptersJSON), &org); err != nil {
-		return Organization{}, false, fmt.Errorf("version %d: decode organization: %w", versionID, err)
+		return Organization{}, false, fmt.Errorf("section %d: decode organization: %w", sectionID, err)
 	}
 	return org, true, nil
+}
+
+// GetOrganizationsByVersion returns every organized section of a version, keyed
+// by section id.
+func (s *Store) GetOrganizationsByVersion(ctx context.Context, versionID int64) (map[int64]Organization, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT o.section_id, o.chapters_json FROM organizations o
+		 JOIN version_sections vs ON vs.id = o.section_id WHERE vs.version_id=?`, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64]Organization)
+	for rows.Next() {
+		var (
+			sectionID    int64
+			chaptersJSON string
+		)
+		if err := rows.Scan(&sectionID, &chaptersJSON); err != nil {
+			return nil, err
+		}
+		var org Organization
+		if err := json.Unmarshal([]byte(chaptersJSON), &org); err != nil {
+			return nil, fmt.Errorf("section %d: decode organization: %w", sectionID, err)
+		}
+		out[sectionID] = org
+	}
+	return out, rows.Err()
 }

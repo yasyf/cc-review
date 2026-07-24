@@ -24,25 +24,39 @@ import (
 // --- wire types ------------------------------------------------------------
 
 type sessionResponse struct {
-	Review          wire.Review                        `json:"review"`
-	Version         int                                `json:"version"`
-	VersionID       string                             `json:"versionId"`
-	Files           json.RawMessage                    `json:"files"`
-	Patch           string                             `json:"patchText"`
-	Comments        []wire.Comment                     `json:"comments"`
-	Annotations     []wire.Annotation                  `json:"annotations"`
-	FileStates      map[string]wire.FileState          `json:"fileStates"`
-	Organization    *store.Organization                `json:"organization"`
-	AIRequests      []wire.AIRequest                   `json:"aiRequests"`
-	Turns           []wire.Turn                        `json:"turns"`
-	Attributions    map[string][]wire.AttributionRange `json:"attributions"`
-	TurnActivity    map[string][]wire.Decision         `json:"turnActivity"`
-	ClaudeConnected bool                               `json:"claudeConnected"`
-	LatestEventSeq  string                             `json:"latestEventSeq"`
+	Review          wire.Review                `json:"review"`
+	Version         int                        `json:"version"`
+	VersionID       string                     `json:"versionId"`
+	Sections        []sectionResponse          `json:"sections"`
+	Comments        []wire.Comment             `json:"comments"`
+	Annotations     []wire.Annotation          `json:"annotations"`
+	AIRequests      []wire.AIRequest           `json:"aiRequests"`
+	Turns           []wire.Turn                `json:"turns"`
+	TurnActivity    map[string][]wire.Decision `json:"turnActivity"`
+	ClaudeConnected bool                       `json:"claudeConnected"`
+	LatestEventSeq  string                     `json:"latestEventSeq"`
+}
+
+// sectionResponse is one section's diff and per-section state. Attributions are
+// carried only on the pending section (the working tree).
+type sectionResponse struct {
+	SectionID    string                              `json:"sectionId"`
+	SectionKey   string                              `json:"sectionKey"`
+	Position     int                                 `json:"position"`
+	Branch       string                              `json:"branch"`
+	ParentBranch string                              `json:"parentBranch"`
+	BaseRef      string                              `json:"baseRef"`
+	HeadRef      string                              `json:"headRef"`
+	Pending      bool                                `json:"pending"`
+	Patch        string                              `json:"patchText"`
+	Files        json.RawMessage                     `json:"files"`
+	FileStates   map[string]wire.FileState           `json:"fileStates"`
+	Organization *store.Organization                 `json:"organization"`
+	Attributions *map[string][]wire.AttributionRange `json:"attributions,omitempty"`
 }
 
 type createCommentReq struct {
-	VersionID string `json:"versionId"`
+	SectionID string `json:"sectionId"`
 	FilePath  string `json:"filePath"`
 	Side      string `json:"side"`
 	Range     struct {
@@ -77,16 +91,18 @@ type closeReq struct {
 type fileStatesReq struct {
 	ReviewID string `json:"reviewId"`
 	Files    []struct {
-		Path     string `json:"path"`
-		Reviewed *bool  `json:"reviewed"`
-		Hidden   *bool  `json:"hidden"`
+		SectionKey string `json:"sectionKey"`
+		Path       string `json:"path"`
+		Reviewed   *bool  `json:"reviewed"`
+		Hidden     *bool  `json:"hidden"`
 	} `json:"files"`
 }
 
 type fileStateOut struct {
-	Path     string `json:"path"`
-	Reviewed bool   `json:"reviewed"`
-	Hidden   bool   `json:"hidden"`
+	SectionKey string `json:"sectionKey"`
+	Path       string `json:"path"`
+	Reviewed   bool   `json:"reviewed"`
+	Hidden     bool   `json:"hidden"`
 }
 
 type createAIRequestReq struct {
@@ -123,10 +139,78 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		notFoundOr500(w, err)
 		return
 	}
-	patch, err := os.ReadFile(version.PatchPath)
+	sections, err := s.st().ListSections(ctx, version.ID)
 	if err != nil {
-		http.Error(w, "read patch: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	states, err := s.st().ListFileStates(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	statesByKey := make(map[store.SectionFileKey]store.FileState, len(states))
+	for _, st := range states {
+		statesByKey[store.SectionFileKey{SectionKey: st.SectionKey, Path: st.Path}] = st
+	}
+	orgs, err := s.st().GetOrganizationsByVersion(ctx, version.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	keyByID := make(map[int64]string, len(sections))
+	turnIDSet := make(map[int64]bool)
+	sectionResp := make([]sectionResponse, 0, len(sections))
+	for _, sec := range sections {
+		keyByID[sec.ID] = sec.Key()
+		patch, err := os.ReadFile(sec.PatchPath)
+		if err != nil {
+			http.Error(w, "read patch: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		files, err := sec.Files()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fileStates := make(map[string]wire.FileState)
+		for _, f := range files {
+			if st, ok := statesByKey[store.SectionFileKey{SectionKey: sec.Key(), Path: f.Path}]; ok {
+				fileStates[f.Path] = wire.FileState{Reviewed: st.Reviewed, Hidden: st.Hidden}
+			}
+		}
+		var organization *store.Organization
+		if org, ok := orgs[sec.ID]; ok {
+			organization = &org
+		}
+		// Attributions ride only on the pending section (the working tree); other
+		// sections omit the key entirely.
+		var attributions *map[string][]wire.AttributionRange
+		if sec.Pending {
+			attrsByFile, err := s.st().ListAttributionsBySection(ctx, sec.ID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			pending := make(map[string][]wire.AttributionRange, len(attrsByFile))
+			for path, ranges := range attrsByFile {
+				out := make([]wire.AttributionRange, 0, len(ranges))
+				for _, rg := range ranges {
+					out = append(out, wire.ToAttributionRange(rg))
+					if rg.TurnID != 0 {
+						turnIDSet[rg.TurnID] = true
+					}
+				}
+				pending[path] = out
+			}
+			attributions = &pending
+		}
+		sectionResp = append(sectionResp, sectionResponse{
+			SectionID: strconv.FormatInt(sec.ID, 10), SectionKey: sec.Key(), Position: sec.Position,
+			Branch: sec.Branch, ParentBranch: sec.ParentBranch, BaseRef: sec.BaseRef, HeadRef: sec.HeadRef,
+			Pending: sec.Pending, Patch: string(patch), Files: json.RawMessage(sec.FilesJSON),
+			FileStates: fileStates, Organization: organization, Attributions: attributions,
+		})
 	}
 	comments, err := s.st().ListCommentsByVersion(ctx, version.ID)
 	if err != nil {
@@ -149,34 +233,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 	wiredAnnotations := make([]wire.Annotation, 0, len(annotations))
 	for _, a := range annotations {
-		wiredAnnotations = append(wiredAnnotations, wire.ToAnnotation(a))
-	}
-	files, err := version.Files()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	inVersion := make(map[string]bool, len(files))
-	for _, f := range files {
-		inVersion[f.Path] = true
-	}
-	states, err := s.st().ListFileStates(ctx, review.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	fileStates := make(map[string]wire.FileState, len(states))
-	for _, st := range states {
-		if inVersion[st.Path] {
-			fileStates[st.Path] = wire.FileState{Reviewed: st.Reviewed, Hidden: st.Hidden}
-		}
-	}
-	var organization *store.Organization
-	if org, ok, err := s.st().GetOrganization(ctx, version.ID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	} else if ok {
-		organization = &org
+		wiredAnnotations = append(wiredAnnotations, wire.ToAnnotation(a, keyByID[a.SectionID]))
 	}
 	requests, err := s.st().ListAIRequests(ctx, review.ID)
 	if err != nil {
@@ -186,23 +243,6 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	aiRequests := make([]wire.AIRequest, 0, len(requests))
 	for _, ar := range requests {
 		aiRequests = append(aiRequests, wire.ToAIRequest(ar))
-	}
-	attrsByFile, err := s.st().ListAttributionsByVersion(ctx, version.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	attributions := make(map[string][]wire.AttributionRange, len(attrsByFile))
-	turnIDSet := make(map[int64]bool)
-	for path, ranges := range attrsByFile {
-		out := make([]wire.AttributionRange, 0, len(ranges))
-		for _, rg := range ranges {
-			out = append(out, wire.ToAttributionRange(rg))
-			if rg.TurnID != 0 {
-				turnIDSet[rg.TurnID] = true
-			}
-		}
-		attributions[path] = out
 	}
 	turnIDs := make([]int64, 0, len(turnIDSet))
 	for tid := range turnIDSet {
@@ -226,15 +266,11 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		Review:          wire.ToReview(review, version.Branch),
 		Version:         version.VersionNumber,
 		VersionID:       strconv.FormatInt(version.ID, 10),
-		Files:           json.RawMessage(version.FilesJSON),
-		Patch:           string(patch),
+		Sections:        sectionResp,
 		Comments:        wired,
 		Annotations:     wiredAnnotations,
-		FileStates:      fileStates,
-		Organization:    organization,
 		AIRequests:      aiRequests,
 		Turns:           turns,
-		Attributions:    attributions,
 		TurnActivity:    s.turnActivity(storeTurns),
 		ClaudeConnected: s.connected(review.ID),
 		LatestEventSeq:  strconv.FormatInt(latestSeq, 10),
@@ -279,7 +315,12 @@ func (s *Server) handleGetVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]wire.VersionSummary, 0, len(versions))
 	for _, v := range versions {
-		out = append(out, wire.ToVersionSummary(v))
+		sections, err := s.st().ListSections(r.Context(), v.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out = append(out, wire.ToVersionSummary(v, sections))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -290,24 +331,37 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	versionID, err := strconv.ParseInt(req.VersionID, 10, 64)
+	sectionID, err := strconv.ParseInt(req.SectionID, 10, 64)
 	if err != nil {
-		http.Error(w, "bad versionId", http.StatusBadRequest)
+		http.Error(w, "bad sectionId", http.StatusBadRequest)
 		return
 	}
-	version, err := s.st().GetVersionByID(ctx, versionID)
+	section, err := s.st().GetSection(ctx, sectionID)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	version, err := s.st().GetVersionByID(ctx, section.VersionID)
 	if err != nil {
 		notFoundOr500(w, err)
 		return
 	}
 	c := store.Comment{
-		VersionID: versionID, FilePath: req.FilePath, Side: req.Side,
+		VersionID: section.VersionID, SectionID: section.ID, Branch: section.Key(), Pending: section.Pending,
+		FilePath: req.FilePath, Side: req.Side,
 		StartLine: req.Range.Start, EndLine: req.Range.End,
 		StartSide: req.Range.StartSide, EndSide: req.Range.EndSide,
 		LineContent: req.LineContent, Body: req.Body, Author: store.OriginUser, Status: "open",
 	}
+	// The currency check lives inside CreateComment's tx so a version minted
+	// between here and the insert (httpapi never holds the daemon RepoLock)
+	// can't strand the comment on a superseded version.
 	id, err := s.st().CreateComment(ctx, c)
 	if err != nil {
+		if errors.Is(err, store.ErrStaleSection) {
+			http.Error(w, "section belongs to a superseded version; reload the review", http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -430,23 +484,30 @@ func (s *Server) handleSetFileStates(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "review has no versions", http.StatusBadRequest)
 		return
 	}
-	files, err := version.Files()
+	sections, err := s.st().ListSections(ctx, version.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fingerprints := make(map[string]string, len(files))
-	for _, f := range files {
-		fingerprints[f.Path] = f.Fingerprint
+	fingerprints := make(map[store.SectionFileKey]string)
+	for _, sec := range sections {
+		files, err := sec.Files()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, f := range files {
+			fingerprints[store.SectionFileKey{SectionKey: sec.Key(), Path: f.Path}] = f.Fingerprint
+		}
 	}
 	var unknown []string
 	inputs := make([]store.FileStateInput, 0, len(req.Files))
 	for _, f := range req.Files {
-		if _, ok := fingerprints[f.Path]; !ok {
+		if _, ok := fingerprints[store.SectionFileKey{SectionKey: f.SectionKey, Path: f.Path}]; !ok {
 			unknown = append(unknown, f.Path)
 			continue
 		}
-		inputs = append(inputs, store.FileStateInput{Path: f.Path, Reviewed: f.Reviewed, Hidden: f.Hidden})
+		inputs = append(inputs, store.FileStateInput{SectionKey: f.SectionKey, Path: f.Path, Reviewed: f.Reviewed, Hidden: f.Hidden})
 	}
 	if len(unknown) > 0 {
 		http.Error(w, "unknown paths: "+strings.Join(unknown, ", "), http.StatusBadRequest)
@@ -460,8 +521,8 @@ func (s *Server) handleSetFileStates(w http.ResponseWriter, r *http.Request) {
 	out := make([]fileStateOut, 0, len(results))
 	states := make([]map[string]any, 0, len(results))
 	for _, res := range results {
-		out = append(out, fileStateOut{Path: res.Path, Reviewed: res.Applied.Reviewed, Hidden: res.Applied.Hidden})
-		states = append(states, map[string]any{"path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden})
+		out = append(out, fileStateOut{SectionKey: res.SectionKey, Path: res.Path, Reviewed: res.Applied.Reviewed, Hidden: res.Applied.Hidden})
+		states = append(states, map[string]any{"sectionKey": res.SectionKey, "path": res.Path, "reviewed": res.Applied.Reviewed, "hidden": res.Applied.Hidden})
 	}
 	// Apply and emit are not atomic: racing with the daemon's file-states
 	// handler, same-path events can land in the opposite order of the DB
@@ -632,7 +693,7 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 	if len(ar.Changes) > 0 {
 		states := make([]map[string]any, 0, len(ar.Changes))
 		for _, c := range ar.Changes {
-			states = append(states, map[string]any{"path": c.Path, "reviewed": c.Prior.Reviewed, "hidden": c.Prior.Hidden})
+			states = append(states, map[string]any{"sectionKey": c.SectionKey, "path": c.Path, "reviewed": c.Prior.Reviewed, "hidden": c.Prior.Hidden})
 		}
 		s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventFileStates, version.VersionNumber,
 			map[string]any{"states": states, "undoOf": strconv.FormatInt(id, 10)})
@@ -648,9 +709,18 @@ func (s *Server) handleUndoAIRequest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		sections, err := s.st().ListSections(ctx, version.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		keyByID := make(map[int64]string, len(sections))
+		for _, sec := range sections {
+			keyByID[sec.ID] = sec.Key()
+		}
 		wiredAnnotations := make([]wire.Annotation, 0, len(list))
 		for _, a := range list {
-			wiredAnnotations = append(wiredAnnotations, wire.ToAnnotation(a))
+			wiredAnnotations = append(wiredAnnotations, wire.ToAnnotation(a, keyByID[a.SectionID]))
 		}
 		s.emit(ctx, ar.ReviewID, ccevent.OriginHuman, store.EventAnnotationsUpdated, version.VersionNumber,
 			map[string]any{"annotations": wiredAnnotations})

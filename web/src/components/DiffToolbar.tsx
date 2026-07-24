@@ -14,7 +14,7 @@ export function DiffToolbar({ session }: { session: SessionResponse }) {
   const { viewMode, setViewMode, hideReviewed, setHideReviewed, focusMode, setFocusMode } =
     useViewPrefs();
 
-  const hasOrganization = session.organization !== null;
+  const hasOrganization = session.sections.some((s) => s.organization !== null);
   const organizing = isOrganizing(session.aiRequests);
 
   return (

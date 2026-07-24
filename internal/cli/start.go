@@ -47,7 +47,7 @@ func newStartCmd() *cobra.Command {
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), started.URL)
 			offer, reason, offerErr := channelsOffer()
-			for _, line := range startExtraLines(started.ChannelState, offer, reason, offerErr, started.AIRequests) {
+			for _, line := range startExtraLines(started.ChannelState, offer, reason, offerErr, started.Stack, started.AIRequests) {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			return nil
@@ -60,17 +60,21 @@ func newStartCmd() *cobra.Command {
 	return cmd
 }
 
-// startExtraLines renders the channel: and setup: lines (always) and one
-// organize: line per open request the daemon re-offered (the eager system
-// organize plus any human AI-bar prompts left pending). An offer error degrades
-// to offer=false with the error as the reason — start never fails on the setup
-// check.
-func startExtraLines(channelState string, offer bool, reason string, offerErr error, organizes []json.RawMessage) []string {
+// startExtraLines renders the channel: and setup: lines (always), a stack: line
+// for a Graphite stacked review, and one organize: line per open request the
+// daemon re-offered (the eager system organize plus any human AI-bar prompts
+// left pending). An offer error degrades to offer=false with the error as the
+// reason — start never fails on the setup check.
+func startExtraLines(channelState string, offer bool, reason string, offerErr error, stack *daemon.StackInfo, organizes []json.RawMessage) []string {
 	if offerErr != nil {
 		offer, reason = false, offerErr.Error()
 	}
 	setup, _ := json.Marshal(map[string]any{"offer": offer, "reason": reason})
 	lines := []string{"channel: " + channelState, "setup: " + string(setup)}
+	if stack != nil {
+		stackJSON, _ := json.Marshal(stack)
+		lines = append(lines, "stack: "+string(stackJSON))
+	}
 	for _, organize := range organizes {
 		if len(organize) > 0 {
 			lines = append(lines, "organize: "+string(organize))

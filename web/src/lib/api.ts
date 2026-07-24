@@ -46,7 +46,9 @@ export function useTurnProvenance(turnId: string, enabled: boolean) {
 }
 
 export interface CreateCommentInput {
-  versionId: string;
+  // Identifies both the version and the section; the daemon copies the
+  // section's branch/pending onto the created comment row.
+  sectionId: string;
   filePath: string;
   side: Side;
   range: LineRange;
@@ -99,18 +101,19 @@ export function useCreateReply() {
 }
 
 export interface FileStatePatch {
+  sectionKey: string;
   path: string;
   reviewed?: boolean;
   hidden?: boolean;
 }
 
 interface FileStatesResult {
-  states: { path: string; reviewed: boolean; hidden: boolean }[];
+  states: { sectionKey: string; path: string; reviewed: boolean; hidden: boolean }[];
 }
 
 export function useSetFileStates(slug: string, version?: number) {
   // Optimistic: checkbox → collapse must be instant. SSE redelivers the same
-  // absolute per-path state, so the echo converges with this merge.
+  // absolute per-(section, path) state, so the echo converges with this merge.
   return useOptimisticMutation<FileStatePatch[], FileStatesResult, SessionResponse>({
     mutationFn: (files) =>
       request<FileStatesResult>('/api/file-states', {
@@ -119,15 +122,26 @@ export function useSetFileStates(slug: string, version?: number) {
       }),
     queryKey: () => sessionKey(slug, version ?? 'latest'),
     applyOptimistic: (current, files) => {
-      const fileStates = { ...current.fileStates };
+      const bySection = new Map<string, FileStatePatch[]>();
       for (const patch of files) {
-        const prev = fileStates[patch.path] ?? { reviewed: false, hidden: false };
-        fileStates[patch.path] = {
-          reviewed: patch.reviewed ?? prev.reviewed,
-          hidden: patch.hidden ?? prev.hidden,
-        };
+        const list = bySection.get(patch.sectionKey) ?? [];
+        list.push(patch);
+        bySection.set(patch.sectionKey, list);
       }
-      return { ...current, fileStates };
+      const sections = current.sections.map((section) => {
+        const updates = bySection.get(section.sectionKey);
+        if (!updates) return section;
+        const fileStates = { ...section.fileStates };
+        for (const patch of updates) {
+          const prev = fileStates[patch.path] ?? { reviewed: false, hidden: false };
+          fileStates[patch.path] = {
+            reviewed: patch.reviewed ?? prev.reviewed,
+            hidden: patch.hidden ?? prev.hidden,
+          };
+        }
+        return { ...section, fileStates };
+      });
+      return { ...current, sections };
     },
     invalidate: () => ({ queryKey: ['session', slug], exact: false }),
   });

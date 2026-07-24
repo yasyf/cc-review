@@ -10,24 +10,68 @@ import (
 	"github.com/yasyf/cc-interact/vcs"
 )
 
-// Version is one snapshot of the working tree under a review. SessionID is the
-// Claude session UUID the snapshot was captured in, threaded onto the version so
-// a frozen review can attribute its corrections to that session.
+// Version is one snapshot of the working tree under a review, its diff carried
+// by an ordered list of Sections. SessionID is the Claude session UUID the
+// snapshot was captured in, threaded onto the version so a frozen review can
+// attribute its corrections to that session.
 type Version struct {
 	ID            int64
 	ReviewID      string
 	VersionNumber int
 	Branch        string
 	BaseRef       string
-	PatchPath     string
-	FilesJSON     string
 	SessionID     string
 	CreatedAt     time.Time
 }
 
-// Files decodes the version's files_json summary.
-func (v Version) Files() ([]vcs.FileChange, error) {
-	classified, err := v.FileFlags()
+// Section is one diff within a version: a stack branch's changes against its
+// parent, or the working tree's uncommitted changes (the pending section). A
+// flat review is exactly one pending section. Each version recreates its
+// sections; Key is the stable cross-version identity file states carry.
+type Section struct {
+	ID           int64
+	VersionID    int64
+	Position     int
+	Branch       string
+	ParentBranch string
+	BaseRef      string
+	HeadRef      string
+	Pending      bool
+	PatchPath    string
+	FilesJSON    string
+}
+
+// SectionInput is one section to insert with a new version. PatchPath is filled
+// after the snapshot lands, via UpdateSectionPatchPath.
+type SectionInput struct {
+	Position     int
+	Branch       string
+	ParentBranch string
+	BaseRef      string
+	HeadRef      string
+	Pending      bool
+	FilesJSON    string
+}
+
+// SectionFileKey identifies one file within one section of a review — the
+// cross-version identity file states and fingerprints key by.
+type SectionFileKey struct {
+	SectionKey string
+	Path       string
+}
+
+// Key is the section's stable cross-version identity: "" for the pending
+// (working-tree) section, else the branch name.
+func (s Section) Key() string {
+	if s.Pending {
+		return ""
+	}
+	return s.Branch
+}
+
+// Files decodes the section's files_json summary.
+func (s Section) Files() ([]vcs.FileChange, error) {
+	classified, err := s.FileFlags()
 	if err != nil {
 		return nil, err
 	}
@@ -77,19 +121,21 @@ func (f *ClassifiedFile) UnmarshalJSON(data []byte) error {
 }
 
 // FileFlags decodes files_json as exact v1 classified files.
-func (v Version) FileFlags() ([]ClassifiedFile, error) {
+func (s Section) FileFlags() ([]ClassifiedFile, error) {
 	var files []ClassifiedFile
-	if err := json.Unmarshal([]byte(v.FilesJSON), &files); err != nil {
-		return nil, fmt.Errorf("version %d: decode file flags: %w", v.ID, err)
+	if err := json.Unmarshal([]byte(s.FilesJSON), &files); err != nil {
+		return nil, fmt.Errorf("section %d: decode file flags: %w", s.ID, err)
 	}
 	return files, nil
 }
 
-// FileState is one file's review-scoped state: hidden persists across
-// versions; reviewed survives exactly while ReviewedFingerprint matches the
-// file's current diff fingerprint.
+// FileState is one file's review-scoped state within a section: hidden persists
+// across versions; reviewed survives exactly while ReviewedFingerprint matches
+// the file's current diff fingerprint. SectionKey scopes the state so the same
+// path in two sections tracks independently.
 type FileState struct {
 	ReviewID            string
+	SectionKey          string
 	Path                string
 	Reviewed            bool
 	Hidden              bool
@@ -97,12 +143,13 @@ type FileState struct {
 	UpdatedAt           time.Time
 }
 
-// FileStateInput is one file's partial state change: a nil flag keeps the
-// current value.
+// FileStateInput is one file's partial state change within a section: a nil
+// flag keeps the current value.
 type FileStateInput struct {
-	Path     string
-	Reviewed *bool
-	Hidden   *bool
+	SectionKey string
+	Path       string
+	Reviewed   *bool
+	Hidden     *bool
 }
 
 // PriorState snapshots a file's state before an AI batch, for undo.
@@ -120,18 +167,21 @@ type AppliedState struct {
 
 // FileStateResult is one file's prior and applied state from ApplyFileStates.
 type FileStateResult struct {
-	Path    string
-	Prior   PriorState
-	Applied AppliedState
+	SectionKey string
+	Path       string
+	Prior      PriorState
+	Applied    AppliedState
 }
 
 // AIChange records one file's transition under an AI request; the first prior
-// per path is kept across batches so undo restores the pre-request state.
+// per (section, path) is kept across batches so undo restores the pre-request
+// state.
 type AIChange struct {
-	Path    string       `json:"path"`
-	Reason  string       `json:"reason"`
-	Prior   PriorState   `json:"prior"`
-	Applied AppliedState `json:"applied"`
+	SectionKey string       `json:"sectionKey"`
+	Path       string       `json:"path"`
+	Reason     string       `json:"reason"`
+	Prior      PriorState   `json:"prior"`
+	Applied    AppliedState `json:"applied"`
 }
 
 // Unmatched is one part of an AI-bar prompt Claude did not act on, and why.
@@ -299,10 +349,15 @@ func (o *Organization) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Comment is an inline comment anchored to a line range of a version's diff.
+// Comment is an inline comment anchored to a line range of a section's diff.
+// Branch and Pending are copied off the section at insert so the wire and
+// frozen feedback carry the owning branch join-free.
 type Comment struct {
 	ID          int64
 	VersionID   int64
+	SectionID   int64
+	Branch      string
+	Pending     bool
 	FilePath    string
 	Side        string // additions | deletions
 	StartLine   int
@@ -323,6 +378,7 @@ type Comment struct {
 type Annotation struct {
 	ID          int64
 	VersionID   int64
+	SectionID   int64
 	FilePath    string
 	Side        string // additions | deletions
 	StartLine   int

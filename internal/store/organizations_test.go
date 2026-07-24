@@ -101,49 +101,84 @@ func TestOrganizationValidate(t *testing.T) {
 	}
 }
 
-func TestLatestOrganization(t *testing.T) {
+func TestLatestOrganizationForKey(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v1, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p1", `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`, "")
+	oneFile := `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`
+	_, sec1 := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", oneFile)
 
-	if _, _, ok, err := s.LatestOrganization(ctx, rid); err != nil || ok {
+	if _, _, ok, err := s.LatestOrganizationForKey(ctx, rid, ""); err != nil || ok {
 		t.Fatalf("unorganized review: ok=%v err=%v, want absent", ok, err)
 	}
 
 	v1Org := Organization{Chapters: []Chapter{chapter("First", "a.go")}}
-	if err := s.UpsertOrganization(ctx, v1.ID, v1Org); err != nil {
+	if err := s.UpsertOrganization(ctx, sec1.ID, v1Org); err != nil {
 		t.Fatalf("upsert v1: %v", err)
 	}
-	// An org-less newer version is skipped: v1's organization stays the latest.
-	if _, err := s.CreateVersion(ctx, rid, "main", "HEAD", "/p2", `[{"path":"a.go","status":"M","generated":false,"vendored":false},{"path":"b.go","status":"A","generated":false,"vendored":false}]`, ""); err != nil {
-		t.Fatalf("create v2: %v", err)
-	}
-	org, owner, ok, err := s.LatestOrganization(ctx, rid)
+	// An org-less newer version's same-key section is skipped: v1's org stays latest.
+	seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "",
+		`[{"path":"a.go","status":"M","generated":false,"vendored":false},{"path":"b.go","status":"A","generated":false,"vendored":false}]`)
+	org, owner, ok, err := s.LatestOrganizationForKey(ctx, rid, "")
 	if err != nil || !ok {
 		t.Fatalf("after v2: ok=%v err=%v", ok, err)
 	}
-	if owner.ID != v1.ID || owner.VersionNumber != 1 || owner.FilesJSON != v1.FilesJSON {
-		t.Fatalf("owner = %+v, want v1", owner)
+	if owner.ID != sec1.ID || owner.FilesJSON != sec1.FilesJSON {
+		t.Fatalf("owner = %+v, want sec1", owner)
 	}
 	if !reflect.DeepEqual(org, v1Org) {
 		t.Fatalf("org = %+v, want %+v", org, v1Org)
 	}
 
-	v3, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p3", `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`, "")
+	_, sec3 := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", oneFile)
 	v3Org := Organization{Chapters: []Chapter{chapter("Third", "a.go")}}
-	if err := s.UpsertOrganization(ctx, v3.ID, v3Org); err != nil {
+	if err := s.UpsertOrganization(ctx, sec3.ID, v3Org); err != nil {
 		t.Fatalf("upsert v3: %v", err)
 	}
-	org, owner, ok, err = s.LatestOrganization(ctx, rid)
+	org, owner, ok, err = s.LatestOrganizationForKey(ctx, rid, "")
 	if err != nil || !ok {
 		t.Fatalf("after v3 org: ok=%v err=%v", ok, err)
 	}
-	if owner.ID != v3.ID || owner.VersionNumber != 3 {
-		t.Fatalf("owner = %+v, want v3", owner)
+	if owner.ID != sec3.ID {
+		t.Fatalf("owner = %+v, want sec3", owner)
 	}
 	if !reflect.DeepEqual(org, v3Org) {
 		t.Fatalf("org = %+v, want %+v", org, v3Org)
+	}
+}
+
+func TestLatestOrganizationForKeySeparatesSections(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	rid := seedReview(ctx, t, s, "s", 0, "/repo", "feat", "")
+	oneFile := `[{"path":"a.go","status":"M","generated":false,"vendored":false}]`
+	// A stack version: one committed section (branch "feat") plus the pending one.
+	_, sections, err := s.CreateVersion(ctx, rid, "feat", "", "", []SectionInput{
+		{Position: 0, Branch: "feat", ParentBranch: "main", BaseRef: "b", HeadRef: "h", FilesJSON: oneFile},
+		{Position: 1, Branch: "feat", Pending: true, BaseRef: "h", FilesJSON: oneFile},
+	})
+	if err != nil {
+		t.Fatalf("create stack version: %v", err)
+	}
+	featOrg := Organization{Chapters: []Chapter{chapter("Feat", "a.go")}}
+	pendingOrg := Organization{Chapters: []Chapter{chapter("Pending", "a.go")}}
+	if err := s.UpsertOrganization(ctx, sections[0].ID, featOrg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertOrganization(ctx, sections[1].ID, pendingOrg); err != nil {
+		t.Fatal(err)
+	}
+	gotFeat, _, ok, err := s.LatestOrganizationForKey(ctx, rid, "feat")
+	if err != nil || !ok || !reflect.DeepEqual(gotFeat, featOrg) {
+		t.Fatalf("feat org = %+v ok=%v err=%v, want %+v", gotFeat, ok, err, featOrg)
+	}
+	gotPending, _, ok, err := s.LatestOrganizationForKey(ctx, rid, "")
+	if err != nil || !ok || !reflect.DeepEqual(gotPending, pendingOrg) {
+		t.Fatalf("pending org = %+v ok=%v err=%v, want %+v", gotPending, ok, err, pendingOrg)
+	}
+	byVersion, err := s.GetOrganizationsByVersion(ctx, sections[0].VersionID)
+	if err != nil || len(byVersion) != 2 {
+		t.Fatalf("by version = %+v err=%v, want 2 sections", byVersion, err)
 	}
 }
 
@@ -151,9 +186,9 @@ func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
+	_, sec := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", "[]")
 
-	if _, ok, err := s.GetOrganization(ctx, v.ID); err != nil || ok {
+	if _, ok, err := s.GetOrganization(ctx, sec.ID); err != nil || ok {
 		t.Fatalf("empty get: ok=%v err=%v, want absent", ok, err)
 	}
 
@@ -161,10 +196,10 @@ func TestOrganizationUpsertRoundTrip(t *testing.T) {
 	org := Organization{Overview: &overview, Chapters: []Chapter{
 		{Title: "Store", Summary: "DDL first.", Files: []ChapterFile{{Path: "store.go", Risk: "high", Rationale: "new DDL", Lines: []LineNote{}}}},
 	}}
-	if err := s.UpsertOrganization(ctx, v.ID, org); err != nil {
+	if err := s.UpsertOrganization(ctx, sec.ID, org); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	got, ok, err := s.GetOrganization(ctx, v.ID)
+	got, ok, err := s.GetOrganization(ctx, sec.ID)
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
@@ -174,10 +209,10 @@ func TestOrganizationUpsertRoundTrip(t *testing.T) {
 
 	// Upsert replaces, including dropping the overview to null.
 	replacement := Organization{Chapters: []Chapter{chapter("Everything", "store.go")}}
-	if err := s.UpsertOrganization(ctx, v.ID, replacement); err != nil {
+	if err := s.UpsertOrganization(ctx, sec.ID, replacement); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	got, _, _ = s.GetOrganization(ctx, v.ID)
+	got, _, _ = s.GetOrganization(ctx, sec.ID)
 	if got.Overview != nil || len(got.Chapters) != 1 || got.Chapters[0].Title != "Everything" {
 		t.Fatalf("replacement = %+v", got)
 	}
@@ -210,7 +245,7 @@ func TestOrganizationUpsertRoundTripWithLines(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	rid := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	v, _ := s.CreateVersion(ctx, rid, "main", "HEAD", "/p", "[]", "")
+	_, sec := seedFlatVersion(ctx, t, s, rid, "main", "HEAD", "", "[]")
 
 	org := Organization{Chapters: []Chapter{{Title: "Store", Summary: "s", Files: []ChapterFile{
 		{Path: "annotated.go", Risk: "high", Rationale: "r", Focus: "scrutinize the new guard", Lines: []LineNote{
@@ -219,10 +254,10 @@ func TestOrganizationUpsertRoundTripWithLines(t *testing.T) {
 		}},
 		{Path: "plain.go", Risk: "low", Rationale: "r", Lines: []LineNote{}},
 	}}}}
-	if err := s.UpsertOrganization(ctx, v.ID, org); err != nil {
+	if err := s.UpsertOrganization(ctx, sec.ID, org); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	got, ok, err := s.GetOrganization(ctx, v.ID)
+	got, ok, err := s.GetOrganization(ctx, sec.ID)
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}

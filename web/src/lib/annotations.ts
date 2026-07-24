@@ -1,3 +1,4 @@
+import { fileItemId } from './diff';
 import type { Annotation, Side } from './types';
 
 // Injected into each diff's shadow root via the CodeView `unsafeCSS` option,
@@ -9,13 +10,13 @@ export const ANNOTATION_UNSAFE_CSS = `
 }
 `;
 
-// Group annotations by their file path for per-container decoration.
-export function annotationsByFile(
+// Group annotations by itemId for per-container decoration.
+export function annotationsByItem(
   annotations: readonly Annotation[],
 ): Record<string, Annotation[]> {
   const out: Record<string, Annotation[]> = {};
   for (const annotation of annotations) {
-    (out[annotation.filePath] ??= []).push(annotation);
+    (out[fileItemId(annotation.sectionKey, annotation.filePath)] ??= []).push(annotation);
   }
   return out;
 }

@@ -166,11 +166,8 @@ func TestReplyJSONColumnsAreExact(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	reviewID := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	version, err := s.CreateVersion(ctx, reviewID, "main", "HEAD", "/p", "[]", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	commentID, err := s.CreateComment(ctx, Comment{VersionID: version.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
+	version, sec := seedFlatVersion(ctx, t, s, reviewID, "main", "HEAD", "", "[]")
+	commentID, err := s.CreateComment(ctx, Comment{VersionID: version.ID, SectionID: sec.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,17 +215,14 @@ func TestAttributionJSONColumnIsExact(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	reviewID := seedReview(ctx, t, s, "s", 0, "/repo", "main", "base0")
-	version, err := s.CreateVersion(ctx, reviewID, "main", "HEAD", "/p", "[]", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutAttributions(ctx, version.ID, map[string][]AttributionRange{
+	_, sec := seedFlatVersion(ctx, t, s, reviewID, "main", "HEAD", "", "[]")
+	if err := s.PutAttributions(ctx, sec.ID, map[string][]AttributionRange{
 		"a.go": {{Start: 1, End: 2, TurnID: 3}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	var ranges string
-	if err := s.db.QueryRowContext(ctx, `SELECT ranges_json FROM turn_attributions WHERE version_id=? AND file_path='a.go'`, version.ID).
+	if err := s.db.QueryRowContext(ctx, `SELECT ranges_json FROM turn_attributions WHERE section_id=? AND file_path='a.go'`, sec.ID).
 		Scan(&ranges); err != nil {
 		t.Fatal(err)
 	}
@@ -236,10 +230,10 @@ func TestAttributionJSONColumnIsExact(t *testing.T) {
 	if ranges != want {
 		t.Fatalf("ranges_json=%s, want %s", ranges, want)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE turn_attributions SET ranges_json=? WHERE version_id=? AND file_path='a.go'`, strings.Replace(want, `"end":2`, `"end":2,"extra":true`, 1), version.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE turn_attributions SET ranges_json=? WHERE section_id=? AND file_path='a.go'`, strings.Replace(want, `"end":2`, `"end":2,"extra":true`, 1), sec.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ListAttributionsByVersion(ctx, version.ID); err == nil {
-		t.Fatal("ListAttributionsByVersion accepted an extended ranges row")
+	if _, err := s.ListAttributionsBySection(ctx, sec.ID); err == nil {
+		t.Fatal("ListAttributionsBySection accepted an extended ranges row")
 	}
 }

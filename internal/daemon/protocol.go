@@ -34,6 +34,13 @@ const (
 	OpList               ccd.Op = "list"
 )
 
+// StackInfo is the start op's summary of a Graphite stack: the trunk and the
+// committed branches in trunk-most→top order.
+type StackInfo struct {
+	Trunk    string   `json:"trunk"`
+	Branches []string `json:"branches"`
+}
+
 // ReviewInfo is one review row the close and list ops report.
 type ReviewInfo struct {
 	ID           string    `json:"id"`
@@ -49,12 +56,13 @@ type ReviewInfo struct {
 // opens a Claude-authored comment thread on the range. Body is the highlight's
 // label or the comment's text.
 type AnnotateInput struct {
-	Kind      string `json:"kind"`
-	FilePath  string `json:"file_path"`
-	Side      string `json:"side"`
-	StartLine int    `json:"start_line"`
-	EndLine   int    `json:"end_line"`
-	Body      string `json:"body"`
+	Kind       string `json:"kind"`
+	SectionKey string `json:"section_key"`
+	FilePath   string `json:"file_path"`
+	Side       string `json:"side"`
+	StartLine  int    `json:"start_line"`
+	EndLine    int    `json:"end_line"`
+	Body       string `json:"body"`
 }
 
 // ReplyInput is one reply Claude posts. A non-zero AnswerTo answers an existing
@@ -72,14 +80,15 @@ type ReplyInput struct {
 	DedupKey  string           `json:"dedup_key,omitempty"`
 }
 
-// FileStateInput is one file's partial state change: a nil flag keeps the
-// current value. Reason is carried into the file.states event and the AI
-// request's change record, never stored on the file itself.
+// FileStateInput is one file's partial state change within a section: a nil
+// flag keeps the current value. Reason is carried into the file.states event and
+// the AI request's change record, never stored on the file itself.
 type FileStateInput struct {
-	Path     string `json:"path"`
-	Reviewed *bool  `json:"reviewed,omitempty"`
-	Hidden   *bool  `json:"hidden,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	SectionKey string `json:"section_key,omitempty"`
+	Path       string `json:"path"`
+	Reviewed   *bool  `json:"reviewed,omitempty"`
+	Hidden     *bool  `json:"hidden,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // ReviewFilesFilter narrows the inline file subset get_review_files returns; the
@@ -111,6 +120,7 @@ type body struct {
 	Ask           *store.Ask          `json:"ask,omitempty"`            // update-ai-request (awaiting_input)
 	Organization  *store.Organization `json:"organization,omitempty"`   // submit-organization
 	VersionNumber int                 `json:"version_number,omitempty"` // submit-organization
+	SectionKey    string              `json:"section_key,omitempty"`    // submit-organization (target section)
 	Partial       bool                `json:"partial,omitempty"`        // submit-organization (streaming)
 	Status        string              `json:"status,omitempty"`         // review-files (filter)
 	Reviewed      *bool               `json:"reviewed,omitempty"`       // review-files (filter) | file-states-by-risk (target)
@@ -127,6 +137,7 @@ type result struct {
 	Version      int               `json:"version,omitempty"`       // start
 	Resumed      bool              `json:"resumed,omitempty"`       // start
 	ChannelState string            `json:"channel_state,omitempty"` // start
+	Stack        *StackInfo        `json:"stack,omitempty"`         // start
 	AIRequests   []json.RawMessage `json:"ai_requests,omitempty"`   // start
 	FeedbackPath string            `json:"feedback_path,omitempty"` // feedback
 	Feedback     json.RawMessage   `json:"feedback,omitempty"`      // feedback

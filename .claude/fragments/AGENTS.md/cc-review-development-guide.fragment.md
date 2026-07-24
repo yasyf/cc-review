@@ -11,9 +11,7 @@ cc-review/
 │   ├── cli/            #   cobra subcommands: start, watch, reply, feedback, status, stop, …
 │   ├── daemon/         #   lazy-started daemon: unix-socket IPC, pub/sub bus, long-poll
 │   ├── httpapi/        #   127.0.0.1 HTTP server: embedded SPA, /api REST, /events SSE
-│   ├── store/          #   modernc.org/sqlite, append-only schema + queries
-│   ├── vcs/            #   working-tree snapshot (git or jj, auto-detected) → versioned patch
-│   ├── session/        #   session-id + repo_root resolution and resume policy
+│   ├── store/          #   modernc.org/sqlite, exact-schema DDL (archive-on-change) + queries
 │   ├── paths/          #   ~/.cc-review state-dir layout
 │   ├── version/        #   ldflags-injected version
 │   └── web/            #   go:embed of the built SPA (dist/)
@@ -28,3 +26,5 @@ cc-review/
 ├── AGENTS.md           # This file — shared conventions
 └── README.md           # Project overview
 ```
+
+The VCS snapshot layer (git, jj, and Graphite-stack capture) and session/window resolution live in the `github.com/yasyf/cc-interact` module, not under `internal/`.

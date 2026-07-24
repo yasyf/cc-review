@@ -134,6 +134,79 @@ func TestNestedFeedbackPayloadIsExact(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesStrandedOpenComments(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+
+	subjectID := store.NewSlugHash()
+	if _, err := ccstore.NewSubjectStore(st.DB()).
+		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
+		t.Fatal(err)
+	}
+
+	comment := func(v store.Version, sec store.Section, body string) int64 {
+		t.Helper()
+		id, err := st.CreateComment(ctx, store.Comment{
+			VersionID: v.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
+			FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: body, Author: store.OriginUser, Status: "open",
+		})
+		if err != nil {
+			t.Fatalf("create comment %q: %v", body, err)
+		}
+		return id
+	}
+	pending := []store.SectionInput{{Position: 0, Branch: "main", BaseRef: "HEAD", Pending: true, FilesJSON: "[]"}}
+
+	// v1: an open comment plus a later-resolved one, both written while v1 is latest.
+	v1, s1, err := st.CreateVersion(ctx, subjectID, "main", "HEAD", "", pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strandedID := comment(v1, s1[0], "stranded")
+	resolvedID := comment(v1, s1[0], "resolved")
+	if err := st.UpdateCommentStatus(ctx, resolvedID, "resolved"); err != nil {
+		t.Fatal(err)
+	}
+
+	// v2 supersedes v1; a comment lands on the new latest version.
+	v2, s2, err := st.CreateVersion(ctx, subjectID, "main", "HEAD", "", pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment(v2, s2[0], "current")
+
+	fb, err := Build(ctx, st, subjectID, v2, time.Unix(1, 0))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	byBody := make(map[string]Thread, len(fb.Threads))
+	for _, th := range fb.Threads {
+		byBody[th.Body] = th
+	}
+	if len(fb.Threads) != 2 {
+		t.Fatalf("threads = %d, want 2 (current + stranded, resolved excluded): %+v", len(fb.Threads), fb.Threads)
+	}
+	if cur := byBody["current"]; cur.VersionNumber != v2.VersionNumber {
+		t.Fatalf("current thread version = %d, want %d", cur.VersionNumber, v2.VersionNumber)
+	}
+	str, ok := byBody["stranded"]
+	if !ok || str.CommentID != strandedID || str.VersionNumber != v1.VersionNumber {
+		t.Fatalf("stranded thread = %+v (ok=%v), want comment %d at version %d", str, ok, strandedID, v1.VersionNumber)
+	}
+	// A stranded thread carries its branch/pending as written (composes with the
+	// pending-branch normalization): the pending section is branch "".
+	if str.Branch != "" || !str.Pending {
+		t.Fatalf("stranded branch/pending = %q/%v, want \"\"/true", str.Branch, str.Pending)
+	}
+	if _, ok := byBody["resolved"]; ok {
+		t.Fatal("resolved v1 comment leaked into feedback")
+	}
+}
+
 func TestBuildCarriesAskShapes(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "t.db"))
@@ -147,9 +220,11 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := st.CreateVersion(ctx, subjectID, "main", "HEAD", "/p", "[]", "sess-1")
+	v, sections, _ := st.CreateVersion(ctx, subjectID, "main", "HEAD", "sess-1",
+		[]store.SectionInput{{Position: 0, Branch: "main", BaseRef: "HEAD", Pending: true, FilesJSON: "[]"}})
 	cid, _ := st.CreateComment(ctx, store.Comment{
-		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm",
+		VersionID: v.ID, SectionID: sections[0].ID, Branch: sections[0].Key(), Pending: sections[0].Pending,
+		FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 3, Body: "hm",
 	})
 
 	ask := &store.Ask{Header: "Approach", Options: []store.AskOption{{Label: "A", Preview: "code"}, {Label: "B"}}}

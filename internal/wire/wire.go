@@ -47,10 +47,15 @@ type Reply struct {
 	CreatedAt   string           `json:"createdAt"`
 }
 
-// Comment is an inline comment with its thread.
+// Comment is an inline comment with its thread. SectionID/branch/pending are
+// copied off the owning section so the SPA routes it and feedback tags it
+// join-free.
 type Comment struct {
 	ID          string    `json:"id"`
 	VersionID   string    `json:"versionId"`
+	SectionID   string    `json:"sectionId"`
+	Branch      string    `json:"branch"`
+	Pending     bool      `json:"pending"`
 	FilePath    string    `json:"filePath"`
 	Side        string    `json:"side"`
 	Range       LineRange `json:"range"`
@@ -62,24 +67,36 @@ type Comment struct {
 	Replies     []Reply   `json:"replies"`
 }
 
-// Annotation is the SPA's view of a Claude-authored line-range highlight.
+// Annotation is the SPA's view of a Claude-authored line-range highlight,
+// tagged with the key of the section it decorates.
 type Annotation struct {
-	ID        string `json:"id"`
-	FilePath  string `json:"filePath"`
-	Side      string `json:"side"`
-	Start     int    `json:"start"`
-	End       int    `json:"end"`
-	Label     string `json:"label"`
-	CreatedAt string `json:"createdAt"`
+	ID         string `json:"id"`
+	SectionKey string `json:"sectionKey"`
+	FilePath   string `json:"filePath"`
+	Side       string `json:"side"`
+	Start      int    `json:"start"`
+	End        int    `json:"end"`
+	Label      string `json:"label"`
+	CreatedAt  string `json:"createdAt"`
+}
+
+// SectionSummary is one section within a version summary.
+type SectionSummary struct {
+	SectionKey   string `json:"sectionKey"`
+	Position     int    `json:"position"`
+	Branch       string `json:"branch"`
+	ParentBranch string `json:"parentBranch"`
+	Pending      bool   `json:"pending"`
 }
 
 // VersionSummary is one entry in the version list.
 type VersionSummary struct {
-	VersionID string `json:"versionId"`
-	Version   int    `json:"version"`
-	Branch    string `json:"branch"`
-	BaseRef   string `json:"baseRef"`
-	CreatedAt string `json:"createdAt"`
+	VersionID string           `json:"versionId"`
+	Version   int              `json:"version"`
+	Branch    string           `json:"branch"`
+	BaseRef   string           `json:"baseRef"`
+	CreatedAt string           `json:"createdAt"`
+	Sections  []SectionSummary `json:"sections"`
 }
 
 // FileState is the SPA's view of one file's review state.
@@ -154,7 +171,8 @@ func ToReply(r store.Reply) Reply {
 // non-nil array so the SPA can map over it unconditionally.
 func ToComment(c store.Comment, replies []store.Reply) Comment {
 	out := Comment{
-		ID: id(c.ID), VersionID: id(c.VersionID), FilePath: c.FilePath, Side: c.Side,
+		ID: id(c.ID), VersionID: id(c.VersionID), SectionID: id(c.SectionID), Branch: c.Branch, Pending: c.Pending,
+		FilePath: c.FilePath, Side: c.Side,
 		Range:       LineRange{Start: c.StartLine, End: c.EndLine, StartSide: c.StartSide, EndSide: c.EndSide},
 		LineContent: c.LineContent, Body: c.Body, Origin: c.Author, Status: c.Status,
 		CreatedAt: iso(c.CreatedAt), Replies: make([]Reply, 0, len(replies)),
@@ -165,10 +183,12 @@ func ToComment(c store.Comment, replies []store.Reply) Comment {
 	return out
 }
 
-// ToAnnotation converts a store annotation to its SPA view.
-func ToAnnotation(a store.Annotation) Annotation {
+// ToAnnotation converts a store annotation to its SPA view, tagged with the
+// key of the section it decorates.
+func ToAnnotation(a store.Annotation, sectionKey string) Annotation {
 	return Annotation{
-		ID: id(a.ID), FilePath: a.FilePath, Side: a.Side, Start: a.StartLine, End: a.EndLine,
+		ID: id(a.ID), SectionKey: sectionKey,
+		FilePath: a.FilePath, Side: a.Side, Start: a.StartLine, End: a.EndLine,
 		Label: a.Label, CreatedAt: iso(a.CreatedAt),
 	}
 }
@@ -216,11 +236,19 @@ func ToAttributionRange(r store.AttributionRange) AttributionRange {
 	return out
 }
 
-// ToVersionSummary converts a store version.
-func ToVersionSummary(v store.Version) VersionSummary {
-	return VersionSummary{
-		VersionID: id(v.ID), Version: v.VersionNumber, Branch: v.Branch, BaseRef: v.BaseRef, CreatedAt: iso(v.CreatedAt),
+// ToVersionSummary converts a store version and its sections.
+func ToVersionSummary(v store.Version, sections []store.Section) VersionSummary {
+	out := VersionSummary{
+		VersionID: id(v.ID), Version: v.VersionNumber, Branch: v.Branch, BaseRef: v.BaseRef,
+		CreatedAt: iso(v.CreatedAt), Sections: make([]SectionSummary, 0, len(sections)),
 	}
+	for _, sec := range sections {
+		out.Sections = append(out.Sections, SectionSummary{
+			SectionKey: sec.Key(), Position: sec.Position, Branch: sec.Branch,
+			ParentBranch: sec.ParentBranch, Pending: sec.Pending,
+		})
+	}
+	return out
 }
 
 // Event builds a tagged-union event frame: {type, version_number, ...fields}.

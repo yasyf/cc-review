@@ -74,6 +74,7 @@ type Request struct {
 	Ask           *store.Ask
 	Organization  *store.Organization
 	VersionNumber int
+	SectionKey    string
 	Partial       bool
 	Prompt        string
 	Ref           string
@@ -96,6 +97,7 @@ type Response struct {
 	Version      int
 	Resumed      bool
 	ChannelState string
+	Stack        *StackInfo
 	AIRequests   []json.RawMessage
 	FeedbackPath string
 	Feedback     json.RawMessage
@@ -122,7 +124,7 @@ func (req Request) body() json.RawMessage {
 		Reviewed: req.Reviewed, Hidden: req.Hidden,
 		AIRequestID: req.AIRequestID, AIStatus: req.AIStatus, Summary: req.Summary,
 		Unmatched: req.Unmatched, Question: req.Question, Ask: req.Ask, Organization: req.Organization,
-		VersionNumber: req.VersionNumber, Partial: req.Partial, Prompt: req.Prompt,
+		VersionNumber: req.VersionNumber, SectionKey: req.SectionKey, Partial: req.Partial, Prompt: req.Prompt,
 		Ref: req.Ref, Stale: req.Stale,
 	})
 	return raw
@@ -238,7 +240,7 @@ func toResponse(reply ccd.Reply) Response {
 		OK: reply.OK, Error: reply.Error, ReviewID: reply.SubjectID, Status: reply.Status,
 		HTTPPort: reply.HTTPPort, Allow: reply.Allow, Reason: reply.Reason,
 		URL: res.URL, Version: res.Version, Resumed: res.Resumed, ChannelState: res.ChannelState,
-		AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
+		Stack: res.Stack, AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
 		ReviewFiles: res.ReviewFiles, Paths: res.Paths, Closed: res.Closed, Reviews: res.Reviews,
 	}
 }
@@ -362,7 +364,7 @@ func (s *Server) createReview(ctx context.Context, session string, pid int, repo
 	if err != nil {
 		return subject.Subject{}, err
 	}
-	if err := s.store.SetReviewMeta(ctx, sub.ID, base, branch); err != nil {
+	if err := s.store.SetReviewMeta(ctx, sub.ID, base, branch, false); err != nil {
 		return subject.Subject{}, err
 	}
 	return sub, nil
@@ -396,17 +398,75 @@ func seedComment(t *testing.T, s *Server, root string) (reviewID string, comment
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.store.CreateVersion(ctx, r.ID, "main", "HEAD", "/p", "[]", "")
+	v, sections, err := s.store.CreateVersion(ctx, r.ID, "main", "HEAD", "",
+		[]store.SectionInput{{Position: 0, Branch: "main", BaseRef: "HEAD", Pending: true, FilesJSON: "[]"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cid, err := s.store.CreateComment(ctx, store.Comment{
-		VersionID: v.ID, FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "hm",
+		VersionID: v.ID, SectionID: sections[0].ID, Branch: sections[0].Key(), Pending: sections[0].Pending,
+		FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "hm",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r.ID, cid
+}
+
+// latestSections returns the latest version's sections, ordered by position.
+func (s *Server) latestSections(ctx context.Context, t *testing.T, reviewID string) []store.Section {
+	t.Helper()
+	v, ok, err := s.store.LatestVersion(ctx, reviewID)
+	if err != nil || !ok {
+		t.Fatalf("latest version: ok=%v err=%v", ok, err)
+	}
+	sections, err := s.store.ListSections(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sections
+}
+
+// reviewFileEntry is one file in a get_review_files section's inline list.
+type reviewFileEntry struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Reviewed  bool   `json:"reviewed"`
+	Hidden    bool   `json:"hidden"`
+	Generated bool   `json:"generated"`
+	Vendored  bool   `json:"vendored"`
+	OldPath   string `json:"old_path"`
+}
+
+// reviewFileSection mirrors one section of the get_review_files response.
+type reviewFileSection struct {
+	SectionKey       string            `json:"section_key"`
+	Position         int               `json:"position"`
+	Branch           string            `json:"branch"`
+	ParentBranch     string            `json:"parent_branch"`
+	Pending          bool              `json:"pending"`
+	PatchPath        string            `json:"patch_path"`
+	ReviewFilesPath  string            `json:"review_files_path"`
+	Organized        bool              `json:"organized"`
+	OrganizationPath string            `json:"organization_path"`
+	MatchCount       *int              `json:"match_count"`
+	Files            []reviewFileEntry `json:"files"`
+}
+
+// reviewFilesResult mirrors the whole get_review_files response.
+type reviewFilesResult struct {
+	VersionNumber int                 `json:"version_number"`
+	Stack         bool                `json:"stack"`
+	Sections      []reviewFileSection `json:"sections"`
+}
+
+func parseReviewFiles(t *testing.T, raw json.RawMessage) reviewFilesResult {
+	t.Helper()
+	var out reviewFilesResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func countEvents(t *testing.T, s *Server, reviewID, typ string) int {

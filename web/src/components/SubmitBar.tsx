@@ -14,8 +14,12 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
     (c) => c.status === 'open' && c.origin !== 'claude',
   ).length;
   const frozenPath = session.feedbackPath ?? submit.data?.feedbackPath ?? null;
-  const total = session.files.length;
-  const reviewedCount = session.files.filter((f) => session.fileStates[f.path]?.reviewed).length;
+  const total = session.sections.reduce((n, s) => n + s.files.length, 0);
+  const reviewedCount = session.sections.reduce(
+    (n, s) => n + s.files.filter((f) => s.fileStates[f.path]?.reviewed).length,
+    0,
+  );
+  const branchCount = session.sections.filter((s) => !s.pending).length;
 
   return (
     <header className="submit-bar">
@@ -23,6 +27,7 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
         <strong className="brand">cc-review</strong>
         <span className="branch">{session.review.branch}</span>
         <span className="dim">v{session.version}</span>
+        {branchCount > 1 ? <span className="dim">{branchCount} branches</span> : null}
         <span className="dim">{total} files</span>
         <span className="dim">{openCount} open</span>
         <span className="dim">

@@ -28,9 +28,11 @@ func DBPath() string { return ccstore.Path(App()) }
 // ReviewDir is the product-owned on-disk artifact directory for a single review.
 func ReviewDir(reviewID string) string { return App().SubjectDir(reviewID) }
 
-// SnapshotPath is the patch file for version v of a review.
-func SnapshotPath(reviewID string, version int) string {
-	return filepath.Join(ReviewDir(reviewID), fmt.Sprintf("snap_%d.patch", version))
+// SectionSnapshotPath is the patch file for a section at position pos of
+// version v of a review. The JSONL and organization sidecars derive from it via
+// the shared TrimSuffix(".patch") pattern.
+func SectionSnapshotPath(reviewID string, version, position int) string {
+	return filepath.Join(ReviewDir(reviewID), fmt.Sprintf("snap_%d_%d.patch", version, position))
 }
 
 // FeedbackPath is the frozen feedback JSON for version v of a review.

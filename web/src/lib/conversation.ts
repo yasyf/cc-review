@@ -1,5 +1,7 @@
-// Per-file rollup of open comment threads for the sidebar panels.
+// Per-item rollup of open comment threads for the sidebar panels, keyed by
+// itemId so a path in two sections is counted per section.
 
+import { commentItemId } from './diff';
 import type { Comment } from './types';
 
 export interface FileConversation {
@@ -18,15 +20,16 @@ function awaitsUser(comment: Comment): boolean {
   });
 }
 
-export function conversationByFile(comments: Comment[]): Map<string, FileConversation> {
-  const byFile = new Map<string, FileConversation>();
+export function conversationByItem(comments: Comment[]): Map<string, FileConversation> {
+  const byItem = new Map<string, FileConversation>();
   for (const comment of comments) {
     // Claude-authored comments are informational annotations, not reviewer TODOs.
     if (comment.status !== 'open' || comment.origin === 'claude') continue;
-    const entry = byFile.get(comment.filePath) ?? { openCount: 0, needsReply: false };
+    const id = commentItemId(comment);
+    const entry = byItem.get(id) ?? { openCount: 0, needsReply: false };
     entry.openCount += 1;
     entry.needsReply = entry.needsReply || awaitsUser(comment);
-    byFile.set(comment.filePath, entry);
+    byItem.set(id, entry);
   }
-  return byFile;
+  return byItem;
 }

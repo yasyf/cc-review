@@ -7,7 +7,7 @@ import (
 	"github.com/yasyf/cc-interact/vcs"
 )
 
-func TestVersionFileFlags(t *testing.T) {
+func TestSectionFileFlags(t *testing.T) {
 	classified := []ClassifiedFile{
 		{FileChange: vcs.FileChange{Path: "a.pb.go", Status: "A", Fingerprint: "f1"}, Generated: true},
 		{FileChange: vcs.FileChange{Path: "vendor/x.go", Status: "M", Fingerprint: "f2"}, Vendored: true},
@@ -17,7 +17,7 @@ func TestVersionFileFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := Version{ID: 7, FilesJSON: string(raw)}
+	v := Section{ID: 7, FilesJSON: string(raw)}
 
 	t.Run("Files projects the exact v1 classified records", func(t *testing.T) {
 		files, err := v.Files()
@@ -56,7 +56,7 @@ func TestVersionFileFlags(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		v := Version{ID: 8, FilesJSON: string(plain)}
+		v := Section{ID: 8, FilesJSON: string(plain)}
 		if _, err := v.FileFlags(); err == nil {
 			t.Fatal("FileFlags() accepted pre-classification JSON")
 		}

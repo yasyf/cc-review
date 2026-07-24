@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { FileRef } from '../lib/diff';
 import { unreadCount, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
@@ -61,14 +62,14 @@ export function Sidebar({
   onSelectComment,
 }: {
   session: SessionResponse;
-  onSelectFile(path: string): void;
+  onSelectFile(ref: FileRef): void;
   onSelectComment(comment: Comment): void;
 }) {
   const [tab, setTab] = useState<'files' | 'comments' | 'activity'>('files');
   const { seen } = useUnread();
   const { viewMode } = useViewPrefs();
   const unread = unreadCount(session.comments, seen);
-  const organization = viewMode !== 'default' ? session.organization : null;
+  const organized = viewMode !== 'default' && session.sections.some((s) => s.organization !== null);
 
   return (
     <>
@@ -108,23 +109,14 @@ export function Sidebar({
       {tab === 'activity' ? (
         <TurnActivityPanel session={session} />
       ) : tab === 'files' ? (
-        organization ? (
+        organized ? (
           viewMode === 'todo' ? (
-            <TodoPanel session={session} organization={organization} onSelectFile={onSelectFile} />
+            <TodoPanel session={session} onSelectFile={onSelectFile} />
           ) : (
-            <ChapterPanel
-              session={session}
-              organization={organization}
-              onSelectFile={onSelectFile}
-            />
+            <ChapterPanel session={session} onSelectFile={onSelectFile} />
           )
         ) : (
-          <FileTreePanel
-            files={session.files}
-            fileStates={session.fileStates}
-            organization={session.organization}
-            onSelectFile={onSelectFile}
-          />
+          <FileTreePanel session={session} onSelectFile={onSelectFile} />
         )
       ) : (
         <CommentsPanel session={session} onSelectComment={onSelectComment} />

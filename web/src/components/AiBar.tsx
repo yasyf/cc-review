@@ -3,6 +3,8 @@ import type { KeyboardEvent, RefObject } from 'react';
 import { recentUserCommands, isActive, resultStream } from '../lib/ai-requests';
 import { useCreateAiRequest, useSetFileStates } from '../lib/api';
 import type { FileStatePatch } from '../lib/api';
+import { fileItemId } from '../lib/diff';
+import type { FileRef } from '../lib/diff';
 import { useEventStream } from '../lib/events';
 import { matchFiles } from '../lib/glob';
 import { useLocalRequests } from '../lib/local-requests';
@@ -68,32 +70,42 @@ export function AiBar({
 
   const suggestions = useMemo(() => deriveSuggestions(session), [session]);
   const recents = useMemo(() => recentUserCommands(session.aiRequests), [session.aiRequests]);
+  const allRefs = useMemo<FileRef[]>(
+    () =>
+      session.sections.flatMap((s) => s.files.map((f) => ({ sectionKey: s.sectionKey, path: f.path }))),
+    [session.sections],
+  );
+  const sectionByKey = useMemo(
+    () => new Map(session.sections.map((s) => [s.sectionKey, s])),
+    [session.sections],
+  );
 
   const runInstant = useCallback(
     (label: string, patches: FileStatePatch[]) => {
       if (patches.length === 0) return;
-      const prior = Object.fromEntries(
-        patches.map((p) => [p.path, session.fileStates[p.path] ?? { reviewed: false, hidden: false }]),
-      );
-      local.add(
-        label,
-        patches.map((p) => p.path),
-        prior,
-      );
+      const prior: Record<string, { reviewed: boolean; hidden: boolean }> = {};
+      const refs: FileRef[] = [];
+      for (const p of patches) {
+        prior[fileItemId(p.sectionKey, p.path)] = sectionByKey.get(p.sectionKey)?.fileStates[p.path] ?? {
+          reviewed: false,
+          hidden: false,
+        };
+        refs.push({ sectionKey: p.sectionKey, path: p.path });
+      }
+      local.add(label, refs, prior);
       setFileStates.mutate(patches);
       setMenuOpen(false);
     },
-    [local, session.fileStates, setFileStates],
+    [local, sectionByKey, setFileStates],
   );
 
   const undoLocal = useCallback(
     (req: LocalRequest) => {
       setFileStates.mutate(
-        req.paths.map((path) => ({
-          path,
-          reviewed: req.prior[path].reviewed,
-          hidden: req.prior[path].hidden,
-        })),
+        req.refs.map((ref) => {
+          const prior = req.prior[fileItemId(ref.sectionKey, ref.path)];
+          return { sectionKey: ref.sectionKey, path: ref.path, reviewed: prior.reviewed, hidden: prior.hidden };
+        }),
       );
       local.remove(req.id);
     },
@@ -112,8 +124,8 @@ export function AiBar({
   );
 
   const reveal = useCallback(
-    (path: string) => {
-      diffRef.current?.scrollToFile(path);
+    (ref: FileRef) => {
+      diffRef.current?.scrollToFile(ref);
       setMenuOpen(false);
     },
     [diffRef],
@@ -123,13 +135,13 @@ export function AiBar({
     (s: Suggestion) => {
       switch (s.action.kind) {
         case 'hide':
-          runInstant(s.label, s.action.paths.map((path) => ({ path, hidden: true })));
+          runInstant(s.label, s.action.refs.map((ref) => ({ ...ref, hidden: true })));
           break;
         case 'review':
-          runInstant(s.label, s.action.paths.map((path) => ({ path, reviewed: true })));
+          runInstant(s.label, s.action.refs.map((ref) => ({ ...ref, reviewed: true })));
           break;
         case 'reveal':
-          reveal(s.action.path);
+          reveal(s.action.ref);
           break;
       }
     },
@@ -138,31 +150,31 @@ export function AiBar({
 
   const hidePattern = useCallback(
     (pattern: string) => {
-      const paths = matchFiles(session.files, pattern);
-      runInstant(`Hid ${paths.length} matching ${pattern}`, paths.map((path) => ({ path, hidden: true })));
+      const refs = matchFiles(allRefs, pattern);
+      runInstant(`Hid ${refs.length} matching ${pattern}`, refs.map((ref) => ({ ...ref, hidden: true })));
     },
-    [session.files, runInstant],
+    [allRefs, runInstant],
   );
 
   // The flat, ordered row list backing both the menu render and ↑↓/⏎ nav.
   const rows = useMemo<MenuRow[]>(() => {
     const out: MenuRow[] = [];
     const q = query.trim();
-    const matches = q ? matchFiles(session.files, q) : [];
+    const matches = q ? matchFiles(allRefs, q) : [];
     if (q && matches.length > 0) {
       out.push({
         id: 'tgt-hide',
         group: 'Target',
         lane: 'instant',
         label: `Hide ${matches.length} matching “${q}”`,
-        run: () => runInstant(`Hid ${matches.length} matching ${q}`, matches.map((path) => ({ path, hidden: true }))),
+        run: () => runInstant(`Hid ${matches.length} matching ${q}`, matches.map((ref) => ({ ...ref, hidden: true }))),
       });
       out.push({
         id: 'tgt-view',
         group: 'Target',
         lane: 'instant',
         label: `Mark ${matches.length} matching viewed`,
-        run: () => runInstant(`Marked ${matches.length} matching viewed`, matches.map((path) => ({ path, reviewed: true }))),
+        run: () => runInstant(`Marked ${matches.length} matching viewed`, matches.map((ref) => ({ ...ref, reviewed: true }))),
       });
     }
     for (const s of suggestions) {
@@ -176,7 +188,7 @@ export function AiBar({
       out.push({ id: `rec-${i}`, group: 'Recent', lane: 'agent', label: prompt, editText: prompt, run: () => sendAgent(prompt) });
     });
     return out;
-  }, [query, session.files, suggestions, recents, runInstant, runSuggestion, sendAgent]);
+  }, [query, allRefs, suggestions, recents, runInstant, runSuggestion, sendAgent]);
 
   useEffect(() => {
     setActiveIndex((i) => (rows.length === 0 ? 0 : Math.min(i, rows.length - 1)));
