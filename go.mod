@@ -14,7 +14,7 @@ require (
 require (
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/yasyf/cc-interact v0.24.0
-	github.com/yasyf/daemonkit v0.15.0
+	github.com/yasyf/daemonkit v0.16.0
 )
 
 require (

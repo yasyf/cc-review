@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Pin cc-interact v0.24.0 and daemonkit v0.15.0 for the exact fleet-wide runtime hard cut.
+- Pin cc-interact v0.24.0 and daemonkit v0.16.0 for the exact fleet-wide runtime hard cut.
 - Persisted feedback, stores, and related JSON records now require their exact
   v1 identity, schema fingerprint, and closed field set; legacy or extended
   representations fail closed and are migrated manually at the hard cut.
