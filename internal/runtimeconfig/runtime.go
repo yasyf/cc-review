@@ -9,6 +9,7 @@ import (
 	"github.com/yasyf/daemonkit/trust"
 
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/version"
 )
 
 const (
@@ -41,7 +42,7 @@ func TrustPolicy() (trust.TrustPolicy, error) {
 
 // Agent returns the exact launchd service specification for this executable.
 func Agent() (service.Agent, error) {
-	executable, err := service.CanonicalExecutable()
+	executable, err := service.StableProgram("cc-review", version.Build())
 	if err != nil {
 		return service.Agent{}, err
 	}
