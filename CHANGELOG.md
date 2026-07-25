@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.2] - 2026-07-24
+
+### Changed
+- Pin cc-interact v0.30.1 and daemonkit v0.19.1 so terminalized worker claims
+  tear down their owning daemon runtimes.
+
 ## [0.31.1] - 2026-07-24
 
 ### Changed
