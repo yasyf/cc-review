@@ -360,7 +360,7 @@ func (s *Server) handleList(ctx context.Context, req Request) Response {
 // createReview seeds a review (a cc-interact subject + its review_meta) the way
 // handleStart would, for tests that need an existing review without a snapshot.
 func (s *Server) createReview(ctx context.Context, session string, pid int, repo, branch, base string) (subject.Subject, error) {
-	sub, err := s.resolver.Store.Create(ctx, store.NewSlugHash(), store.ReviewSlug(branch, store.NewSlugHash()), session, repo, pid, "open")
+	sub, err := s.resolver.Store.Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), session, repo, pid, "open")
 	if err != nil {
 		return subject.Subject{}, err
 	}

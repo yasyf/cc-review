@@ -255,23 +255,22 @@ func TestStaleConnectedReviews(t *testing.T) {
 }
 
 func TestReviewSlug(t *testing.T) {
-	const id = "0123456789abcdef0123456789abcdef"
 	cases := []struct {
-		name   string
-		branch string
-		want   string
+		name string
+		hash string
+		want string
 	}{
-		{"nested branch", "feat/a/b", "feat--a--b--01234567"},
-		{"empty branch (detached HEAD)", "", "01234567"},
-		{"branch already containing --", "feat--x", "feat--x--01234567"},
-		{"dotted release branch", "release-1.2", "release-1.2--01234567"},
-		{"hash mark sanitized", "wip#2", "wip-2--01234567"},
-		{"space sanitized", "a b", "a-b--01234567"},
+		{"numeric prefix", "0123456789abcdef0123456789abcdef", "01234567"},
+		{"alphabetic prefix", "abcdef0123456789abcdef0123456789", "abcdef01"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ReviewSlug(tc.branch, id); got != tc.want {
-				t.Fatalf("ReviewSlug(%q) = %q, want %q", tc.branch, got, tc.want)
+			got := ReviewSlug(tc.hash)
+			if got != tc.want {
+				t.Fatalf("ReviewSlug(%q) = %q, want %q", tc.hash, got, tc.want)
+			}
+			if len(got) != 8 {
+				t.Fatalf("len(ReviewSlug(%q)) = %d, want 8", tc.hash, len(got))
 			}
 		})
 	}
@@ -283,13 +282,13 @@ func TestGetReviewByRef(t *testing.T) {
 
 	ss := newSubjectStoreForTest(s)
 	id := NewSlugHash()
-	slug := ReviewSlug("feat/login", id)
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		t.Fatalf("NewSlugHash() = %q, want 32 lowercase hex chars", id)
+	}
+	slug := ReviewSlug(NewSlugHash())
 	sub, err := ss.Create(ctx, id, slug, "s", "/repo", 0, "open")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if want := "feat--login--" + id[:8]; slug != want {
-		t.Fatalf("slug = %q, want %q", slug, want)
 	}
 
 	bySlug, err := s.GetReviewByRef(ctx, slug)
@@ -302,6 +301,16 @@ func TestGetReviewByRef(t *testing.T) {
 	}
 	if _, err := s.GetReviewByRef(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown ref err = %v, want ErrNotFound", err)
+	}
+
+	const legacySlug = "feat--login--01234567"
+	legacy, err := ss.Create(ctx, NewSlugHash(), legacySlug, "s2", "/repo", 0, "open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byLegacy, err := s.GetReviewByRef(ctx, legacySlug)
+	if err != nil || byLegacy.ID != legacy.ID {
+		t.Fatalf("by legacy slug: id=%q err=%v, want %q", byLegacy.ID, err, legacy.ID)
 	}
 }
 

@@ -81,6 +81,8 @@ func RESTMount(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("POST /api/submit", s.handleSubmit)
 	mux.HandleFunc("POST /api/close", s.handleClose)
 	mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)
-	// Registered last and least-specific: the SPA shell + embedded assets.
-	mux.Handle("/", sse.StaticHandler(d.Dist))
+	// Registered last and least-specific: the SPA shell + embedded assets. The
+	// "s" prefix keeps /s/<slug> deep links on the SPA even when a legacy slug
+	// contains a dot.
+	mux.Handle("/", sse.StaticHandler(d.Dist, "s"))
 }

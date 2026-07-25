@@ -18,7 +18,7 @@ The binary is `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review"` — always invoke it by th
 It prints, in order:
 
 ```
-http://127.0.0.1:<port>/s/<branch-slug>--<hash>
+http://127.0.0.1:<port>/s/<hash>
 channel: active|pending|inactive
 setup: {"offer":<bool>,"reason":"<string>"}
 stack: {"trunk":"<branch>","branches":["<branch>","<branch>"]}

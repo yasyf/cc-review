@@ -20,7 +20,7 @@ func newSubjectStoreForTest(s *Store) subject.Store {
 func seedReview(ctx context.Context, t *testing.T, s *Store, session string, pid int, repo, branch, base string) string {
 	t.Helper()
 	ss := ccstore.NewSubjectStore(s.DB())
-	sub, err := ss.Create(ctx, NewSlugHash(), ReviewSlug(branch, NewSlugHash()), session, repo, pid, "open")
+	sub, err := ss.Create(ctx, NewSlugHash(), ReviewSlug(NewSlugHash()), session, repo, pid, "open")
 	if err != nil {
 		t.Fatalf("seed review: %v", err)
 	}

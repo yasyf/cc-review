@@ -144,7 +144,7 @@ func TestBuildIncludesStrandedOpenComments(t *testing.T) {
 
 	subjectID := store.NewSlugHash()
 	if _, err := ccstore.NewSubjectStore(st.DB()).
-		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
+		Create(ctx, subjectID, store.ReviewSlug(subjectID), "s", "/repo", 0, "open"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,7 +217,7 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 
 	subjectID := store.NewSlugHash()
 	if _, err := ccstore.NewSubjectStore(st.DB()).
-		Create(ctx, subjectID, store.ReviewSlug("main", subjectID), "s", "/repo", 0, "open"); err != nil {
+		Create(ctx, subjectID, store.ReviewSlug(subjectID), "s", "/repo", 0, "open"); err != nil {
 		t.Fatal(err)
 	}
 	v, sections, _ := st.CreateVersion(ctx, subjectID, "main", "HEAD", "sess-1",

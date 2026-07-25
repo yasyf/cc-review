@@ -7,7 +7,7 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: () => (
-    <div className="state">Open a review link: <code>/s/&lt;branch-slug&gt;--&lt;hash&gt;</code></div>
+    <div className="state">Open a review link: <code>/s/&lt;hash&gt;</code></div>
   ),
 });
 

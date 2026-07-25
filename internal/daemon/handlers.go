@@ -65,7 +65,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 			return errReply(err.Error())
 		}
 	}
-	slug := store.ReviewSlug(capture.Branch, store.NewSlugHash())
+	slug := store.ReviewSlug(store.NewSlugHash())
 	sub, resumed, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, slug, lifecycle, b.New)
 	if err != nil {
 		return errReply(err.Error())

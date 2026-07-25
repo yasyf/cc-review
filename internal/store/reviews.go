@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/yasyf/cc-interact/subject"
@@ -30,34 +29,9 @@ type ReviewMeta struct {
 	Stack   bool
 }
 
-// ReviewSlug derives a review's URL name from its creation-time branch and a
-// random hash: the sanitized branch, `--`, and the first 8 hex chars of the
-// hash. An empty branch (detached HEAD) yields just the hash prefix.
-func ReviewSlug(branch, hash string) string {
-	h := hash[:8]
-	if branch == "" {
-		return h
-	}
-	return sanitizeBranch(branch) + "--" + h
-}
-
-// sanitizeBranch makes a branch name URL-safe: `/` becomes `--`, and any other
-// rune outside [A-Za-z0-9._-] becomes `-` (git allows `#`, `%` etc., which
-// break URLs; the hash suffix keeps slugs unique regardless).
-func sanitizeBranch(branch string) string {
-	var b strings.Builder
-	for _, r := range branch {
-		switch {
-		case r == '/':
-			b.WriteString("--")
-		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	return b.String()
-}
+// ReviewSlug derives a review's URL name as the first 8 hex chars of a fresh
+// random hash.
+func ReviewSlug(hash string) string { return hash[:8] }
 
 // NewSlugHash returns a fresh random hash for ReviewSlug. The subject id is
 // generated inside the resolver, so the slug carries its own uniqueness suffix.
@@ -65,8 +39,8 @@ func NewSlugHash() string { return newID() }
 
 // GetReviewByRef returns the review named by ref — a slug (what the browser
 // sends) or a full id (what the Claude-side stream consumers send) — or
-// ErrNotFound. The namespaces cannot collide: slugs are 8 chars or contain
-// `--`, ids are 32 hex chars.
+// ErrNotFound. The namespaces cannot collide: slugs are 8 hex chars (legacy
+// slugs also contain `--`), ids are 32 hex chars.
 func (s *Store) GetReviewByRef(ctx context.Context, ref string) (Review, error) {
 	return s.scanReview(s.db.QueryRowContext(ctx,
 		`SELECT id, status, scope, created_at FROM subjects WHERE slug=? OR id=?`, ref, ref))

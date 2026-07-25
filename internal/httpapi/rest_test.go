@@ -95,7 +95,7 @@ func createReviewVersion(t *testing.T, st *store.Store, filesJSON string) (store
 	t.Helper()
 	ctx := context.Background()
 	ss := ccstore.NewSubjectStore(st.DB())
-	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug("main", store.NewSlugHash()), "s1", "/repo", 100, "open")
+	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), "s1", "/repo", 100, "open")
 	if err != nil {
 		t.Fatal(err)
 	}

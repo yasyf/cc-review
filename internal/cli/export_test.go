@@ -55,7 +55,7 @@ func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) 
 
 	const branch = "main"
 	ss := ccstore.NewSubjectStore(st.DB())
-	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug(branch, store.NewSlugHash()), exportSession, "/repo", 100, "open")
+	sub, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), exportSession, "/repo", 100, "open")
 	if err != nil {
 		t.Fatal(err)
 	}

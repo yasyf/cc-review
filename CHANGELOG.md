@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Review URLs are now the bare 8-hex hash (`/s/e8f81820`) instead of embedding
+  the sanitized branch name. Existing reviews keep their long slugs and still
+  resolve.
+
+### Fixed
+
+- Deep links whose slug contains a dot (from a branch name like
+  `claude_settings.json_…`) returned a bare 404 instead of serving the app.
+
 ## [0.31.2] - 2026-07-24
 
 ### Changed
