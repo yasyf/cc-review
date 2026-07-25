@@ -465,7 +465,8 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.31.1...main
+[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.31.2...main
+[0.31.2]: https://github.com/yasyf/cc-review/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/yasyf/cc-review/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/yasyf/cc-review/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/yasyf/cc-review/compare/v0.29.0...v0.30.0
