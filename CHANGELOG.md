@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-24
+
+### Changed
+- Pin cc-interact v0.29.0 and daemonkit v0.18.0, dispatch the disposable trust
+  verifier before CLI startup, and prove that verifier exchange before the
+  daemon accepts any session.
+
 ## [0.30.0] - 2026-07-24
 
 ### Changed
@@ -446,7 +453,8 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.30.0...main
+[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.31.0...main
+[0.31.0]: https://github.com/yasyf/cc-review/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/yasyf/cc-review/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/yasyf/cc-review/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/yasyf/cc-review/compare/v0.27.0...v0.28.0

@@ -11,9 +11,18 @@ import (
 	"syscall"
 
 	"github.com/yasyf/cc-review/internal/cli"
+	"github.com/yasyf/daemonkit/trust"
 )
 
 func main() {
+	if recognized, err := trust.RunVerifierChild(os.Args[1:], os.Stdout); recognized {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

@@ -23,7 +23,7 @@ tasks:
   build-go:
     desc: Build the cc-review binary (embeds whatever is in internal/web/dist)
     cmds:
-      - go build -ldflags "{{.LDFLAGS}}" -o plugin/bin/cc-review ./cmd/cc-review
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/cc-review ./cmd/cc-review
 
   build:
     desc: Build the SPA then the binary (order is load-bearing for go:embed)
@@ -77,4 +77,4 @@ tasks:
   clean:
     desc: Remove build outputs
     cmds:
-      - rm -rf plugin/bin/cc-review internal/web/dist/assets
+      - rm -rf bin internal/web/dist/assets
