@@ -4,12 +4,20 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact commit to validate
+        required: true
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
 
       # The plugin manifest and the binrun descriptor must pin the same version
       # (the marketplace serves plugin.json; hooks resolve bin/cc-review.binrun).
@@ -54,6 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -68,6 +78,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
