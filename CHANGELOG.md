@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The daemon's launchd agent registers at daemonkit's version-stable program
   path (`~/.daemonkit/bin/cc-review`) instead of the resolved Homebrew
-  executable, and daemonkit v0.20.0 heals a stored registration whose old
+  executable, and daemonkit v0.20.1 heals a stored registration whose old
   versioned binary path was deleted — a brew upgrade no longer wedges
   `cc-review start` with `validate live stored agent … no such file or
   directory`.
