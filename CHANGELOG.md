@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-07-25
+
+### Changed
+
+- Pin daemonkit v0.20.6: daemon-context subprocesses inherit the daemon's
+  `PATH`, so `claude`, `codex`, and `gh` resolve under launchd; `launchctl`
+  exit 113 reads as not-loaded instead of hard-failing controller recovery and
+  `Status`; and durable untrack moved out of the child settlement reserve, so
+  a slow store can no longer terminalize a worker claim.
+
 ## [0.33.1] - 2026-07-24
 
 ### Changed
@@ -489,7 +499,8 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.33.1...main
+[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.33.2...main
+[0.33.2]: https://github.com/yasyf/cc-review/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/yasyf/cc-review/compare/v0.32.0...v0.33.1
 [0.31.2]: https://github.com/yasyf/cc-review/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/yasyf/cc-review/compare/v0.31.0...v0.31.1
