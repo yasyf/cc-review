@@ -1,7 +1,7 @@
 {
   "name": "cc-review",
   "description": "Review the code Claude just wrote in a PR-like web UI before it commits — comments stream back into the session so Claude can ask questions, and edits are blocked until you press Submit.",
-  "version": "0.33.1",
+  "version": "0.33.2",
   "author": {
     "name": "Yasyf Mohamedali",
     "email": "yasyfm@gmail.com"
