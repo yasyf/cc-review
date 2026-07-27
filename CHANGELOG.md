@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.3] - 2026-07-27
+
+### Changed
+
+- Pin daemonkit v0.20.9: every durable path derived from the user's home —
+  the launchd plist directory, the stable program root, the artifact store —
+  resolves through the passwd database instead of `$HOME`, so a helper
+  installed under Homebrew postinstall's sandboxed temp HOME still registers
+  against the real one; `launchctl` exit 5 is a permanent denial rather than a
+  transient state to wait out, so bootstrap stops retrying it and names the
+  plist path when it gives up; and controller startup recovery reconciles in a
+  recovery mode that logs a failing desired agent as drift, so a persisted bad
+  state can no longer wedge the install that would fix it.
+
 ## [0.33.2] - 2026-07-25
 
 ### Changed
@@ -499,7 +513,8 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.33.2...main
+[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.33.3...main
+[0.33.3]: https://github.com/yasyf/cc-review/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/yasyf/cc-review/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/yasyf/cc-review/compare/v0.32.0...v0.33.1
 [0.31.2]: https://github.com/yasyf/cc-review/compare/v0.31.1...v0.31.2
