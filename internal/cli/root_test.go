@@ -7,6 +7,7 @@ import (
 	ccd "github.com/yasyf/cc-interact/daemon"
 
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
+	"github.com/yasyf/cc-review/internal/testhome"
 	"github.com/yasyf/cc-review/internal/version"
 )
 
@@ -36,7 +37,7 @@ func TestVersionFlag(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			testhome.Temp(t)
 			defer func(v, c string) { version.Version, version.Commit = v, c }(version.Version, version.Commit)
 			version.Version, version.Commit = tc.version, tc.commit
 			root := NewRootCmd()

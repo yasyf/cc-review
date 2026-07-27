@@ -3,11 +3,12 @@ package paths
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/yasyf/cc-review/internal/testhome"
 )
 
 func TestV1NamespaceIgnoresPreEpochState(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testhome.Temp(t)
 
 	want := filepath.Join(home, ".cc-review", "v1")
 	if got := StateDir(); got != want {

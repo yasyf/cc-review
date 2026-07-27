@@ -12,6 +12,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/testhome"
 )
 
 const exportSession = "22222222-2222-2222-2222-222222222222"
@@ -19,7 +20,7 @@ const exportSession = "22222222-2222-2222-2222-222222222222"
 func seedActivityStore(t *testing.T) (*store.Store, vcs.Turn, vcs.Turn, string) {
 	t.Helper()
 	ctx := context.Background()
-	t.Setenv("HOME", t.TempDir())
+	testhome.Temp(t)
 	if err := paths.EnsureStateDir(); err != nil {
 		t.Fatal(err)
 	}

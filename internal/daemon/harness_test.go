@@ -18,6 +18,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/testhome"
 )
 
 // Server is the test harness around the review handlers: it assembles the pieces
@@ -136,7 +137,7 @@ func testServer(t *testing.T) (*Server, string) {
 
 func testServerContext(ctx context.Context, t *testing.T) (*Server, string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir()) // keep handleStart's ~/.cc-review review dirs out of the real home
+	testhome.Temp(t) // keep handleStart's ~/.cc-review review dirs out of the real home
 	cc, err := ccstore.Open(ctx, filepath.Join(t.TempDir(), "t.db"), store.Schema())
 	if err != nil {
 		t.Fatalf("open store: %v", err)

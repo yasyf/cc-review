@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/yasyf/cc-review/internal/testhome"
 )
 
 func TestServeMountsRESTWithActivatedDB(t *testing.T) {
@@ -17,7 +19,7 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	t.Setenv("HOME", home)
+	testhome.Pin(t, home)
 	t.Setenv("CC_DECISIONS_DB", filepath.Join(home, "decisions.db"))
 
 	ctx, cancel := context.WithCancel(context.Background())
