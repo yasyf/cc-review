@@ -12,6 +12,7 @@ import (
 )
 
 func TestLauncherCarriesExactDaemonkitIdentity(t *testing.T) {
+	testhome.Temp(t) // launcher stages a stable program under <home>/.daemonkit/bin
 	l, err := launcher()
 	if err != nil {
 		t.Fatal(err)

@@ -4,9 +4,12 @@ import (
 	"testing"
 
 	"github.com/yasyf/daemonkit/trust"
+
+	"github.com/yasyf/cc-review/internal/testhome"
 )
 
 func TestRuntimeIdentityIsExact(t *testing.T) {
+	testhome.Temp(t) // Agent stages a stable program under <home>/.daemonkit/bin
 	roles := Roles()
 	if roles.Business != trust.UnprotectedRole || roles.Lifecycle != lifecycleRole || roles.StopControl != stopControlRole {
 		t.Fatalf("roles = %+v", roles)
