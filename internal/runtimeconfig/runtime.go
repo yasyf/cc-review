@@ -2,52 +2,37 @@
 package runtimeconfig
 
 import (
-	"os"
-
 	ccd "github.com/yasyf/cc-interact/daemon"
-	"github.com/yasyf/daemonkit/service"
-	"github.com/yasyf/daemonkit/trust"
+	"github.com/yasyf/daemonkit"
 
 	"github.com/yasyf/cc-review/internal/paths"
-	"github.com/yasyf/cc-review/internal/version"
 )
 
 const (
 	agentLabel        = "com.yasyf.cc-review"
-	lifecycleRole     = "com.yasyf.cc-review.lifecycle.v1"
-	stopControlRole   = "com.yasyf.cc-review.stop.v1"
 	teamID            = "SXKCTF23Q2"
 	signingIdentifier = "cc-review"
 )
 
-// Roles returns cc-review's exact business and lifecycle authorities.
-func Roles() ccd.Roles {
-	return ccd.Roles{
-		Business: trust.UnprotectedRole, Lifecycle: lifecycleRole, StopControl: stopControlRole,
-	}
-}
-
-// TrustPolicy returns the immutable signed-peer policy for cc-review.
-func TrustPolicy() (trust.TrustPolicy, error) {
-	roles := Roles()
-	requirement := trust.Requirement{TeamID: teamID, SigningIdentifier: signingIdentifier}
-	return trust.NewTrustPolicy(trust.TrustPolicyConfig{
-		ExpectedUID: os.Geteuid(), AllowUnprotected: true,
-		Roles:          map[trust.PeerRole]trust.Requirement{roles.Lifecycle: requirement, roles.StopControl: requirement},
-		StopRoles:      []trust.PeerRole{roles.StopControl},
-		ReceiptRoles:   []trust.PeerRole{roles.Lifecycle},
-		ReadinessRoles: []trust.PeerRole{roles.Lifecycle},
-	})
-}
-
-// Agent returns the exact launchd service specification for this executable.
-func Agent() (service.Agent, error) {
-	executable, err := service.StableProgram("cc-review", version.Build())
+// Spec is the one daemonkit identity the launcher and the daemon share. The
+// control lane pins the identity cc-review is released under; the serving
+// posture is the same-user waiver, because a dev build is unsigned and a
+// signed posture would refuse it.
+func Spec() (daemonkit.Daemon, error) {
+	program, err := daemonkit.Stable()
 	if err != nil {
-		return service.Agent{}, err
+		return daemonkit.Daemon{}, err
 	}
-	return service.Agent{
-		Label: agentLabel, Program: executable, Args: []string{"daemon"},
-		LogPath: paths.App().LogPath(), RestartPolicy: service.RestartOnFailure,
-	}, nil
+	requirement := daemonkit.Requirement{TeamID: teamID, SigningIdentifier: signingIdentifier}
+	return ccd.Spec(daemonkit.Daemon{
+		Label:   agentLabel,
+		Program: program,
+		Args:    []string{"daemon"},
+		Log:     paths.App().LogPath(),
+		Restart: daemonkit.RestartOnFailure,
+		Trust: daemonkit.Trust{
+			Control: &requirement,
+			Serving: daemonkit.ServingSameUser(),
+		},
+	}), nil
 }

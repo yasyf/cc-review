@@ -16,9 +16,11 @@ builds:
     binary: cc-review
     env:
       - CGO_ENABLED=0
+    # darwin only: cc-review's daemon is a launchd LaunchAgent, and daemonkit
+    # v0.21 does not compile off darwin at all. The linux legs built a binary
+    # whose daemon half could never run; they now fail outright.
     goos:
       - darwin
-      - linux
     goarch:
       - amd64
       - arm64

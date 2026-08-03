@@ -98,7 +98,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	}
 	defer func() { _ = ledger.Close() }()
 	rv := &review{decisions: ledger, log: log.New(os.Stderr, "[cc-review] ", log.LstdFlags)}
-	trustPolicy, err := runtimeconfig.TrustPolicy()
+	spec, err := runtimeconfig.Spec()
 	if err != nil {
 		return err
 	}
@@ -106,10 +106,8 @@ func Serve(ctx context.Context, fixedPort int) error {
 	s, err := ccd.New(ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
-		WireBuild:         ccd.WireBuild,
+		Daemon:            spec,
 		RuntimeBuild:      version.Build(),
-		TrustPolicy:       trustPolicy,
-		Roles:             runtimeconfig.Roles(),
 		ActiveStatuses:    []string{statusOpen},
 		ScopeResolve:      repoScope,
 		Gate:              rv.gate,

@@ -8,7 +8,6 @@ import (
 	ccd "github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/procs"
 
-	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/store"
 )
@@ -20,11 +19,13 @@ type ReviewClient struct {
 	c *ccd.Client
 }
 
-// NewReviewClient dials the review daemon's control socket.
-func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
-	c, err := ccd.NewClient(ctx, ccd.ClientConfig{
-		Socket: paths.App().SocketPath(), WireBuild: ccd.WireBuild, Role: runtimeconfig.Roles().Business,
-	})
+// NewReviewClient opens the review daemon's business lane.
+func NewReviewClient(context.Context) (*ReviewClient, error) {
+	spec, err := runtimeconfig.Spec()
+	if err != nil {
+		return nil, err
+	}
+	c, err := ccd.NewClient(spec)
 	if err != nil {
 		return nil, err
 	}

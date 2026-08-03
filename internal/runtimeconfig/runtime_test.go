@@ -3,33 +3,32 @@ package runtimeconfig
 import (
 	"testing"
 
-	"github.com/yasyf/daemonkit/trust"
+	ccd "github.com/yasyf/cc-interact/daemon"
+	"github.com/yasyf/daemonkit"
 
 	"github.com/yasyf/cc-review/internal/testhome"
 )
 
-func TestRuntimeIdentityIsExact(t *testing.T) {
-	testhome.Temp(t) // Agent stages a stable program under <home>/.daemonkit/bin
-	roles := Roles()
-	if roles.Business != trust.UnprotectedRole || roles.Lifecycle != lifecycleRole || roles.StopControl != stopControlRole {
-		t.Fatalf("roles = %+v", roles)
-	}
-	policy, err := TrustPolicy()
+func TestSpecIsExact(t *testing.T) {
+	testhome.Temp(t) // Stable() resolves a program under <home>/.daemonkit/bin
+	spec, err := Spec()
 	if err != nil {
-		t.Fatalf("TrustPolicy: %v", err)
+		t.Fatalf("Spec: %v", err)
 	}
-	if !policy.AllowsUnprotected() || !policy.AllowsReceipt(roles.Lifecycle) ||
-		!policy.AllowsReadiness(roles.Lifecycle) || !policy.AllowsStop(roles.StopControl) {
-		t.Fatal("trust policy lacks an exact declared authority")
+	if spec.Label != agentLabel {
+		t.Errorf("Label = %q, want %q", spec.Label, agentLabel)
 	}
-	agent, err := Agent()
-	if err != nil {
-		t.Fatalf("Agent: %v", err)
+	if spec.Restart != daemonkit.RestartOnFailure {
+		t.Errorf("Restart = %v, want RestartOnFailure", spec.Restart)
 	}
-	if agent.Label != agentLabel || agent.RestartPolicy == 0 {
-		t.Fatalf("agent = %+v", agent)
+	if len(spec.Schemas) != 1 || spec.Schemas[0] != ccd.WireBuild {
+		t.Errorf("Schemas = %v, want exactly [%q]", spec.Schemas, ccd.WireBuild)
 	}
-	if _, err := agent.Plist(); err != nil {
-		t.Fatalf("Agent.Plist: %v", err)
+	if c := spec.Trust.Control; c == nil || c.TeamID != teamID || c.SigningIdentifier != signingIdentifier {
+		t.Errorf("Trust.Control = %+v, want team %q identifier %q", c, teamID, signingIdentifier)
+	}
+	// Open runs ValidateForClient, and an unstated Trust.Serving is what it refuses.
+	if err := spec.ValidateForClient(); err != nil {
+		t.Errorf("ValidateForClient: %v", err)
 	}
 }

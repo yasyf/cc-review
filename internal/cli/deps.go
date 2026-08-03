@@ -16,22 +16,19 @@ import (
 // launcher lazily starts and version-gates the review daemon, re-execing this
 // binary's hidden `daemon` subcommand detached.
 func launcher() (ccd.Launcher, error) {
-	agent, err := runtimeconfig.Agent()
+	spec, err := runtimeconfig.Spec()
 	if err != nil {
 		return ccd.Launcher{}, err
 	}
-	return ccd.Launcher{
-		Paths: paths.App(), WireBuild: ccd.WireBuild, RuntimeBuild: version.Build(),
-		Agent: agent, Roles: runtimeconfig.Roles(),
-	}, nil
+	return ccd.Launcher{Daemon: spec, Paths: paths.App(), RuntimeBuild: version.Build()}, nil
 }
 
-func newControlClient(ctx context.Context) (*ccd.Client, error) {
+func newControlClient(context.Context) (*ccd.Client, error) {
 	launcher, err := launcher()
 	if err != nil {
 		return nil, err
 	}
-	return launcher.NewClient(ctx)
+	return launcher.NewClient()
 }
 
 // ensureCurrent lazily starts or upgrades the daemon, blocking until a current

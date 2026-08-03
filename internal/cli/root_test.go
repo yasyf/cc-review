@@ -6,7 +6,6 @@ import (
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 
-	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/testhome"
 	"github.com/yasyf/cc-review/internal/version"
 )
@@ -17,9 +16,17 @@ func TestLauncherCarriesExactDaemonkitIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.WireBuild != ccd.WireBuild || l.RuntimeBuild != version.Build() ||
-		l.Roles != runtimeconfig.Roles() || l.Agent.Label != "com.yasyf.cc-review" {
-		t.Fatalf("launcher identity = wire %q runtime %q roles %+v agent %+v", l.WireBuild, l.RuntimeBuild, l.Roles, l.Agent)
+	if l.Daemon.Label != "com.yasyf.cc-review" ||
+		len(l.Daemon.Schemas) != 1 || l.Daemon.Schemas[0] != ccd.WireBuild {
+		t.Fatalf("launcher identity = %+v", l.Daemon)
+	}
+	// Paths and RuntimeBuild are required by Launcher.validate but optional to
+	// the compiler, so an omission surfaces only on the first daemon call.
+	if l.Paths.App == "" || l.RuntimeBuild == "" {
+		t.Fatalf("launcher paths = %q, runtime build = %q, want both set", l.Paths.App, l.RuntimeBuild)
+	}
+	if err := l.Daemon.ValidateForClient(); err != nil {
+		t.Fatalf("ValidateForClient: %v", err)
 	}
 }
 

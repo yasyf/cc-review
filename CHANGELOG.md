@@ -4,7 +4,36 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.34.0] - 2026-08-03
+
+### Removed
+
+- Linux binaries. The release publishes only `darwin_amd64` and `darwin_arm64`,
+  and the plugin descriptor pins those two platforms, so on Linux `cc-review`
+  now stops with binrun's "no artifact for this platform" instead of installing
+  a binary whose daemon could never start. The daemon registers a launchd
+  LaunchAgent, so the Linux build never worked end to end; daemonkit v0.21 no
+  longer compiles off darwin, which makes that explicit.
+
+### Changed
+
+- Pin cc-interact v0.32.0 and daemonkit v0.21.1: the `service`, `proc`, and
+  `trust` packages collapse into a single `daemonkit.Daemon` value the launcher
+  and the daemon both read, so cc-review's lifecycle identity — label, program,
+  launchd restart policy, and every trust lane — is declared exactly once
+  instead of three times. The control lane keeps the signed requirement it
+  already had, and the lane that judges the process answering on the socket is
+  now stated explicitly as the same-user waiver, which is what the old model
+  enforced without saying so. The re-exec verifier child is gone: code identity
+  is verified in-process against the kernel.
+- The wire schema revs, so a v0.34.0 CLI and a v0.33.x daemon do not speak.
+  Upgrading replaces both halves at once; a daemon left over from the old
+  release is retired by `cc-review stop`.
+- `cc-review stop` reports the same result whether or not a daemon was running,
+  since the drain, the departure proof, and the LaunchAgent removal now happen
+  under the lock that serializes every other lifecycle transition. Stopping an
+  already-stopped daemon succeeds instead of reporting that none was running,
+  and a LaunchAgent left by a pre-v0.34.0 release is removed by that same call.
 
 ## [0.33.3] - 2026-07-27
 
@@ -513,7 +542,7 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
-[Unreleased]: https://github.com/yasyf/cc-review/compare/v0.33.3...main
+[0.34.0]: https://github.com/yasyf/cc-review/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/yasyf/cc-review/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/yasyf/cc-review/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/yasyf/cc-review/compare/v0.32.0...v0.33.1
