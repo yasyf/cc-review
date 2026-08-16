@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.1] - 2026-08-16
+
+### Fixed
+
+- `cc-review stop` left its LaunchAgent installed. Pin cc-interact v0.32.1:
+  `Launcher.Stop` reused the Program-bearing identity `EnsureCurrent`
+  converges on, so daemonkit's absence proof resolved
+  `~/.daemonkit/bin/cc-review` — a copy only `Ensure` ever places. On a
+  machine that never ensured this era the resolve failed with `resolve
+  program … no such file or directory`, the call returned before the
+  removal, and the surviving plist relaunched the daemon — the release that
+  made `stop` a whole uninstall could not remove its own agent. Stop now runs
+  through a `daemonkit.Daemon` that states no `Program`, daemonkit's own
+  contract for a verb that renders no LaunchAgent and places nothing.
+
+### Changed
+
+- Pin daemonkit v0.21.4, which v0.32.1 requires. v0.21.2 splits Stop's
+  observation off launchd state and holds its inventory gate vacuously for an
+  unstated `Program`; on v0.21.1 the same call panicked.
+- Build with `toolchain go1.26.6`. Five standard-library advisories land in
+  code cc-review actually calls: `http.Server.Serve`,
+  `tls.Conn.HandshakeContext`, and `asn1.Unmarshal` under the daemon's
+  listener, and `http.Client.Do` and `url.URL.Parse` on the CLI path. All
+  five are fixed in go1.26.6. The `go` directive stays at 1.26.5, so nothing
+  downstream is forced up.
+
 ## [0.34.0] - 2026-08-03
 
 ### Removed
@@ -542,6 +569,7 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
+[0.34.1]: https://github.com/yasyf/cc-review/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/yasyf/cc-review/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/yasyf/cc-review/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/yasyf/cc-review/compare/v0.33.1...v0.33.2
