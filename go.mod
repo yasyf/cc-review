@@ -2,6 +2,8 @@ module github.com/yasyf/cc-review
 
 go 1.26.5
 
+toolchain go1.26.6
+
 require (
 	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
@@ -13,8 +15,8 @@ require (
 
 require (
 	github.com/go-enry/go-enry/v2 v2.9.6
-	github.com/yasyf/cc-interact v0.32.0
-	github.com/yasyf/daemonkit v0.21.1
+	github.com/yasyf/cc-interact v0.32.1
+	github.com/yasyf/daemonkit v0.21.4
 )
 
 require (
