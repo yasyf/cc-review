@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0] - 2026-08-26
+
+### Changed
+
+- Requires daemonkit v0.23.0, which moves every daemon's private state from
+  `~/<Label>` to `~/.daemonkit/a/<Label>`, inside the hidden directory
+  daemonkit already owns. `com.yasyf.cc-review` no longer cuts a directory
+  straight into the user's home.
+
+  There is no migration and no fallback read: the daemon comes up fresh under
+  the new root and `~/com.yasyf.cc-review` stays where it lies, to be deleted
+  by hand once the daemon is confirmed serving under the new root. cc-review
+  sets an explicit log path, so its old directory is not recreated by launchd
+  after deletion the way an agent relying on the default `daemon.log` would be.
+
+  This release skips daemonkit v0.22.0's `~/.daemonkit/agents/<Label>`
+  entirely, so upgrading to it leaves one stale directory rather than two.
+
 ## [0.34.1] - 2026-08-16
 
 ### Fixed
@@ -569,6 +587,7 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
+[0.35.0]: https://github.com/yasyf/cc-review/compare/v0.34.1...v0.35.0
 [0.34.1]: https://github.com/yasyf/cc-review/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/yasyf/cc-review/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/yasyf/cc-review/compare/v0.33.2...v0.33.3
