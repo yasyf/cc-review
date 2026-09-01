@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.36.0] - 2026-09-01
 
 ### Changed
 
@@ -617,6 +617,7 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
+[0.36.0]: https://github.com/yasyf/cc-review/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/yasyf/cc-review/compare/v0.34.1...v0.35.0
 [0.34.1]: https://github.com/yasyf/cc-review/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/yasyf/cc-review/compare/v0.33.3...v0.34.0
