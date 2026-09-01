@@ -31,6 +31,11 @@ const promptExcerptMax = 1000
 // sliceSchema is the versioned wire schema of `cc-transcript slice` lines.
 const sliceSchema = "cc-transcript.slice/1"
 
+// handleTurnStart opens a turn. An open review needs a bracket tight enough to
+// place a bypassing write, so it pays a fresh snapshot; otherwise the previous
+// turn's closing tree starts this one for no git, folding any edit made between
+// the two into it. The cold path snapshots regardless: an empty TreeStart voids
+// attribution for the whole version.
 func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
 	ts := vcs.NewTurnStore(hc.DB)
 	b, err := decodeBody(hc.Env.Body)
@@ -40,6 +45,30 @@ func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
 	repoRoot := hc.Scope
 	hc.RepoLock.Lock()
 	defer hc.RepoLock.Unlock()
+	// A still-open turn here means the prior Stop hook never fired (crash, kill):
+	// it ends interrupted, and its writes are loose in the tree with no closing
+	// snapshot to chain from.
+	interrupted, err := ts.CloseOpenTurnsForWindow(hc.Ctx, repoRoot, hc.Window.ClaudePID)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	turn := vcs.Turn{
+		RepoRoot: repoRoot, SessionID: hc.Window.Session, ClaudePID: hc.Window.ClaudePID,
+		PromptExcerpt: promptExcerpt(b.Prompt),
+	}
+	if interrupted == 0 && !reviewOpen(hc, repoRoot) {
+		prev, backend, ok, err := chainTip(hc, ts, repoRoot)
+		if err != nil {
+			return errReply(err.Error())
+		}
+		if ok {
+			turn.Backend, turn.TreeStart = backend, prev.TreeEnd
+			if _, err := ts.CreateTurn(hc.Ctx, turn); err != nil {
+				return errReply(err.Error())
+			}
+			return ccd.Reply{OK: true}
+		}
+	}
 	sweepStaleScratch(hc.Ctx, ts, repoRoot)
 	scratchDir, err := paths.App().EnsureRepoTurnsDir(repoRoot)
 	if err != nil {
@@ -49,17 +78,12 @@ func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
 	if err != nil {
 		return errReply(err.Error())
 	}
-	// A still-open turn here means the prior Stop hook never fired (crash, kill):
-	// no closing snapshot exists, so it ends interrupted.
-	if err := ts.CloseOpenTurnsForWindow(hc.Ctx, repoRoot, hc.Window.ClaudePID); err != nil {
+	turn.Backend, turn.TreeStart = tree.Backend, tree.OID
+	opened, err := ts.CreateTurn(hc.Ctx, turn)
+	if err != nil {
 		return errReply(err.Error())
 	}
-	if _, err := ts.CreateTurn(hc.Ctx, vcs.Turn{
-		RepoRoot: repoRoot, Backend: tree.Backend, SessionID: hc.Window.Session, ClaudePID: hc.Window.ClaudePID,
-		PromptExcerpt: promptExcerpt(b.Prompt), TreeStart: tree.OID,
-	}); err != nil {
-		return errReply(err.Error())
-	}
+	rv.markSnapshotted(opened.ID)
 	return ccd.Reply{OK: true}
 }
 
@@ -86,8 +110,65 @@ func (rv *review) handleTurnEnd(hc ccd.HandlerCtx) ccd.Reply {
 	if err := ts.CloseTurn(hc.Ctx, turn.ID, tree.OID, "closed"); err != nil {
 		return errReply(err.Error())
 	}
-	rv.detectBypass(hc, repoRoot, scratchDir, turn, tree)
+	if rv.takeSnapshotted(turn.ID) {
+		rv.detectBypass(hc, repoRoot, scratchDir, turn, tree)
+	}
 	return ccd.Reply{OK: true}
+}
+
+// chainTip is the closed turn a new turn can start from, inside the attribution
+// window. Another window mid-turn in the repo, or a tip from the other backend,
+// means the tree can move outside this turn's bracket, so the caller snapshots
+// instead of chaining.
+func chainTip(hc ccd.HandlerCtx, ts *vcs.TurnStore, repoRoot string) (vcs.Turn, string, bool, error) {
+	open, err := ts.OpenTurnCount(hc.Ctx, repoRoot)
+	if err != nil {
+		return vcs.Turn{}, "", false, err
+	}
+	if open > 0 {
+		return vcs.Turn{}, "", false, nil
+	}
+	cutoff := time.Now().Add(-attributableWindow).UnixMilli()
+	prev, ok, err := ts.LatestClosedTurn(hc.Ctx, repoRoot, cutoff)
+	if err != nil || !ok {
+		return vcs.Turn{}, "", false, err
+	}
+	backend, err := vcs.Backend(repoRoot)
+	if err != nil {
+		return vcs.Turn{}, "", false, err
+	}
+	if prev.Backend != backend {
+		return vcs.Turn{}, "", false, nil
+	}
+	return prev, backend, true, nil
+}
+
+// reviewOpen reports whether the window has a review awaiting feedback here.
+func reviewOpen(hc ccd.HandlerCtx, repoRoot string) bool {
+	sub, ok, err := hc.Subjects.Find(hc.Ctx, hc.Window, repoRoot)
+	return err == nil && ok && sub.Status == statusOpen
+}
+
+// markSnapshotted records a turn whose TreeStart was snapshotted at its own
+// prompt, so its bracket holds only that turn's writes.
+func (rv *review) markSnapshotted(turnID int64) {
+	rv.snapshotMu.Lock()
+	defer rv.snapshotMu.Unlock()
+	if rv.snapshotted == nil {
+		rv.snapshotted = make(map[int64]struct{})
+	}
+	rv.snapshotted[turnID] = struct{}{}
+}
+
+// takeSnapshotted consumes that mark. A chained turn, or one predating this
+// daemon, reads false and bypass detection skips it rather than blaming it for
+// writes its deferred TreeStart swept in.
+func (rv *review) takeSnapshotted(turnID int64) bool {
+	rv.snapshotMu.Lock()
+	defer rv.snapshotMu.Unlock()
+	_, ok := rv.snapshotted[turnID]
+	delete(rv.snapshotted, turnID)
+	return ok
 }
 
 // detectBypass flags tree changes during a locked-review turn that no logged tool
@@ -99,8 +180,7 @@ func (rv *review) detectBypass(hc ccd.HandlerCtx, repoRoot, scratchDir string, t
 	if treeEnd.OID == turn.TreeStart {
 		return
 	}
-	sub, ok, err := hc.Subjects.Find(hc.Ctx, hc.Window, repoRoot)
-	if err != nil || !ok || sub.Status != statusOpen {
+	if !reviewOpen(hc, repoRoot) {
 		return
 	}
 	changed, err := changedFiles(hc.Ctx, vcs.NewTreeDiffer(repoRoot, scratchDir, treeEnd.Backend), turn.TreeStart, treeEnd.OID)

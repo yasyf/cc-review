@@ -74,13 +74,17 @@ const (
 var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 
 // review holds the cross-handler state the substrate's HandlerCtx does not carry:
-// the shared decision ledger, the daemon logger, and the SSE inject hook
-// ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through.
+// the shared decision ledger, the daemon logger, the SSE inject hook
+// ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through,
+// and the ids of the turns this daemon opened on a fresh tree snapshot.
 type review struct {
 	decisions   *decisions.Log
 	log         *log.Logger
 	injectEvent func(subjectID, consumer string, pid int, payload string) int
 	sliceWarn   sync.Once
+
+	snapshotMu  sync.Mutex
+	snapshotted map[int64]struct{}
 }
 
 // Serve builds the cc-interact daemon for the review domain — scope = repo root,

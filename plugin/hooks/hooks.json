@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" session-record", "async": true }
         ]
       }
     ],
@@ -11,21 +11,21 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/guard-edit.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" guard-edit" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/turn-start.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" turn-start", "async": true }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/turn-end.sh" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" turn-end" }
         ]
       }
     ]
