@@ -588,7 +588,7 @@ func TestSessionCarriesTurnsAndAttributions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := turns.CloseOpenTurnsForWindow(ctx, "/repo", 100); err != nil {
+	if _, err := turns.CloseOpenTurnsForWindow(ctx, "/repo", 100); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutAttributions(ctx, section.ID, map[string][]store.AttributionRange{

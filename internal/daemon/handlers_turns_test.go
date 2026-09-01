@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -161,6 +163,39 @@ func stubSliceBinary(t *testing.T, script string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+// countGitExecs fronts PATH with a git that logs a line then hands off to the
+// real one, resolved first so the wrapper cannot find itself. The returned func
+// reports and clears the execs since the last read. Install it after the test
+// repo is built, or gitRun's own execs land in the count.
+func countGitExecs(t *testing.T) func() int {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "execs")
+	script := "#!/bin/sh\necho x >> \"" + logPath + "\"\nexec \"" + realGit + "\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil { //nolint:gosec // G306: test stub must be executable (0o755) so the code under test can exec it as git.
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() int {
+		t.Helper()
+		data, err := os.ReadFile(logPath) //nolint:gosec // G304: the path is this helper's own t.TempDir() exec log, not caller input.
+		if errors.Is(err, os.ErrNotExist) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(logPath); err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Count(data, []byte("\n"))
+	}
+}
+
 func bypassRow(t *testing.T, s *Server, session string) *decisions.Decision {
 	t.Helper()
 	rows, err := s.decisions.ForTurn(session, 0, time.Now().UnixMilli())
@@ -238,7 +273,7 @@ func TestTurnEndFullyAttributedWritesNoBypassRow(t *testing.T) {
 	}
 }
 
-func TestHandleStartAttributesTurnLines(t *testing.T) {
+func TestHandleStartAttributesInterTurnEditsToTheNextTurn(t *testing.T) {
 	ctx := context.Background()
 	s, repo := testServer(t)
 	root := repoRoot(t, repo)
@@ -247,7 +282,8 @@ func TestHandleStartAttributesTurnLines(t *testing.T) {
 	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\n")
 	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end 1")
 
-	// A manual edit between turns: the chain's untagged gap link absorbs it.
+	// A manual edit between turns: turn two chains from turn one's closing tree,
+	// so it lands in turn two's bracket rather than an untagged gap link.
 	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\nvar Manual int\n")
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "turn two"}), "turn-start 2")
@@ -270,10 +306,208 @@ func TestHandleStartAttributesTurnLines(t *testing.T) {
 	}
 	want := []store.AttributionRange{
 		{Start: 1, End: 2, TurnID: turns[0].ID},
-		{Start: 3, End: 3},
-		{Start: 4, End: 4, TurnID: turns[1].ID},
+		{Start: 3, End: 4, TurnID: turns[1].ID},
 	}
 	if got := byFile["feat.go"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("feat.go ranges = %+v, want %+v", got, want)
 	}
+}
+
+func TestTurnStartWithoutOpenReviewChainsPreviousEndTree(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start 1")
+	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\n")
+	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end 1")
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
+	if err != nil || len(turns) != 1 {
+		t.Fatalf("turns = %d (err %v), want 1", len(turns), err)
+	}
+	prev := turns[0]
+	writeFile(t, repo, "manual.go", "package p\n")
+
+	execs := countGitExecs(t)
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "two"}), "turn-start 2")
+	if n := execs(); n != 0 {
+		t.Fatalf("git execs = %d, want 0 — a chained start touches no repository", n)
+	}
+
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
+	if err != nil || !ok {
+		t.Fatalf("open turn: ok=%v err=%v", ok, err)
+	}
+	if open.TreeStart != prev.TreeEnd || open.Backend != "git" {
+		t.Fatalf("turn = %+v, want TreeStart=%q backend=git", open, prev.TreeEnd)
+	}
+}
+
+func TestTurnStartWithOpenReviewSnapshots(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start 1")
+	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\n")
+	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end 1")
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
+	if err != nil || len(turns) != 1 {
+		t.Fatalf("turns = %d (err %v), want 1", len(turns), err)
+	}
+	prev := turns[0]
+	writeFile(t, repo, "manual.go", "package p\n")
+	if _, err := s.createReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
+		t.Fatal(err)
+	}
+
+	execs := countGitExecs(t)
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "two"}), "turn-start 2")
+	if n := execs(); n != 2 {
+		t.Fatalf("git execs = %d, want 2 (scratch add -A, write-tree)", n)
+	}
+
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
+	if err != nil || !ok {
+		t.Fatalf("open turn: ok=%v err=%v", ok, err)
+	}
+	if open.TreeStart == prev.TreeEnd || open.TreeStart == "" {
+		t.Fatalf("TreeStart = %q, want a fresh snapshot past the inter-turn edit (%q)", open.TreeStart, prev.TreeEnd)
+	}
+}
+
+func TestIdleTurnsStillAttributeAfterStart(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start 1")
+	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\n")
+	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end 1")
+
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "two"}), "turn-start 2")
+	writeFile(t, repo, "feat.go", "package p\nvar Turn1 int\nvar Turn2 int\n")
+	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end 2")
+
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
+	if err != nil || len(turns) != 2 {
+		t.Fatalf("turns = %d (err %v), want 2", len(turns), err)
+	}
+
+	started := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+	if !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+	sections := s.latestSections(ctx, t, started.ReviewID)
+	byFile, err := s.store.ListAttributionsBySection(ctx, sections[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.AttributionRange{
+		{Start: 1, End: 2, TurnID: turns[0].ID},
+		{Start: 3, End: 3, TurnID: turns[1].ID},
+	}
+	if got := byFile["feat.go"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("feat.go ranges = %+v, want %+v", got, want)
+	}
+}
+
+func TestTurnStartAfterAnInterruptedTurnSnapshots(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	prev := closedTurn(ctx, t, s, repo, root, "one")
+	// Turn two is interrupted rather than closed, so its writes reach the tree
+	// with no snapshot bracketing them; turn three must not chain over them.
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "two"}), "turn-start 2")
+	writeFile(t, repo, "orphan.go", "package p\n")
+
+	execs := countGitExecs(t)
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "three"}), "turn-start 3")
+	if n := execs(); n != 2 {
+		t.Fatalf("git execs = %d, want 2 (an interrupted turn forces a snapshot)", n)
+	}
+
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
+	if err != nil || !ok {
+		t.Fatalf("open turn: ok=%v err=%v", ok, err)
+	}
+	if open.TreeStart == prev.TreeEnd || open.TreeStart == "" {
+		t.Fatalf("TreeStart = %q, want a fresh snapshot rather than the tip %q", open.TreeStart, prev.TreeEnd)
+	}
+}
+
+func TestTurnStartWithAnotherWindowMidTurnSnapshots(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	prev := closedTurn(ctx, t, s, repo, root, "one")
+	// A second Claude window is mid-turn in the same repo: its writes are landing
+	// in the tree right now, so this window cannot chain off a tip they postdate.
+	if _, err := s.turns.CreateTurn(ctx, vcs.Turn{
+		RepoRoot: root, Backend: "git", SessionID: "s2", ClaudePID: 200, TreeStart: prev.TreeEnd,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "other.go", "package p\n")
+
+	execs := countGitExecs(t)
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "two"}), "turn-start 2")
+	if n := execs(); n != 2 {
+		t.Fatalf("git execs = %d, want 2 (another open turn forces a snapshot)", n)
+	}
+
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
+	if err != nil || !ok {
+		t.Fatalf("open turn: ok=%v err=%v", ok, err)
+	}
+	if open.TreeStart == prev.TreeEnd {
+		t.Fatalf("TreeStart = %q, want a fresh snapshot rather than the tip", open.TreeStart)
+	}
+}
+
+func TestTurnStartWithAMismatchedBackendTipSnapshots(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	// A tip left by the other backend addresses trees this repo cannot read.
+	stale, err := s.turns.CreateTurn(ctx, vcs.Turn{
+		RepoRoot: root, Backend: "jj", SessionID: "s1", ClaudePID: 100, TreeStart: "jjstart",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.turns.CloseTurn(ctx, stale.ID, "jjend", "closed"); err != nil {
+		t.Fatal(err)
+	}
+
+	execs := countGitExecs(t)
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start")
+	if n := execs(); n < 2 {
+		t.Fatalf("git execs = %d, want a snapshot (>=2) rather than a chain off a jj tip", n)
+	}
+
+	open, ok, err := s.turns.LatestOpenTurn(ctx, root, 100)
+	if err != nil || !ok {
+		t.Fatalf("open turn: ok=%v err=%v", ok, err)
+	}
+	if open.Backend != "git" || open.TreeStart == "jjend" || open.TreeStart == "" {
+		t.Fatalf("turn = %+v, want a git snapshot, not the jj tip jjend", open)
+	}
+}
+
+// closedTurn drives one full turn that writes <prompt>.go, and returns its row.
+func closedTurn(ctx context.Context, t *testing.T, s *Server, repo, root, prompt string) vcs.Turn {
+	t.Helper()
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: prompt}), "turn-start "+prompt)
+	writeFile(t, repo, prompt+".go", "package p\nvar "+strings.ToUpper(prompt[:1])+prompt[1:]+" int\n")
+	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end "+prompt)
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
+	if err != nil || len(turns) == 0 {
+		t.Fatalf("turns = %d (err %v), want at least 1", len(turns), err)
+	}
+	return turns[len(turns)-1]
 }

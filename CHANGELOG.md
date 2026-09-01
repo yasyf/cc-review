@@ -4,6 +4,36 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Turn recording is hybrid. With no review open a turn starts from the previous
+  turn's closing tree instead of a fresh snapshot, so the prompt costs no git at
+  all and the whole turn costs the two commands its Stop hook runs. With a review
+  open both ends still snapshot, which is what keeps a bypassing write placeable.
+
+  A turn chains only when the tip it would chain from still describes the tree.
+  It snapshots instead when the previous turn was interrupted rather than closed,
+  when another Claude window is mid-turn in the same repo, when the tip was
+  written by the other version-control backend, and on the first turn in a repo
+  or the first after a scratch sweep — a turn with no starting tree would void
+  attribution for its entire version.
+- An edit made between two turns now attributes to the turn that follows it
+  instead of to nobody. Chaining leaves no untagged gap for it to fall into, so a
+  line typed by hand between two prompts reads as the next turn's.
+- The `SessionStart` and `UserPromptSubmit` hooks run async, off the prompt's
+  critical path. `Stop` stays synchronous: it is what closes the turn, and Claude
+  Code runs it to completion before accepting the next prompt, so turn-end can
+  never race the turn-start that follows it. The `PreToolUse` edit guard stays
+  synchronous too, since it denies by exiting 2.
+
+### Removed
+
+- The four `plugin/hooks/*.sh` wrappers. Each hook now invokes `bin/cc-review`
+  directly — one exec fewer per hook, the edit guard included. The binary is a
+  committed symlink, so the wrappers' `[ -x ]` fail-open guard never fired.
+
 ## [0.35.0] - 2026-08-26
 
 ### Changed
