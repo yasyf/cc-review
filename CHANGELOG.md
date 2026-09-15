@@ -481,6 +481,17 @@ local review state** (`~/.cc-review`) per the no-migrations policy.
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-09-15
+
+### Fixed
+
+- **Fix hook failures caused by conflicting binrun versions.** The shim now
+  pins binrun v0.6.1 and installs it at `~/.daemonkit/binrun/<tag>/binrun`,
+  so plugins pinning different tags no longer replace each other's runner. It
+  checks `BINRUN_BIN`, the per-tag runner, then `binrun` on PATH before a
+  one-time download verified with SHA-256. The shim no longer reads or writes
+  `~/.daemonkit/bin/binrun`. Plugin binary behavior is unchanged.
+
 ## [0.9.0] - 2026-06-12
 
 ### Changed
@@ -617,6 +628,7 @@ managed-settings entry and marker would otherwise suppress the setup re-offer.
 - Initial release: `/review:start` skill, PR-like web UI, Monitor + MCP channel
   streaming, append-only SQLite history, edit guard, release-asset binaries.
 
+[0.36.1]: https://github.com/yasyf/cc-review/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/yasyf/cc-review/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/yasyf/cc-review/compare/v0.34.1...v0.35.0
 [0.34.1]: https://github.com/yasyf/cc-review/compare/v0.34.0...v0.34.1
