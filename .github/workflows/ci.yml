@@ -74,6 +74,32 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: go build ./...
+      - name: Supervised review smoke
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '0'
+          CC_REVIEW_HTTP_PORT: '7392'
+          CC_REVIEW_URL: http://127.0.0.1:17392
+        run: |
+          go build -o "$RUNNER_TEMP/cc-review" ./cmd/cc-review
+          ccr="$RUNNER_TEMP/cc-review"
+          "$ccr" supervise &
+          supervisor=$!
+          repo="$RUNNER_TEMP/repo"
+          git init -q "$repo"
+          git -C "$repo" -c user.name=ci -c user.email=ci@example.com commit -q --allow-empty -m init
+          echo change > "$repo/file.txt"
+          url=
+          for _ in $(seq 20); do
+            url="$("$ccr" start --session smoke --cwd "$repo" | head -n1)" && break
+            sleep 0.5
+          done
+          echo "$url"
+          case "$url" in http://127.0.0.1:17392/s/*) ;; *) echo "unexpected review URL: $url" >&2; exit 1 ;; esac
+          curl -fsS -o /dev/null "http://127.0.0.1:7392${url#http://127.0.0.1:17392}"
+          "$ccr" stop
+          kill -TERM "$supervisor"
+          wait "$supervisor"
 
   # Static analysis type-checks the tree once per shipped OS. GOOS/GOARCH keep
   # the darwin leg on a cheap linux runner instead of billing macOS minutes 10x.
