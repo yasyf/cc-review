@@ -65,6 +65,8 @@ const (
 	// channel presence) before the sweeper expires it and the edit guard lifts.
 	reviewIdleTTL = 24 * time.Hour
 
+	urlEnv = "CC_REVIEW_URL"
+
 	gateBlockReason = "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser."
 	gateErrorReason = "cc-review: could not read review status; blocking the edit to be safe. Try `cc-review status`, or `cc-review stop` to clear the daemon."
 )
@@ -327,6 +329,9 @@ func (rv *review) channelStateProbed(hc ccd.HandlerCtx, subjectID string) string
 }
 
 func reviewURL(httpPort int, slug string) string {
+	if origin := os.Getenv(urlEnv); origin != "" {
+		return origin + "/s/" + slug
+	}
 	return fmt.Sprintf("http://127.0.0.1:%d/s/%s", httpPort, slug)
 }
 

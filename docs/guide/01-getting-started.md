@@ -11,7 +11,7 @@ Here's where you land: a submitted review, in which you commented on Claude's di
 
 ## Requirements
 
-You need Claude Code and a git or jj repository. The prebuilt binary covers macOS and Linux on amd64 and arm64.
+You need Claude Code and a git or jj repository. The prebuilt binary covers macOS (amd64, arm64) and Linux amd64.
 
 ## Install
 
@@ -29,6 +29,26 @@ To install the `cc-review` CLI on its own (macOS), use Homebrew:
 ```
 brew install yasyf/tap/cc-review
 ```
+
+## Run on a Linux host
+
+Have the workspace start `cc-review supervise` as a long-lived foreground process and restart it if it exits. Set the daemon's environment on that process. For a remote VM, `CC_REVIEW_HTTP_PORT` pins its loopback HTTP port; `CC_REVIEW_URL` sets the origin of printed review URLs, without a trailing slash. Start the supervisor on the VM:
+
+```sh
+CC_REVIEW_HTTP_PORT=7392 CC_REVIEW_URL=http://127.0.0.1:17392 cc-review supervise
+```
+
+On your desktop, forward port 17392 to the VM's port 7392, replacing `vm.example.com` with your host:
+
+```sh
+ssh -N -L 127.0.0.1:17392:127.0.0.1:7392 vm.example.com
+```
+
+Keep both processes running, then run `cc-review start` on the VM and open its printed URL in your desktop or Orca browser. Without the supervisor, CLI commands fail and hooks silently skip their work.
+
+::: {.callout-warning title="Same-user trust"}
+Linux trusts every process with the same user ID, so any process running as you can impersonate the daemon. Use this only on private single-user VMs.
+:::
 
 ## Your first review
 

@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Linux amd64 support. The workspace keeps `cc-review supervise` running in the
+  foreground so commands and hooks can lazily start and upgrade the daemon.
+  `CC_REVIEW_HTTP_PORT` pins its loopback port, and `CC_REVIEW_URL` points printed
+  review URLs at the desktop's forwarded port. Linux trusts processes with the
+  same user ID, so any process running as you can impersonate the daemon; use it
+  only on private single-user VMs.
+
 ## [0.36.0] - 2026-09-01
 
 ### Changed

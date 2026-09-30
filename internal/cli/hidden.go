@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,9 +19,12 @@ import (
 // server's proxy can reach the API/SSE plane.
 const devHTTPPort = 8787
 
+const httpPortEnv = "CC_REVIEW_HTTP_PORT"
+
 // newDaemonCmd is the hidden entry point the lazy-start spawns. --dev pins the
 // HTTP plane to a known port for the Vite dev proxy; the lazily-spawned daemon
-// (Args=["daemon"], no --dev) binds an ephemeral port.
+// (Args=["daemon"], no --dev) binds CC_REVIEW_HTTP_PORT when its environment
+// sets one, and an ephemeral port otherwise.
 func newDaemonCmd() *cobra.Command {
 	var dev bool
 	cmd := &cobra.Command{
@@ -30,15 +36,30 @@ func newDaemonCmd() *cobra.Command {
 			if err := daemonkit.CloseInheritedFDs(); err != nil {
 				return err
 			}
-			port := 0
-			if dev {
-				port = devHTTPPort
+			port, err := httpPort(dev)
+			if err != nil {
+				return err
 			}
 			return daemon.Serve(cmd.Context(), port)
 		},
 	}
 	cmd.Flags().BoolVar(&dev, "dev", false, "bind the HTTP plane to a fixed port for the Vite dev proxy")
 	return cmd
+}
+
+func httpPort(dev bool) (int, error) {
+	if dev {
+		return devHTTPPort, nil
+	}
+	raw := os.Getenv(httpPortEnv)
+	if raw == "" {
+		return 0, nil
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", httpPortEnv, err)
+	}
+	return port, nil
 }
 
 // newTurnStartCmd is the hidden UserPromptSubmit hook handler: it opens a turn

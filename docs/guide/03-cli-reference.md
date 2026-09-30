@@ -180,4 +180,4 @@ cc-review setup-channels --check
 
 ## Hidden internal commands
 
-The binary also carries hidden entry points the plugin uses for itself. `daemon` runs the lazy-started background process, `session-record` handles the SessionStart hook, `guard-edit` handles the PreToolUse edit guard, `mcp-channel` runs the MCP channel server, and `channel-ack` marks a window's channel proven after its first delivered tag. See [Internals](internals.md) for how they fit together.
+The binary also carries hidden entry points the plugin uses for itself. `daemon` runs the lazy-started background process, `supervise` runs its foreground supervisor (Linux only), `session-record` handles the SessionStart hook, `guard-edit` handles the PreToolUse edit guard, `mcp-channel` runs the MCP channel server, and `channel-ack` marks a window's channel proven after its first delivered tag. See [Internals](internals.md) for how they fit together.
