@@ -11,14 +11,12 @@ before:
     - go mod tidy
 
 builds:
-  - id: cc-review
+  - &build
+    id: cc-review
     main: ./cmd/cc-review
     binary: cc-review
     env:
       - CGO_ENABLED=0
-    # darwin only: cc-review's daemon is a launchd LaunchAgent, and daemonkit
-    # v0.21 does not compile off darwin at all. The linux legs built a binary
-    # whose daemon half could never run; they now fail outright.
     goos:
       - darwin
     goarch:
@@ -33,6 +31,14 @@ builds:
       # check compares `--version` output against v<plugin.json version>.
       - -X github.com/yasyf/cc-review/internal/version.Version={{ .Tag }}
       - -X github.com/yasyf/cc-review/internal/version.Commit={{ .ShortCommit }}
+  # A build of its own so the Homebrew cask, which reads the darwin archives
+  # only, never picks up the linux one.
+  - <<: *build
+    id: cc-review-linux
+    goos:
+      - linux
+    goarch:
+      - amd64
 
 archives:
   # Bare per-arch binaries named cc-review_<os>_<arch> — the Claude Code plugin's
@@ -41,12 +47,19 @@ archives:
   - id: binary
     ids:
       - cc-review
+      - cc-review-linux
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
   # A normal tar.gz archive for general use (and the Homebrew cask).
   - id: archive
     ids:
       - cc-review
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+  - id: archive-linux
+    ids:
+      - cc-review-linux
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}

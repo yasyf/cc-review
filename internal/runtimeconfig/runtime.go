@@ -8,22 +8,18 @@ import (
 	"github.com/yasyf/cc-review/internal/paths"
 )
 
-const (
-	agentLabel        = "com.yasyf.cc-review"
-	teamID            = "SXKCTF23Q2"
-	signingIdentifier = "cc-review"
-)
+const agentLabel = "com.yasyf.cc-review"
 
-// Spec is the one daemonkit identity the launcher and the daemon share. The
-// control lane pins the identity cc-review is released under; the serving
-// posture is the same-user waiver, because a dev build is unsigned and a
-// signed posture would refuse it.
+// Spec is the one daemonkit identity the launcher and the daemon share. On
+// darwin the control lane pins the identity cc-review is released under; linux
+// has no code identity to pin, so there every lane rests on the same-user
+// floor. The serving posture is the same-user waiver everywhere, because a dev
+// build is unsigned and a signed posture would refuse it.
 func Spec() (daemonkit.Daemon, error) {
 	program, err := daemonkit.Stable()
 	if err != nil {
 		return daemonkit.Daemon{}, err
 	}
-	requirement := daemonkit.Requirement{TeamID: teamID, SigningIdentifier: signingIdentifier}
 	return ccd.Spec(daemonkit.Daemon{
 		Label:   agentLabel,
 		Program: program,
@@ -31,7 +27,7 @@ func Spec() (daemonkit.Daemon, error) {
 		Log:     paths.App().LogPath(),
 		Restart: daemonkit.RestartOnFailure,
 		Trust: daemonkit.Trust{
-			Control: &requirement,
+			Control: control(),
 			Serving: daemonkit.ServingSameUser(),
 		},
 	}), nil

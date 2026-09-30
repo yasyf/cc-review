@@ -59,5 +59,6 @@ func NewRootCmd() *cobra.Command {
 		newTurnEndCmd(),
 		cmd.SetupChannelsCmd(d, reviewPlugin, applyHint),
 	)
+	root.AddCommand(platformCmds()...)
 	return root
 }

@@ -16,7 +16,7 @@ require (
 require (
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/yasyf/cc-interact v0.34.0
-	github.com/yasyf/daemonkit v0.23.0
+	github.com/yasyf/daemonkit v0.31.2-0.20260930060041-a3d1b3d46a14
 )
 
 require (
@@ -35,7 +35,6 @@ require (
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	go.etcd.io/bbolt v1.5.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
