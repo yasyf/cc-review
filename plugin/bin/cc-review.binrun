@@ -3,26 +3,36 @@
   "schema": 1,
   "name": "cc-review",
   "kind": "release-binary",
-  "version": {"static": "0.36.1"},
+  "version": {"static": "0.37.0"},
   "platforms": {
     "macos-aarch64": {
-      "size": 11012111,
+      "size": 10904952,
       "hash": "sha256",
-      "digest": "8df1e1b77dbd206b1e1374ec10cd348a1e6e2cff2aace02f913cc8e1e09ebcca",
+      "digest": "4ca532ae0a124ed711a7dd5a7301a09a7f3c7317b2d9303857c5c595c08dfd59",
       "format": "tar.gz",
       "path": "cc-review",
       "providers": [
-        {"type": "github-release", "repo": "yasyf/cc-review", "tag": "v0.36.1", "name": "cc-review_0.36.1_darwin_arm64.tar.gz"}
+        {"type": "github-release", "repo": "yasyf/cc-review", "tag": "v0.37.0", "name": "cc-review_0.37.0_darwin_arm64.tar.gz"}
       ]
     },
     "macos-x86_64": {
-      "size": 11544647,
+      "size": 11431031,
       "hash": "sha256",
-      "digest": "f31dc4150619a59472b8832e7a8ca5cb637fc8618a78945da4f5fff197d7b5c9",
+      "digest": "6f8bebaef295fe6449b2ec4b3f6c6a751edf7ef1b1240337cf60ec76f12fbcbc",
       "format": "tar.gz",
       "path": "cc-review",
       "providers": [
-        {"type": "github-release", "repo": "yasyf/cc-review", "tag": "v0.36.1", "name": "cc-review_0.36.1_darwin_amd64.tar.gz"}
+        {"type": "github-release", "repo": "yasyf/cc-review", "tag": "v0.37.0", "name": "cc-review_0.37.0_darwin_amd64.tar.gz"}
+      ]
+    },
+    "linux-x86_64": {
+      "size": 10744869,
+      "hash": "sha256",
+      "digest": "cc4d60550376c2f3c828975518069524409a83d690be6fdd33416bd6eab154bc",
+      "format": "tar.gz",
+      "path": "cc-review",
+      "providers": [
+        {"type": "github-release", "repo": "yasyf/cc-review", "tag": "v0.37.0", "name": "cc-review_0.37.0_linux_amd64.tar.gz"}
       ]
     }
   }
