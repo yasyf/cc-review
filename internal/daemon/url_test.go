@@ -3,6 +3,7 @@ package daemon
 import "testing"
 
 func TestReviewURL(t *testing.T) {
+	t.Setenv(urlEnv, "")
 	if got, want := reviewURL(4123, "abc"), "http://127.0.0.1:4123/s/abc"; got != want {
 		t.Errorf("reviewURL = %q, want %q", got, want)
 	}

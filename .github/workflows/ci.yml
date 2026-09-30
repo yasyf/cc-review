@@ -89,11 +89,11 @@ jobs:
           git init -q "$repo"
           git -C "$repo" -c user.name=ci -c user.email=ci@example.com commit -q --allow-empty -m init
           echo change > "$repo/file.txt"
-          url=
           for _ in $(seq 20); do
-            url="$("$ccr" start --session smoke --cwd "$repo" | head -n1)" && break
+            out="$("$ccr" start --session smoke --cwd "$repo")" && break
             sleep 0.5
           done
+          url="${out%%$'\n'*}"
           echo "$url"
           case "$url" in http://127.0.0.1:17392/s/*) ;; *) echo "unexpected review URL: $url" >&2; exit 1 ;; esac
           curl -fsS -o /dev/null "http://127.0.0.1:7392${url#http://127.0.0.1:17392}"
