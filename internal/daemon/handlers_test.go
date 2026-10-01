@@ -536,7 +536,7 @@ func TestGuardEditWritesGateDecisions(t *testing.T) {
 		action, tool, file, message string
 		input                       json.RawMessage
 	}{
-		{action: "block", tool: "Edit", file: filepath.Join(root, "a.go"), message: "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser.", input: blockedInput},
+		{action: "block", tool: "Edit", file: filepath.Join(root, "a.go"), message: "An open `cc-review` blocks edits until the reviewer presses Submit. Answer their comments with `cc-review reply` and resume editing after submit.", input: blockedInput},
 		{action: "allow", tool: "Write", file: filepath.Join(root, "b.go"), input: allowedInput},
 	} {
 		row := rows[i]

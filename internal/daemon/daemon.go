@@ -67,8 +67,8 @@ const (
 
 	urlEnv = "CC_REVIEW_URL"
 
-	gateBlockReason = "cc-review: an open review is awaiting your feedback — edits are blocked until you press Submit in the browser."
-	gateErrorReason = "cc-review: could not read review status; blocking the edit to be safe. Try `cc-review status`, or `cc-review stop` to clear the daemon."
+	gateBlockReason = "An open `cc-review` blocks edits until the reviewer presses Submit. Answer their comments with `cc-review reply` and resume editing after submit."
+	gateErrorReason = "Edits are blocked because the review status could not be read. Run `cc-review status`, then `cc-review stop` if the daemon is wedged."
 )
 
 // lifecycle names the subject statuses the resolver writes: a fresh review is
