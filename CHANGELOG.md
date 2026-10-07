@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgrading wipes local review state.** The review database schema changes
+  for pull request reviews. A review now records whether it tracks a GitHub pull
+  request, comments and replies carry their GitHub link, author, and sync state,
+  and each review caches its pull request metadata. The first daemon start after
+  the upgrade archives the old database and opens a fresh one, so every local
+  review from before the upgrade disappears from cc-review. Frozen feedback
+  snapshots change shape too: each thread names its author, and older snapshots
+  no longer load.
+
 ## [0.37.0] - 2026-09-30
 
 ### Added
