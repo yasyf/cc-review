@@ -103,8 +103,8 @@ func TestNestedFeedbackPayloadIsExact(t *testing.T) {
 		ReviewID: "r", Version: 1, SessionID: "s", FrozenAt: 1,
 		Threads: []Thread{{
 			CommentID: 2, FilePath: "a.go", Side: "additions", StartLine: 3, EndLine: 4,
-			LineContent: "x", Body: "body", Status: "open", Replies: []Reply{{
-				ID: 5, Origin: "claude", Kind: "ask", Body: "choose",
+			LineContent: "x", Body: "body", Author: store.AuthorRemote, AuthorLogin: "octo", Status: "open", Replies: []Reply{{
+				ID: 5, Origin: "claude", AuthorLogin: "cc-review-me[bot]", Kind: "ask", Body: "choose",
 				Ask:      &store.Ask{Header: "Choice", Options: []store.AskOption{{Label: "A"}}},
 				Answered: true, AskAnswer: &store.AskAnswer{Selected: []string{"A"}}, AnsweredVia: "web",
 			}},
@@ -127,6 +127,7 @@ func TestNestedFeedbackPayloadIsExact(t *testing.T) {
 		strings.Replace(string(encoded), `"replies":[`, `"replies":null,"discard":[`, 1),
 		strings.Replace(string(encoded), `"description":""`, `"description":null`, 1),
 		strings.Replace(string(encoded), `"selected":["A"]`, `"selected":null`, 1),
+		strings.Replace(string(encoded), `"author_login":"octo",`, ``, 1),
 	} {
 		if _, err := decodeFeedback([]byte(broken)); err == nil {
 			t.Fatalf("decodeFeedback accepted %s", broken)
@@ -281,5 +282,49 @@ func TestBuildCarriesAskShapes(t *testing.T) {
 		if _, ok := replyRaw[key]; !ok {
 			t.Fatalf("answered reply JSON missing %s key: %s", key, b)
 		}
+	}
+}
+
+func TestBuildCarriesAuthors(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+
+	subjectID := store.NewSlugHash()
+	if _, err := ccstore.NewSubjectStore(st.DB()).
+		Create(ctx, subjectID, store.ReviewSlug(subjectID), "s", "/repo", 0, "open"); err != nil {
+		t.Fatal(err)
+	}
+	v, sections, err := st.CreateVersion(ctx, subjectID, "feat", "", "",
+		[]store.SectionInput{{Position: 0, Branch: "feat", BaseRef: "b", HeadRef: "h", FilesJSON: "[]", PRNumber: 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment, _, err := st.UpsertRemoteComment(ctx, store.Comment{
+		VersionID: v.ID, SectionID: sections[0].ID, Branch: "feat", FilePath: "a.go", Side: "additions",
+		StartLine: 1, EndLine: 1, Body: "why?", Author: store.AuthorRemote, AuthorLogin: "octo", RemoteID: "PRRC_1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertRemoteReply(ctx, store.Reply{
+		CommentID: comment.ID, Origin: store.AuthorUser, Kind: "note", Body: "because", AuthorLogin: "me", RemoteID: "PRRC_2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fb, err := Build(ctx, st, subjectID, v, time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.Threads) != 1 || fb.Threads[0].Author != store.AuthorRemote || fb.Threads[0].AuthorLogin != "octo" {
+		t.Fatalf("threads = %+v, want one thread by remote octo", fb.Threads)
+	}
+	replies := fb.Threads[0].Replies
+	if len(replies) != 1 || replies[0].Origin != store.AuthorUser || replies[0].AuthorLogin != "me" {
+		t.Fatalf("replies = %+v, want one reply by user me", replies)
 	}
 }

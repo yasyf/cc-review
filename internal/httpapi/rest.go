@@ -31,6 +31,7 @@ type sessionResponse struct {
 	Comments        []wire.Comment             `json:"comments"`
 	Annotations     []wire.Annotation          `json:"annotations"`
 	AIRequests      []wire.AIRequest           `json:"aiRequests"`
+	PullRequests    []wire.PullRequest         `json:"pullRequests"`
 	Turns           []wire.Turn                `json:"turns"`
 	TurnActivity    map[string][]wire.Decision `json:"turnActivity"`
 	ClaudeConnected bool                       `json:"claudeConnected"`
@@ -53,6 +54,7 @@ type sectionResponse struct {
 	FileStates   map[string]wire.FileState           `json:"fileStates"`
 	Organization *store.Organization                 `json:"organization"`
 	Attributions *map[string][]wire.AttributionRange `json:"attributions,omitempty"`
+	PRNumber     int                                 `json:"prNumber"`
 }
 
 type createCommentReq struct {
@@ -209,7 +211,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			SectionID: strconv.FormatInt(sec.ID, 10), SectionKey: sec.Key(), Position: sec.Position,
 			Branch: sec.Branch, ParentBranch: sec.ParentBranch, BaseRef: sec.BaseRef, HeadRef: sec.HeadRef,
 			Pending: sec.Pending, Patch: string(patch), Files: json.RawMessage(sec.FilesJSON),
-			FileStates: fileStates, Organization: organization, Attributions: attributions,
+			FileStates: fileStates, Organization: organization, Attributions: attributions, PRNumber: sec.PRNumber,
 		})
 	}
 	comments, err := s.st().ListCommentsByVersion(ctx, version.ID)
@@ -244,6 +246,20 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	for _, ar := range requests {
 		aiRequests = append(aiRequests, wire.ToAIRequest(ar))
 	}
+	prs, err := s.st().PullRequests(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pullRequests := make([]wire.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		pullRequests = append(pullRequests, wire.ToPullRequest(pr))
+	}
+	meta, _, err := s.st().GetReviewMeta(ctx, review.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	turnIDs := make([]int64, 0, len(turnIDSet))
 	for tid := range turnIDSet {
 		turnIDs = append(turnIDs, tid)
@@ -263,13 +279,14 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sessionResponse{
-		Review:          wire.ToReview(review, version.Branch),
+		Review:          wire.ToReview(review, version.Branch, meta),
 		Version:         version.VersionNumber,
 		VersionID:       strconv.FormatInt(version.ID, 10),
 		Sections:        sectionResp,
 		Comments:        wired,
 		Annotations:     wiredAnnotations,
 		AIRequests:      aiRequests,
+		PullRequests:    pullRequests,
 		Turns:           turns,
 		TurnActivity:    s.turnActivity(storeTurns),
 		ClaudeConnected: s.connected(review.ID),

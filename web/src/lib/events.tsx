@@ -88,6 +88,29 @@ function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionRespon
       };
     case 'annotations.updated':
       return { ...session, annotations: ev.annotations };
+    case 'pr.updated': {
+      const exists = session.pullRequests.some((pr) => pr.number === ev.pullRequest.number);
+      const pullRequests = exists
+        ? session.pullRequests.map((pr) =>
+            pr.number === ev.pullRequest.number ? ev.pullRequest : pr,
+          )
+        : [...session.pullRequests, ev.pullRequest].sort((a, b) => a.number - b.number);
+      return { ...session, pullRequests };
+    }
+    case 'comment.synced': {
+      const sync = { syncState: ev.syncState, syncError: ev.syncError, remoteUrl: ev.remoteUrl };
+      return {
+        ...session,
+        comments: session.comments.map((c) => {
+          if (c.id !== ev.commentId) return c;
+          if (ev.replyId === undefined) return { ...c, ...sync };
+          return {
+            ...c,
+            replies: c.replies.map((r) => (r.id === ev.replyId ? { ...r, ...sync } : r)),
+          };
+        }),
+      };
+    }
     case 'channel.changed':
     case 'version.created':
     case 'notification':
@@ -135,14 +158,20 @@ function notificationFor(ev: ReviewEvent): StreamToast | null {
   }
 }
 
-// ai.request.* are stamped with the review's CURRENT version at emit time, but
-// replayed historical frames carry the then-current version — so they must apply
-// regardless of the version on screen. Their reducers are id-keyed upserts, which
-// makes that safe. Everything else only patches the version it belongs to.
+// ai.request.*, pr.updated, and comment.synced are stamped with the review's
+// CURRENT version at emit time, but replayed historical frames carry the
+// then-current version — so they must apply regardless of the version on screen.
+// Their reducers are id-keyed, which makes that safe. Everything else only
+// patches the version it belongs to.
 // (channel.changed drives presence via peerPresence, not the cache, so it does
 // not need to apply here.)
 function versionAgnostic(ev: ReviewEvent): boolean {
-  return ev.type === 'ai.request.created' || ev.type === 'ai.request.updated';
+  return (
+    ev.type === 'ai.request.created' ||
+    ev.type === 'ai.request.updated' ||
+    ev.type === 'pr.updated' ||
+    ev.type === 'comment.synced'
+  );
 }
 
 const { EventStreamProvider, useEventStream } = createEventStream<

@@ -37,6 +37,14 @@ const (
 	attributionSchemaIdentity    = "dev.yasyf.cc-review.attribution-ranges"
 	attributionSchemaDescriptor  = "payload:array<range{start:int,end:int,turnId:int64}>"
 	attributionSchemaFingerprint = "dev.yasyf.cc-review.attribution-ranges.8a522d9816ef5b6890152871a74caa190fc51c0c24a1f87e991d93f74355fe7d"
+
+	prChecksSchemaIdentity    = "dev.yasyf.cc-review.pr-checks"
+	prChecksSchemaDescriptor  = "payload:array<check{name:string,state:string,url:string}>"
+	prChecksSchemaFingerprint = "dev.yasyf.cc-review.pr-checks.3620c89d5c00694a8d2084b58b322d81cebdac348cf7f85b0b75eb0da7f85e65"
+
+	prReviewersSchemaIdentity    = "dev.yasyf.cc-review.pr-reviewers"
+	prReviewersSchemaDescriptor  = "payload:array<reviewer{login:string,avatarUrl:string,state:string}>"
+	prReviewersSchemaFingerprint = "dev.yasyf.cc-review.pr-reviewers.3a34e30382c532d16c1e980895c06f4663b60201b8153b8ed8295a516c5ed37c"
 )
 
 type unmatchedV1 struct {
@@ -95,6 +103,18 @@ type attributionRangeV1 struct {
 	Start  *int   `json:"start"`
 	End    *int   `json:"end"`
 	TurnID *int64 `json:"turnId"`
+}
+
+type prCheckV1 struct {
+	Name  *string `json:"name"`
+	State *string `json:"state"`
+	URL   *string `json:"url"`
+}
+
+type prReviewerV1 struct {
+	Login     *string `json:"login"`
+	AvatarURL *string `json:"avatarUrl"`
+	State     *string `json:"state"`
 }
 
 func encodeUnmatched(values []Unmatched) (string, error) {
@@ -263,6 +283,58 @@ func decodeAttributionRanges(data string) ([]AttributionRange, error) {
 			return nil, fmt.Errorf("attribution range %d requires start, end, and turnId", i)
 		}
 		values[i] = AttributionRange{Start: *value.Start, End: *value.End, TurnID: *value.TurnID}
+	}
+	return values, nil
+}
+
+func encodePRChecks(values []PRCheck) (string, error) {
+	if values == nil {
+		return "", errors.New("pr checks must be a non-nil array")
+	}
+	payload := make([]prCheckV1, len(values))
+	for i, value := range values {
+		payload[i] = prCheckV1{Name: ptr(value.Name), State: ptr(value.State), URL: ptr(value.URL)}
+	}
+	return encodeEnvelope(prChecksSchemaIdentity, prChecksSchemaFingerprint, payload)
+}
+
+func decodePRChecks(data string) ([]PRCheck, error) {
+	payload, err := persistedjson.Decode[[]prCheckV1]([]byte(data), prChecksSchemaIdentity, prChecksSchemaFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]PRCheck, len(payload))
+	for i, value := range payload {
+		if value.Name == nil || value.State == nil || value.URL == nil {
+			return nil, fmt.Errorf("pr check %d requires name, state, and url", i)
+		}
+		values[i] = PRCheck{Name: *value.Name, State: *value.State, URL: *value.URL}
+	}
+	return values, nil
+}
+
+func encodePRReviewers(values []PRReviewer) (string, error) {
+	if values == nil {
+		return "", errors.New("pr reviewers must be a non-nil array")
+	}
+	payload := make([]prReviewerV1, len(values))
+	for i, value := range values {
+		payload[i] = prReviewerV1{Login: ptr(value.Login), AvatarURL: ptr(value.AvatarURL), State: ptr(value.State)}
+	}
+	return encodeEnvelope(prReviewersSchemaIdentity, prReviewersSchemaFingerprint, payload)
+}
+
+func decodePRReviewers(data string) ([]PRReviewer, error) {
+	payload, err := persistedjson.Decode[[]prReviewerV1]([]byte(data), prReviewersSchemaIdentity, prReviewersSchemaFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]PRReviewer, len(payload))
+	for i, value := range payload {
+		if value.Login == nil || value.AvatarURL == nil || value.State == nil {
+			return nil, fmt.Errorf("pr reviewer %d requires login, avatarUrl, and state", i)
+		}
+		values[i] = PRReviewer{Login: *value.Login, AvatarURL: *value.AvatarURL, State: *value.State}
 	}
 	return values, nil
 }

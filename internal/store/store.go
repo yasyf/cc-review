@@ -32,15 +32,19 @@ type Store struct {
 
 // schemaV1 is the review domain schema layered on cc-interact's core
 // subjects/events tables. review_meta pins each review's diff base and creation
-// branch and flags a stacked review; each version's diff is its ordered
-// version_sections list (a flat review is exactly one pending section). Foreign
-// keys point at the core subjects table the core schema created first.
+// branch, flags a stacked review, and names the GitHub PR a kind=pr review
+// tracks; each version's diff is its ordered version_sections list (a flat
+// review is exactly one pending section). Foreign keys point at the core
+// subjects table the core schema created first.
 const schemaV1 = `
 CREATE TABLE review_meta (
   subject_id TEXT PRIMARY KEY REFERENCES subjects(id),
   base_ref   TEXT NOT NULL DEFAULT '',
   branch     TEXT NOT NULL DEFAULT '',
-  stack      INTEGER NOT NULL DEFAULT 0
+  stack      INTEGER NOT NULL DEFAULT 0,
+  kind       TEXT NOT NULL DEFAULT 'local',
+  repo       TEXT NOT NULL DEFAULT '',
+  pr_number  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE review_versions (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,11 +67,14 @@ CREATE TABLE version_sections (
   pending       INTEGER NOT NULL DEFAULT 0,
   patch_path    TEXT NOT NULL DEFAULT '',
   files_json    TEXT NOT NULL DEFAULT '[]',
+  pr_number     INTEGER NOT NULL DEFAULT 0,
+  pr_node_id    TEXT NOT NULL DEFAULT '',
   UNIQUE(version_id, position)
 );
 CREATE INDEX idx_version_sections_version ON version_sections(version_id);
 CREATE TABLE comments (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id    TEXT NOT NULL REFERENCES subjects(id),
   version_id   INTEGER NOT NULL REFERENCES review_versions(id),
   section_id   INTEGER NOT NULL REFERENCES version_sections(id),
   branch       TEXT NOT NULL DEFAULT '',
@@ -83,9 +90,20 @@ CREATE TABLE comments (
   author       TEXT NOT NULL DEFAULT 'user',
   status       TEXT NOT NULL DEFAULT 'open',
   created_at   INTEGER NOT NULL,
-  updated_at   INTEGER NOT NULL
+  updated_at   INTEGER NOT NULL,
+  remote_id         TEXT,
+  remote_thread_id  TEXT NOT NULL DEFAULT '',
+  remote_url        TEXT NOT NULL DEFAULT '',
+  author_login      TEXT NOT NULL DEFAULT '',
+  author_avatar_url TEXT NOT NULL DEFAULT '',
+  outdated          INTEGER NOT NULL DEFAULT 0,
+  subject           TEXT NOT NULL DEFAULT 'line',
+  sync_state        TEXT NOT NULL DEFAULT 'local',
+  sync_error        TEXT NOT NULL DEFAULT '',
+  edit_seq          INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_comments_version ON comments(version_id);
+CREATE UNIQUE INDEX idx_comments_remote ON comments(review_id, remote_id) WHERE remote_id IS NOT NULL;
 CREATE TABLE replies (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   comment_id   INTEGER NOT NULL REFERENCES comments(id),
@@ -98,10 +116,46 @@ CREATE TABLE replies (
   ask_answer_json TEXT,
   answered_via TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
-  dedup_key    TEXT
+  dedup_key    TEXT,
+  remote_id         TEXT,
+  remote_url        TEXT NOT NULL DEFAULT '',
+  author_login      TEXT NOT NULL DEFAULT '',
+  author_avatar_url TEXT NOT NULL DEFAULT '',
+  sync_state        TEXT NOT NULL DEFAULT 'local',
+  sync_error        TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX idx_replies_comment ON replies(comment_id);
 CREATE UNIQUE INDEX idx_replies_dedup ON replies(dedup_key) WHERE dedup_key IS NOT NULL;
+CREATE UNIQUE INDEX idx_replies_remote ON replies(comment_id, remote_id) WHERE remote_id IS NOT NULL;
+CREATE TABLE pull_requests (
+  review_id        TEXT NOT NULL REFERENCES subjects(id),
+  number           INTEGER NOT NULL,
+  node_id          TEXT NOT NULL DEFAULT '',
+  title            TEXT NOT NULL DEFAULT '',
+  body             TEXT NOT NULL DEFAULT '',
+  state            TEXT NOT NULL DEFAULT '',
+  url              TEXT NOT NULL DEFAULT '',
+  author_login     TEXT NOT NULL DEFAULT '',
+  head_ref_name    TEXT NOT NULL DEFAULT '',
+  head_sha         TEXT NOT NULL DEFAULT '',
+  base_ref_name    TEXT NOT NULL DEFAULT '',
+  draft            INTEGER NOT NULL DEFAULT 0,
+  mergeable        TEXT NOT NULL DEFAULT '',
+  checks_json      TEXT NOT NULL,
+  reviewers_json   TEXT NOT NULL,
+  viewer_is_author INTEGER NOT NULL DEFAULT 0,
+  updated_at       INTEGER NOT NULL,
+  PRIMARY KEY (review_id, number)
+);
+CREATE TABLE pending_events (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id TEXT NOT NULL REFERENCES subjects(id),
+  origin    TEXT NOT NULL,
+  type      TEXT NOT NULL,
+  payload   TEXT NOT NULL,
+  seq       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_pending_events_review ON pending_events(review_id, seq);
 CREATE TABLE file_states (
   review_id            TEXT NOT NULL REFERENCES subjects(id),
   section_key          TEXT NOT NULL DEFAULT '',

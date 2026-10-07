@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const sectionCols = `id, version_id, position, branch, parent_branch, base_ref, head_ref, pending, patch_path, files_json`
+const sectionCols = `id, version_id, position, branch, parent_branch, base_ref, head_ref, pending, patch_path, files_json, pr_number, pr_node_id`
 
 func scanSection(row interface{ Scan(...any) error }) (Section, error) {
 	var (
@@ -15,7 +15,7 @@ func scanSection(row interface{ Scan(...any) error }) (Section, error) {
 		pending int
 	)
 	if err := row.Scan(&s.ID, &s.VersionID, &s.Position, &s.Branch, &s.ParentBranch,
-		&s.BaseRef, &s.HeadRef, &pending, &s.PatchPath, &s.FilesJSON); err != nil {
+		&s.BaseRef, &s.HeadRef, &pending, &s.PatchPath, &s.FilesJSON, &s.PRNumber, &s.PRNodeID); err != nil {
 		return Section{}, err
 	}
 	s.Pending = pending != 0

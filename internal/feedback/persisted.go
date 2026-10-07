@@ -12,8 +12,8 @@ import (
 
 const (
 	feedbackSchemaIdentity    = "dev.yasyf.cc-review.feedback"
-	feedbackSchemaDescriptor  = "payload:{review_id:string,version:int,session_id:string,frozen_at:int64,threads:array<thread{comment_id:int64,file_path:string,side:string,start_line:int,end_line:int,line_content:string,body:string,status:string,branch:string,pending:bool,version_number:int,replies:array<reply{id:int64,origin:string,kind:string,body:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>},answered:bool,answer:string,ask_answer:null|askAnswer{selected:array<string>,other:string,notes:string},answered_via:string}>}>,open_questions:array<question{reply_id:int64,comment_id:int64,file_path:string,start_line:int,branch:string,pending:bool,comment_body:string,question:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>}}>}"
-	feedbackSchemaFingerprint = "dev.yasyf.cc-review.feedback.9c7ec43e570bcad67a65303ce99d7776c520b6c84aeab3b80463efcb6416d738"
+	feedbackSchemaDescriptor  = "payload:{review_id:string,version:int,session_id:string,frozen_at:int64,threads:array<thread{comment_id:int64,file_path:string,side:string,start_line:int,end_line:int,line_content:string,body:string,author:string,author_login:string,status:string,branch:string,pending:bool,version_number:int,replies:array<reply{id:int64,origin:string,author_login:string,kind:string,body:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>},answered:bool,answer:string,ask_answer:null|askAnswer{selected:array<string>,other:string,notes:string},answered_via:string}>}>,open_questions:array<question{reply_id:int64,comment_id:int64,file_path:string,start_line:int,branch:string,pending:bool,comment_body:string,question:string,ask:null|ask{header:string,multiSelect:bool,options:array<option{label:string,description:string,preview:string}>}}>}"
+	feedbackSchemaFingerprint = "dev.yasyf.cc-review.feedback.1276da44a214ac961c370100e903b939c6db835a4f4b76885d4380e31be8c27e"
 )
 
 type feedbackV1 struct {
@@ -33,6 +33,8 @@ type threadV1 struct {
 	EndLine       *int       `json:"end_line"`
 	LineContent   *string    `json:"line_content"`
 	Body          *string    `json:"body"`
+	Author        *string    `json:"author"`
+	AuthorLogin   *string    `json:"author_login"`
 	Status        *string    `json:"status"`
 	Branch        *string    `json:"branch"`
 	Pending       *bool      `json:"pending"`
@@ -43,6 +45,7 @@ type threadV1 struct {
 type replyV1 struct {
 	ID          *int64          `json:"id"`
 	Origin      *string         `json:"origin"`
+	AuthorLogin *string         `json:"author_login"`
 	Kind        *string         `json:"kind"`
 	Body        *string         `json:"body"`
 	Ask         json.RawMessage `json:"ask"`
@@ -102,14 +105,14 @@ func encodeFeedback(value Feedback) ([]byte, error) {
 				return nil, fmt.Errorf("thread %d reply %d ask answer: %w", i, j, err)
 			}
 			replies[j] = replyV1{
-				ID: ptr(reply.ID), Origin: ptr(reply.Origin), Kind: ptr(reply.Kind), Body: ptr(reply.Body), Ask: ask,
+				ID: ptr(reply.ID), Origin: ptr(reply.Origin), AuthorLogin: ptr(reply.AuthorLogin), Kind: ptr(reply.Kind), Body: ptr(reply.Body), Ask: ask,
 				Answered: ptr(reply.Answered), Answer: ptr(reply.Answer), AskAnswer: answer, AnsweredVia: ptr(reply.AnsweredVia),
 			}
 		}
 		threads[i] = threadV1{
 			CommentID: ptr(thread.CommentID), FilePath: ptr(thread.FilePath), Side: ptr(thread.Side),
 			StartLine: ptr(thread.StartLine), EndLine: ptr(thread.EndLine), LineContent: ptr(thread.LineContent),
-			Body: ptr(thread.Body), Status: ptr(thread.Status), Branch: ptr(thread.Branch), Pending: ptr(thread.Pending),
+			Body: ptr(thread.Body), Author: ptr(thread.Author), AuthorLogin: ptr(thread.AuthorLogin), Status: ptr(thread.Status), Branch: ptr(thread.Branch), Pending: ptr(thread.Pending),
 			VersionNumber: ptr(thread.VersionNumber), Replies: &replies,
 		}
 	}
@@ -144,13 +147,14 @@ func decodeFeedback(data []byte) (Feedback, error) {
 	threads := make([]Thread, len(*payload.Threads))
 	for i, thread := range *payload.Threads {
 		if thread.CommentID == nil || thread.FilePath == nil || thread.Side == nil || thread.StartLine == nil ||
-			thread.EndLine == nil || thread.LineContent == nil || thread.Body == nil || thread.Status == nil ||
+			thread.EndLine == nil || thread.LineContent == nil || thread.Body == nil || thread.Author == nil ||
+			thread.AuthorLogin == nil || thread.Status == nil ||
 			thread.Branch == nil || thread.Pending == nil || thread.VersionNumber == nil || thread.Replies == nil {
 			return Feedback{}, fmt.Errorf("thread %d is incomplete", i)
 		}
 		replies := make([]Reply, len(*thread.Replies))
 		for j, reply := range *thread.Replies {
-			if reply.ID == nil || reply.Origin == nil || reply.Kind == nil || reply.Body == nil || reply.Ask == nil ||
+			if reply.ID == nil || reply.Origin == nil || reply.AuthorLogin == nil || reply.Kind == nil || reply.Body == nil || reply.Ask == nil ||
 				reply.Answered == nil || reply.Answer == nil || reply.AskAnswer == nil || reply.AnsweredVia == nil {
 				return Feedback{}, fmt.Errorf("thread %d reply %d is incomplete", i, j)
 			}
@@ -163,14 +167,14 @@ func decodeFeedback(data []byte) (Feedback, error) {
 				return Feedback{}, fmt.Errorf("thread %d reply %d ask answer: %w", i, j, err)
 			}
 			replies[j] = Reply{
-				ID: *reply.ID, Origin: *reply.Origin, Kind: *reply.Kind, Body: *reply.Body, Ask: ask,
+				ID: *reply.ID, Origin: *reply.Origin, AuthorLogin: *reply.AuthorLogin, Kind: *reply.Kind, Body: *reply.Body, Ask: ask,
 				Answered: *reply.Answered, Answer: *reply.Answer, AskAnswer: answer, AnsweredVia: *reply.AnsweredVia,
 			}
 		}
 		threads[i] = Thread{
 			CommentID: *thread.CommentID, FilePath: *thread.FilePath, Side: *thread.Side,
 			StartLine: *thread.StartLine, EndLine: *thread.EndLine, LineContent: *thread.LineContent,
-			Body: *thread.Body, Status: *thread.Status, Branch: *thread.Branch, Pending: *thread.Pending,
+			Body: *thread.Body, Author: *thread.Author, AuthorLogin: *thread.AuthorLogin, Status: *thread.Status, Branch: *thread.Branch, Pending: *thread.Pending,
 			VersionNumber: *thread.VersionNumber, Replies: replies,
 		}
 	}

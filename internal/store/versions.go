@@ -54,9 +54,9 @@ func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, se
 	created := make([]Section, len(sections))
 	for i, in := range sections {
 		sres, err := tx.ExecContext(ctx,
-			`INSERT INTO version_sections(version_id, position, branch, parent_branch, base_ref, head_ref, pending, patch_path, files_json)
-			 VALUES(?,?,?,?,?,?,?,?,?)`,
-			id, in.Position, in.Branch, in.ParentBranch, in.BaseRef, in.HeadRef, boolInt(in.Pending), "", in.FilesJSON)
+			`INSERT INTO version_sections(version_id, position, branch, parent_branch, base_ref, head_ref, pending, patch_path, files_json, pr_number, pr_node_id)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			id, in.Position, in.Branch, in.ParentBranch, in.BaseRef, in.HeadRef, boolInt(in.Pending), "", in.FilesJSON, in.PRNumber, in.PRNodeID)
 		if err != nil {
 			return Version{}, nil, fmt.Errorf("insert section %d: %w", in.Position, err)
 		}
@@ -67,6 +67,7 @@ func (s *Store) CreateVersion(ctx context.Context, reviewID, branch, baseRef, se
 		created[i] = Section{
 			ID: sid, VersionID: id, Position: in.Position, Branch: in.Branch, ParentBranch: in.ParentBranch,
 			BaseRef: in.BaseRef, HeadRef: in.HeadRef, Pending: in.Pending, FilesJSON: in.FilesJSON,
+			PRNumber: in.PRNumber, PRNodeID: in.PRNodeID,
 		}
 	}
 	if err := tx.Commit(); err != nil {

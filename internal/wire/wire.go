@@ -16,13 +16,17 @@ import (
 	"github.com/yasyf/cc-review/internal/store"
 )
 
-// Review is the SPA's view of a review.
+// Review is the SPA's view of a review. Kind is local or pr; a PR review names
+// its repo (owner/name) and the PR the user pointed at.
 type Review struct {
 	ID        string `json:"id"`
 	Status    string `json:"status"`
 	RepoRoot  string `json:"repoRoot"`
 	Branch    string `json:"branch"`
 	CreatedAt string `json:"createdAt"`
+	Kind      string `json:"kind"`
+	Repo      string `json:"repo"`
+	PRNumber  int    `json:"prNumber"`
 }
 
 // LineRange is a comment's anchored line span.
@@ -33,38 +37,73 @@ type LineRange struct {
 	EndSide   string `json:"endSide,omitempty"`
 }
 
-// Reply is one turn under a comment.
+// Reply is one turn under a comment. Origin is the side that wrote it (user or
+// claude); Author also tells the viewer apart from another GitHub user.
 type Reply struct {
-	ID          string           `json:"id"`
-	CommentID   string           `json:"commentId"`
-	Origin      string           `json:"origin"`
-	Kind        string           `json:"kind"`
-	Body        string           `json:"body"`
-	Ask         *store.Ask       `json:"ask,omitempty"`
-	Answered    bool             `json:"answered,omitempty"`
-	AskAnswer   *store.AskAnswer `json:"askAnswer,omitempty"`
-	AnsweredVia string           `json:"answeredVia,omitempty"`
-	CreatedAt   string           `json:"createdAt"`
+	ID              string           `json:"id"`
+	CommentID       string           `json:"commentId"`
+	Origin          string           `json:"origin"`
+	Author          string           `json:"author"`
+	Kind            string           `json:"kind"`
+	Body            string           `json:"body"`
+	Ask             *store.Ask       `json:"ask,omitempty"`
+	Answered        bool             `json:"answered,omitempty"`
+	AskAnswer       *store.AskAnswer `json:"askAnswer,omitempty"`
+	AnsweredVia     string           `json:"answeredVia,omitempty"`
+	CreatedAt       string           `json:"createdAt"`
+	AuthorLogin     string           `json:"authorLogin"`
+	AuthorAvatarURL string           `json:"authorAvatarUrl"`
+	RemoteURL       string           `json:"remoteUrl"`
+	SyncState       string           `json:"syncState"`
+	SyncError       string           `json:"syncError"`
 }
 
 // Comment is an inline comment with its thread. SectionID/branch/pending are
 // copied off the owning section so the SPA routes it and feedback tags it
-// join-free.
+// join-free. Origin is the side that wrote it (user or claude); Author also
+// tells the viewer apart from another GitHub user.
 type Comment struct {
-	ID          string    `json:"id"`
-	VersionID   string    `json:"versionId"`
-	SectionID   string    `json:"sectionId"`
-	Branch      string    `json:"branch"`
-	Pending     bool      `json:"pending"`
-	FilePath    string    `json:"filePath"`
-	Side        string    `json:"side"`
-	Range       LineRange `json:"range"`
-	LineContent string    `json:"lineContent"`
-	Body        string    `json:"body"`
-	Origin      string    `json:"origin"`
-	Status      string    `json:"status"`
-	CreatedAt   string    `json:"createdAt"`
-	Replies     []Reply   `json:"replies"`
+	ID              string    `json:"id"`
+	VersionID       string    `json:"versionId"`
+	SectionID       string    `json:"sectionId"`
+	Branch          string    `json:"branch"`
+	Pending         bool      `json:"pending"`
+	FilePath        string    `json:"filePath"`
+	Side            string    `json:"side"`
+	Range           LineRange `json:"range"`
+	LineContent     string    `json:"lineContent"`
+	Body            string    `json:"body"`
+	Origin          string    `json:"origin"`
+	Author          string    `json:"author"`
+	Status          string    `json:"status"`
+	CreatedAt       string    `json:"createdAt"`
+	Replies         []Reply   `json:"replies"`
+	AuthorLogin     string    `json:"authorLogin"`
+	AuthorAvatarURL string    `json:"authorAvatarUrl"`
+	RemoteURL       string    `json:"remoteUrl"`
+	Outdated        bool      `json:"outdated"`
+	Subject         string    `json:"subject"`
+	SyncState       string    `json:"syncState"`
+	SyncError       string    `json:"syncError"`
+}
+
+// PullRequest is the SPA's view of one PR in a PR review's stack.
+type PullRequest struct {
+	Number         int                `json:"number"`
+	Title          string             `json:"title"`
+	Body           string             `json:"body"`
+	State          string             `json:"state"`
+	Draft          bool               `json:"draft"`
+	URL            string             `json:"url"`
+	AuthorLogin    string             `json:"authorLogin"`
+	HeadRefName    string             `json:"headRefName"`
+	HeadSHA        string             `json:"headSha"`
+	BaseRefName    string             `json:"baseRefName"`
+	Mergeable      string             `json:"mergeable"`
+	Checks         []store.PRCheck    `json:"checks"`
+	Reviewers      []store.PRReviewer `json:"reviewers"`
+	ViewerIsAuthor bool               `json:"viewerIsAuthor"`
+	UpdatedAt      string             `json:"updatedAt"`
 }
 
 // Annotation is the SPA's view of a Claude-authored line-range highlight,
@@ -152,18 +191,22 @@ type Decision struct {
 }
 
 // ToReview converts a store review, taking the branch from the active version
-// (branch lives on the version, not the review).
-func ToReview(r store.Review, branch string) Review {
-	return Review{ID: r.ID, Status: r.Status, RepoRoot: r.RepoRoot, Branch: branch, CreatedAt: iso(r.CreatedAt)}
+// (branch lives on the version, not the review) and the kind from its meta.
+func ToReview(r store.Review, branch string, meta store.ReviewMeta) Review {
+	return Review{
+		ID: r.ID, Status: r.Status, RepoRoot: r.RepoRoot, Branch: branch, CreatedAt: iso(r.CreatedAt),
+		Kind: meta.Kind, Repo: meta.Repo, PRNumber: meta.PRNumber,
+	}
 }
 
 // ToReply converts a store reply. The store already decoded ask_json and the
 // structured answer, so this is an infallible copy.
 func ToReply(r store.Reply) Reply {
 	return Reply{
-		ID: id(r.ID), CommentID: id(r.CommentID), Origin: r.Origin, Kind: r.Kind, Body: r.Body,
+		ID: id(r.ID), CommentID: id(r.CommentID), Origin: side(r.Origin), Author: r.Origin, Kind: r.Kind, Body: r.Body,
 		Ask: r.Ask, Answered: r.Answered, AskAnswer: r.AskAnswer, AnsweredVia: r.AnsweredVia,
-		CreatedAt: iso(r.CreatedAt),
+		CreatedAt: iso(r.CreatedAt), AuthorLogin: r.AuthorLogin, AuthorAvatarURL: r.AuthorAvatarURL,
+		RemoteURL: r.RemoteURL, SyncState: r.SyncState, SyncError: r.SyncError,
 	}
 }
 
@@ -174,13 +217,55 @@ func ToComment(c store.Comment, replies []store.Reply) Comment {
 		ID: id(c.ID), VersionID: id(c.VersionID), SectionID: id(c.SectionID), Branch: c.Branch, Pending: c.Pending,
 		FilePath: c.FilePath, Side: c.Side,
 		Range:       LineRange{Start: c.StartLine, End: c.EndLine, StartSide: c.StartSide, EndSide: c.EndSide},
-		LineContent: c.LineContent, Body: c.Body, Origin: c.Author, Status: c.Status,
+		LineContent: c.LineContent, Body: c.Body, Origin: side(c.Author), Author: c.Author, Status: c.Status,
 		CreatedAt: iso(c.CreatedAt), Replies: make([]Reply, 0, len(replies)),
+		AuthorLogin: c.AuthorLogin, AuthorAvatarURL: c.AuthorAvatarURL, RemoteURL: c.RemoteURL,
+		Outdated: c.Outdated, Subject: c.Subject, SyncState: c.SyncState, SyncError: c.SyncError,
 	}
 	for _, r := range replies {
 		out.Replies = append(out.Replies, ToReply(r))
 	}
 	return out
+}
+
+// ToPullRequest converts a cached PR. Checks and Reviewers are always non-nil
+// arrays so the SPA can map over them unconditionally.
+func ToPullRequest(pr store.PullRequest) PullRequest {
+	out := PullRequest{
+		Number: pr.Number, Title: pr.Title, Body: pr.Body, State: pr.State, Draft: pr.Draft, URL: pr.URL,
+		AuthorLogin: pr.AuthorLogin, HeadRefName: pr.HeadRefName, HeadSHA: pr.HeadSHA, BaseRefName: pr.BaseRefName,
+		Mergeable: pr.Mergeable, Checks: pr.Checks, Reviewers: pr.Reviewers, ViewerIsAuthor: pr.ViewerIsAuthor,
+		UpdatedAt: iso(pr.UpdatedAt),
+	}
+	if out.Checks == nil {
+		out.Checks = []store.PRCheck{}
+	}
+	if out.Reviewers == nil {
+		out.Reviewers = []store.PRReviewer{}
+	}
+	return out
+}
+
+// PRUpdatedFields is the pr.updated event payload.
+func PRUpdatedFields(pr store.PullRequest) map[string]any {
+	return map[string]any{"pullRequest": ToPullRequest(pr)}
+}
+
+// CommentSyncedFields is the comment.synced event payload for a comment's own
+// sync transition.
+func CommentSyncedFields(c store.Comment) map[string]any {
+	return map[string]any{
+		"commentId": id(c.ID), "syncState": c.SyncState, "syncError": c.SyncError, "remoteUrl": c.RemoteURL,
+	}
+}
+
+// ReplySyncedFields is the comment.synced event payload for a reply's sync
+// transition, keyed by its parent comment.
+func ReplySyncedFields(r store.Reply) map[string]any {
+	return map[string]any{
+		"commentId": id(r.CommentID), "replyId": id(r.ID),
+		"syncState": r.SyncState, "syncError": r.SyncError, "remoteUrl": r.RemoteURL,
+	}
 }
 
 // ToAnnotation converts a store annotation to its SPA view, tagged with the
@@ -261,6 +346,13 @@ func Event(typ string, version int, fields map[string]any) []byte {
 	}
 	b, _ := json.Marshal(m)
 	return b
+}
+
+func side(author string) string {
+	if author == store.AuthorClaude {
+		return store.AuthorClaude
+	}
+	return store.AuthorUser
 }
 
 func id(n int64) string      { return strconv.FormatInt(n, 10) }

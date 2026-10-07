@@ -18,6 +18,7 @@ import (
 type Reply struct {
 	ID          int64            `json:"id"`
 	Origin      string           `json:"origin"`
+	AuthorLogin string           `json:"author_login,omitempty"`
 	Kind        string           `json:"kind"`
 	Body        string           `json:"body,omitempty"`
 	Ask         *store.Ask       `json:"ask,omitempty"`
@@ -27,7 +28,8 @@ type Reply struct {
 	AnsweredVia string           `json:"answered_via,omitempty"`
 }
 
-// Thread is a comment plus its replies. Branch names the section it lands on;
+// Thread is a comment plus its replies. Author and AuthorLogin say who wrote
+// it (user, claude, or a remote GitHub user). Branch names the section it lands on;
 // Pending true means fix in the working tree, else gt modify that branch.
 // VersionNumber is the thread's origin version — equal to the review's current
 // version for a normal thread, lower for one a version bump stranded.
@@ -39,6 +41,8 @@ type Thread struct {
 	EndLine       int     `json:"end_line"`
 	LineContent   string  `json:"line_content,omitempty"`
 	Body          string  `json:"body"`
+	Author        string  `json:"author"`
+	AuthorLogin   string  `json:"author_login,omitempty"`
 	Status        string  `json:"status"`
 	Branch        string  `json:"branch"`
 	Pending       bool    `json:"pending"`
@@ -85,7 +89,7 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 		}
 		threads = append(threads, Thread{
 			CommentID: c.ID, FilePath: c.FilePath, Side: c.Side, StartLine: c.StartLine,
-			EndLine: c.EndLine, LineContent: c.LineContent, Body: c.Body, Status: c.Status,
+			EndLine: c.EndLine, LineContent: c.LineContent, Body: c.Body, Author: c.Author, AuthorLogin: c.AuthorLogin, Status: c.Status,
 			Branch: c.Branch, Pending: c.Pending, VersionNumber: version.VersionNumber, Replies: toReplies(replies),
 		})
 	}
@@ -107,7 +111,7 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 		c := sc.Comment
 		threads = append(threads, Thread{
 			CommentID: c.ID, FilePath: c.FilePath, Side: c.Side, StartLine: c.StartLine,
-			EndLine: c.EndLine, LineContent: c.LineContent, Body: c.Body, Status: c.Status,
+			EndLine: c.EndLine, LineContent: c.LineContent, Body: c.Body, Author: c.Author, AuthorLogin: c.AuthorLogin, Status: c.Status,
 			Branch: c.Branch, Pending: c.Pending, VersionNumber: sc.VersionNumber, Replies: toReplies(replies),
 		})
 	}
@@ -157,7 +161,7 @@ func toReplies(in []store.Reply) []Reply {
 	out := make([]Reply, 0, len(in))
 	for _, r := range in {
 		out = append(out, Reply{
-			ID: r.ID, Origin: r.Origin, Kind: r.Kind, Body: r.Body, Ask: r.Ask,
+			ID: r.ID, Origin: r.Origin, AuthorLogin: r.AuthorLogin, Kind: r.Kind, Body: r.Body, Ask: r.Ask,
 			Answered: r.Answered, Answer: r.Answer, AskAnswer: r.AskAnswer, AnsweredVia: r.AnsweredVia,
 		})
 	}

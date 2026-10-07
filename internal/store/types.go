@@ -27,7 +27,8 @@ type Version struct {
 // Section is one diff within a version: a stack branch's changes against its
 // parent, or the working tree's uncommitted changes (the pending section). A
 // flat review is exactly one pending section. Each version recreates its
-// sections; Key is the stable cross-version identity file states carry.
+// sections; Key is the stable cross-version identity file states carry. A PR
+// review's section carries the GitHub PR it renders.
 type Section struct {
 	ID           int64
 	VersionID    int64
@@ -39,6 +40,8 @@ type Section struct {
 	Pending      bool
 	PatchPath    string
 	FilesJSON    string
+	PRNumber     int
+	PRNodeID     string
 }
 
 // SectionInput is one section to insert with a new version. PatchPath is filled
@@ -51,6 +54,8 @@ type SectionInput struct {
 	HeadRef      string
 	Pending      bool
 	FilesJSON    string
+	PRNumber     int
+	PRNodeID     string
 }
 
 // SectionFileKey identifies one file within one section of a review — the
@@ -351,7 +356,8 @@ func (o *Organization) UnmarshalJSON(data []byte) error {
 
 // Comment is an inline comment anchored to a line range of a section's diff.
 // Branch and Pending are copied off the section at insert so the wire and
-// frozen feedback carry the owning branch join-free.
+// frozen feedback carry the owning branch join-free. In a PR review the remote
+// fields mirror the GitHub review thread; RemoteID is unique when set.
 type Comment struct {
 	ID          int64
 	VersionID   int64
@@ -366,10 +372,21 @@ type Comment struct {
 	EndSide     string
 	LineContent string
 	Body        string
-	Author      string // user | claude
+	Author      string // user | claude | remote
 	Status      string // open | resolved
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	RemoteID        string
+	RemoteThreadID  string
+	RemoteURL       string
+	AuthorLogin     string
+	AuthorAvatarURL string
+	Outdated        bool
+	Subject         string // line | file
+	SyncState       string // local | posting | synced | failed
+	SyncError       string
+	EditSeq         int64
 }
 
 // Annotation is a Claude-authored line-range highlight on a version's diff: an
@@ -457,7 +474,7 @@ func (a Ask) ValidateAnswer(ans AskAnswer) error {
 type Reply struct {
 	ID          int64
 	CommentID   int64
-	Origin      string // claude | user
+	Origin      string // claude | user | remote
 	Kind        string // question | ask | clarification | note | answer
 	Body        string
 	Ask         *Ask // kind=ask only
@@ -467,4 +484,48 @@ type Reply struct {
 	AnsweredVia string     // web | askuserquestion
 	CreatedAt   time.Time
 	DedupKey    string // empty => no dedup
+
+	RemoteID        string
+	RemoteURL       string
+	AuthorLogin     string
+	AuthorAvatarURL string
+	SyncState       string // local | posting | synced | failed
+	SyncError       string
+}
+
+// PullRequest is the cached GitHub metadata of one PR in a PR review's stack,
+// refreshed by every poll. The camelCase tags on PRCheck and PRReviewer pass
+// straight through to the wire like Ask.
+type PullRequest struct {
+	ReviewID       string
+	Number         int
+	NodeID         string
+	Title          string
+	Body           string
+	State          string
+	URL            string
+	AuthorLogin    string
+	HeadRefName    string
+	HeadSHA        string
+	BaseRefName    string
+	Draft          bool
+	Mergeable      string
+	Checks         []PRCheck
+	Reviewers      []PRReviewer
+	ViewerIsAuthor bool
+	UpdatedAt      time.Time
+}
+
+// PRCheck is one CI check on a PR's head.
+type PRCheck struct {
+	Name  string `json:"name"`
+	State string `json:"state"` // SUCCESS | FAILURE | PENDING | NEUTRAL | SKIPPED
+	URL   string `json:"url"`
+}
+
+// PRReviewer is one requested or submitted reviewer of a PR.
+type PRReviewer struct {
+	Login     string `json:"login"`
+	AvatarURL string `json:"avatarUrl"`
+	State     string `json:"state"` // APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING
 }
