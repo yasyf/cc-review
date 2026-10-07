@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -56,8 +55,8 @@ func newGitHubSetupCmd() *cobra.Command {
 			}
 			started := time.Now()
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "open: "+setupURL)
-			if err := exec.CommandContext(ctx, "open", setupURL).Run(); err != nil { //nolint:gosec // G204: fixed open(1) of the daemon's own loopback setup URL.
-				return fmt.Errorf("open %s: %w", setupURL, err)
+			if err := openURL(ctx, setupURL); err != nil {
+				return err
 			}
 			app, err := waitForApp(ctx, started)
 			if err != nil {
