@@ -75,7 +75,7 @@ func SetupHandler(user *github.Client) http.Handler {
 			Name:           "cc-review-" + login,
 			URL:            homepage,
 			HookAttributes: hookAttributes{URL: homepage, Active: false},
-			RedirectURL:    "http://" + r.Host + "/github/setup/callback",
+			RedirectURL:    origin(r) + "/github/setup/callback",
 			DefaultPermissions: map[string]string{
 				"pull_requests": "write", "contents": "read", "checks": "read", "metadata": "read",
 			},
@@ -121,6 +121,13 @@ func CallbackHandler(user *github.Client, onDone func(App)) http.Handler {
 		onDone(app)
 		http.Redirect(w, r, app.InstallURL(), http.StatusSeeOther)
 	})
+}
+
+func origin(r *http.Request) string {
+	if r.TLS != nil {
+		return "https://" + r.Host
+	}
+	return "http://" + r.Host
 }
 
 func issueState() string {

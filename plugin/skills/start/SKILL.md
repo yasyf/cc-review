@@ -19,11 +19,14 @@ It prints, in order:
 
 ```
 http://127.0.0.1:<port>/s/<hash>
+tailnet: <url>
 channel: active|pending|inactive
 setup: {"offer":<bool>,"reason":"<string>"}
 stack: {"trunk":"<branch>","branches":["<branch>","<branch>"]}
 organize: {"id":"<n>","source":"system","prompt":"Organize this review into chapters and rate per-file risk.","status":"pending","summary":"","unmatched":[],"changes":[],"createdAt":"<RFC3339 UTC>","updatedAt":"<RFC3339 UTC>"}
 ```
+
+Zero or more `tailnet:` lines follow the URL when synckit's mesh trust is on and the daemon serves its tailnet addresses: the same review, reachable from any trusted machine on the tailnet. Show them to the user alongside the URL.
 
 The `stack:` line appears only in a Graphite-tracked repo (auto-detected): the review is a **stack review** whose diff is one section per listed branch — each diffed against its parent — plus a pending section for the uncommitted working tree. Comments arrive tagged with the branch they land on, which is what step 5's apply flow keys on.
 

@@ -14,6 +14,7 @@ import (
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 
+	"github.com/yasyf/cc-review/internal/daemon"
 	"github.com/yasyf/cc-review/internal/ghapp"
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/paths"
@@ -49,12 +50,20 @@ func newGitHubSetupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			setupURL := fmt.Sprintf("http://127.0.0.1:%d/github/setup", port)
+			setupPath := "/github/setup"
 			if org != "" {
-				setupURL += "?" + url.Values{"org": {org}}.Encode()
+				setupPath += "?" + url.Values{"org": {org}}.Encode()
 			}
+			tailnetURLs, err := daemonTailnetURLs(ctx, setupPath)
+			if err != nil {
+				return err
+			}
+			setupURL := fmt.Sprintf("http://127.0.0.1:%d%s", port, setupPath)
 			started := time.Now()
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "open: "+setupURL)
+			for _, u := range tailnetURLs {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "tailnet: "+u)
+			}
 			if err := openURL(ctx, setupURL); err != nil {
 				return err
 			}
@@ -123,6 +132,15 @@ func daemonHTTPPort() (int, error) {
 		return 0, fmt.Errorf("decode daemon http info: %w", err)
 	}
 	return info.Port, nil
+}
+
+func daemonTailnetURLs(ctx context.Context, path string) ([]string, error) {
+	rc, err := daemon.NewReviewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rc.Close() }()
+	return rc.TailnetURLs(ctx, path)
 }
 
 func waitForApp(ctx context.Context, since time.Time) (ghapp.App, error) {

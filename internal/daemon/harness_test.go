@@ -14,6 +14,7 @@ import (
 	ccevent "github.com/yasyf/cc-interact/event"
 	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
+	"github.com/yasyf/cc-interact/tailnet"
 	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/decisions"
@@ -174,7 +175,7 @@ func newServer(cc *ccstore.Store, ledger *decisions.Log) *Server {
 		cc:        cc,
 		store:     st,
 		turns:     vcs.NewTurnStore(cc.DB()),
-		rv:        &review{decisions: ledger, log: log.New(io.Discard, "", 0)},
+		rv:        &review{decisions: ledger, log: log.New(io.Discard, "", 0), tailnet: &tailnet.Tailnet{}},
 		activity:  ccd.NewActivity(),
 		decisions: ledger,
 		repoLocks: make(map[string]*sync.Mutex),

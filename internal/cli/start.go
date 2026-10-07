@@ -91,7 +91,8 @@ func resolvePRRef(ctx context.Context, raw, dir string) (github.PRRef, error) {
 	return github.ParsePRRef(raw, &repo)
 }
 
-// startExtraLines renders the channel: and setup: lines (always), a stack: line
+// startExtraLines renders one tailnet: line per tailnet URL of the review, the
+// channel: and setup: lines (always), a stack: line
 // for a Graphite stacked review, a pr: line for a pull-request review, and one
 // organize: line per open request the daemon re-offered (the eager system
 // organize plus any human AI-bar prompts left pending). An offer error degrades
@@ -107,7 +108,11 @@ func startExtraLines(started daemon.Started, offer bool, reason string, offerErr
 		setupFields["github"] = started.GitHubSetup
 	}
 	setup, _ := json.Marshal(setupFields)
-	lines := []string{"channel: " + started.ChannelState, "setup: " + string(setup)}
+	var lines []string
+	for _, u := range started.TailnetURLs {
+		lines = append(lines, "tailnet: "+u)
+	}
+	lines = append(lines, "channel: "+started.ChannelState, "setup: "+string(setup))
 	if started.Stack != nil {
 		stackJSON, _ := json.Marshal(started.Stack)
 		lines = append(lines, "stack: "+string(stackJSON))

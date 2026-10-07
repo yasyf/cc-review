@@ -25,6 +25,7 @@ func TestStartExtraLines(t *testing.T) {
 		stack        *daemon.StackInfo
 		pr           *daemon.PRInfo
 		githubSetup  string
+		tailnetURLs  []string
 		organizes    []json.RawMessage
 		want         []string
 	}{
@@ -101,10 +102,22 @@ func TestStartExtraLines(t *testing.T) {
 				`organize: ` + string(organize),
 			},
 		},
+		{
+			name:         "tailnet urls lead the extra lines",
+			channelState: "active",
+			offer:        false,
+			reason:       "already approved",
+			tailnetURLs:  []string{"https://devbox.tail1234.ts.net:4321/s/abc"},
+			want: []string{
+				"tailnet: https://devbox.tail1234.ts.net:4321/s/abc",
+				"channel: active",
+				`setup: {"offer":false,"reason":"already approved"}`,
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := startExtraLines(daemon.Started{
-				ChannelState: tc.channelState, Stack: tc.stack, PR: tc.pr, GitHubSetup: tc.githubSetup, AIRequests: tc.organizes,
+				TailnetURLs: tc.tailnetURLs, ChannelState: tc.channelState, Stack: tc.stack, PR: tc.pr, GitHubSetup: tc.githubSetup, AIRequests: tc.organizes,
 			}, tc.offer, tc.reason, tc.offerErr)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("lines = %q, want %q", got, tc.want)
@@ -113,7 +126,7 @@ func TestStartExtraLines(t *testing.T) {
 				Offer  bool   `json:"offer"`
 				Reason string `json:"reason"`
 			}
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(got[1], "setup: ")), &setup); err != nil {
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(got[len(tc.tailnetURLs)+1], "setup: ")), &setup); err != nil {
 				t.Fatalf("setup line is not valid JSON: %v", err)
 			}
 		})

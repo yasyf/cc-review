@@ -23,6 +23,8 @@ cc-review github setup
 
 This opens a daemon page that hands GitHub an app manifest: an App named `cc-review-<your login>` with no webhook, permission to read contents, checks, and metadata, and permission to write pull requests. Confirm on GitHub and you're sent back to the daemon, which stores the App's id, slug, and bot login in `~/.cc-review/v1/github-app.json` and its private key in your Keychain. It then opens the App's install page: install it on the repos you review. Pass `--org <org>` to create the App under an organization instead of your account.
 
+When the daemon serves its tailnet addresses, `setup` also prints a `tailnet:` URL for the same page. Open it from your desktop when cc-review runs on a remote machine: the manifest's callback points at the address you opened, so GitHub returns you to that machine's daemon.
+
 ::: {.callout-note title="Organization repos"}
 Installing an App you own on an organization's repos needs an organization owner's approval. GitHub files the request when you pick the org on the install page; until an owner approves it, Claude can't post on that org's PRs.
 :::
@@ -51,7 +53,7 @@ The skill runs `start` with `--pr` and `--open`, so the review opens in your bro
 cc-review start --pr '#123' --open
 ```
 
-`--pr` takes a URL, `owner/name#123`, `#123`, or `123`; the last two read the repo from the current directory's `origin`. `start` prints the usual lines plus one naming the stack:
+`--pr` takes a URL, `owner/name#123`, `#123`, or `123`; the last two read the repo from the current directory's `origin`. `start` prints the usual lines, including a `tailnet:` URL for each tailnet address the daemon serves, plus one naming the stack:
 
 ```
 pr: acme/api#123 (stack: #121 #122 #123 #124)
