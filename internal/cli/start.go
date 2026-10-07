@@ -80,8 +80,6 @@ func newStartCmd() *cobra.Command {
 	return cmd
 }
 
-// resolvePRRef parses a --pr value; the bare #N and N forms carry no repo, so
-// only they read the repo from dir's origin remote.
 func resolvePRRef(ctx context.Context, raw, dir string) (github.PRRef, error) {
 	if strings.Contains(raw, "/") {
 		return github.ParsePRRef(raw, nil)

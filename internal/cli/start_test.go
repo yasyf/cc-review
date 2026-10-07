@@ -123,7 +123,7 @@ func TestStartExtraLines(t *testing.T) {
 func TestResolvePRRef(t *testing.T) {
 	repo := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "git@github.com:acme/widgets.git"}} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil { //nolint:gosec // G204: test helper running git against a test-controlled temp repo.
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}

@@ -322,9 +322,6 @@ func (rv *review) reuseVersion(hc ccd.HandlerCtx, st *store.Store, sub subject.S
 	return rv.startReply(hc, sub, latest.VersionNumber, true, cs, info, reoffer)
 }
 
-// startInfo is the capture-derived part of the start reply: the Graphite stack
-// summary, or the pull-request summary and the GitHub app setup Claude's replies
-// still need.
 type startInfo struct {
 	Stack       *StackInfo
 	PR          *PRInfo
@@ -439,9 +436,6 @@ func stackToCaptured(snap vcs.StackSnapshot) captured {
 	}
 }
 
-// capturePR resolves ref's stack on GitHub, fetches each PR head and its
-// merge-base into the repo's thin store, and diffs them into one section per
-// PR, trunk-most first. A PR capture has no pending section.
 func (rv *review) capturePR(ctx context.Context, ref github.PRRef) (captured, error) {
 	stack, err := prstack.Resolve(ctx, rv.gh, ref)
 	if err != nil {
@@ -473,9 +467,6 @@ func (rv *review) capturePR(ctx context.Context, ref github.PRRef) (captured, er
 	return capture, nil
 }
 
-// samePR refuses a --pr start that would resume a review of anything other
-// than that pull request; a plain start (nil ref) resumes whatever the window
-// holds.
 func samePR(slug string, meta store.ReviewMeta, ref *github.PRRef) error {
 	if ref == nil || (meta.Kind == store.ReviewKindPR && meta.Repo == ref.Repo.String() && meta.PRNumber == ref.Number) {
 		return nil
@@ -483,8 +474,6 @@ func samePR(slug string, meta store.ReviewMeta, ref *github.PRRef) error {
 	return fmt.Errorf("review %s is not a review of %s; pass --new to start one", slug, ref)
 }
 
-// recordPullRequests upserts a PR capture's pull requests and emits pr.updated
-// for each; a local capture records nothing.
 func (rv *review) recordPullRequests(hc ccd.HandlerCtx, st *store.Store, reviewID string, version int, capture captured) error {
 	if capture.PR == nil {
 		return nil
@@ -524,9 +513,6 @@ func storePullRequest(reviewID string, pr github.PullRequest, viewer string) sto
 	}
 }
 
-// githubSetup names what Claude's GitHub replies on repo still need: the app
-// setup command when no cc-review app exists, the app's install URL when it is
-// not installed on repo, and "" when the app can mint a token for repo.
 func githubSetup(ctx context.Context, repo github.Repo) string {
 	app, ok, err := ghapp.Load()
 	if err != nil {
@@ -543,7 +529,6 @@ func githubSetup(ctx context.Context, repo github.Repo) string {
 	return ""
 }
 
-// prInfoFor is the start reply's pull-request summary.
 func prInfoFor(capture captured) *PRInfo {
 	stack := make([]int, len(capture.PRs))
 	for i, pr := range capture.PRs {
