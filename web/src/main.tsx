@@ -7,7 +7,11 @@ import '@cc-interact/react/base.css';
 import { queryClient } from './lib/api';
 import { router } from './router';
 import { highlighterOptions, poolOptions } from './worker';
-import './domain.css';
+import './styles/tokens.css';
+import './styles/layout.css';
+import './styles/controls.css';
+import './styles/diff.css';
+import './styles/threads.css';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('missing #root');

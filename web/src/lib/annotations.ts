@@ -1,12 +1,9 @@
 import { fileItemId } from './diff';
 import type { Annotation, Side } from './types';
 
-// Injected into each diff's shadow root via the CodeView `unsafeCSS` option,
-// alongside TURN_UNSAFE_CSS. A translucent overlay so it reads on both themes
-// and coexists with the turn-attribution left border (a separate property).
 export const ANNOTATION_UNSAFE_CSS = `
 [data-cc-annotation] {
-  background: rgba(245, 197, 24, 0.16);
+  background: var(--annotation-bg);
 }
 `;
 

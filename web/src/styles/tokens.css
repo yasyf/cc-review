@@ -1,0 +1,106 @@
+:root {
+  --bg: light-dark(#ffffff, #0e0f11);
+  --bg-soft: light-dark(#f6f6f7, #16171a);
+  --surface: light-dark(#fafafb, #131416);
+  --surface-raised: light-dark(#ffffff, #1b1c20);
+  --border: light-dark(#e4e4e7, #26272c);
+  --border-strong: light-dark(#d0d0d6, #37383f);
+  --text: light-dark(#18181b, #e8e8ec);
+  --dim: light-dark(#6b6b75, #8f8f9a);
+  --accent: light-dark(#4f5bd5, #8d97f5);
+  --accent-fg: light-dark(#ffffff, #0e0f11);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --ok: light-dark(#1a7f37, #4ac26b);
+  --warn: light-dark(#9a6700, #d4a72c);
+  --danger: light-dark(#cf222e, #f47067);
+  --focus-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+
+  --hover: color-mix(in srgb, var(--text) 5%, transparent);
+  --selected: color-mix(in srgb, var(--text) 8%, transparent);
+  --scrim: light-dark(rgb(15 15 20 / 32%), rgb(0 0 0 / 56%));
+  --skeleton: color-mix(in srgb, var(--text) 7%, transparent);
+  --skeleton-shine: color-mix(in srgb, var(--text) 12%, transparent);
+
+  --focus-mark: var(--warn);
+  --annotation-bg: color-mix(in srgb, var(--warn) 16%, transparent);
+  --add-bg: color-mix(in srgb, var(--ok) 12%, transparent);
+  --add-fg: var(--ok);
+  --del-bg: color-mix(in srgb, var(--danger) 12%, transparent);
+  --del-fg: var(--danger);
+
+  --turn-0: light-dark(#0969da, #2f81f7);
+  --turn-1: light-dark(#8250df, #a371f7);
+  --turn-2: light-dark(#1a7f37, #3fb950);
+  --turn-3: light-dark(#9a6700, #d29922);
+  --turn-4: light-dark(#cf222e, #f85149);
+  --turn-5: light-dark(#bf3989, #db61a2);
+  --turn-6: light-dark(#1b7c83, #39c5cf);
+  --turn-7: light-dark(#bc4c00, #db6d28);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --shadow-1: 0 1px 2px light-dark(rgb(9 10 12 / 6%), rgb(0 0 0 / 40%));
+  --shadow-2: 0 4px 12px light-dark(rgb(9 10 12 / 8%), rgb(0 0 0 / 45%)),
+    0 1px 3px light-dark(rgb(9 10 12 / 6%), rgb(0 0 0 / 30%));
+  --shadow-3: 0 16px 40px light-dark(rgb(9 10 12 / 14%), rgb(0 0 0 / 60%)),
+    0 4px 10px light-dark(rgb(9 10 12 / 6%), rgb(0 0 0 / 35%));
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  --control-h: 1.75rem;
+  --control-h-sm: 1.5rem;
+  --header-h: 2.75rem;
+  --sidebar-w: 18rem;
+
+  --z-popover: 30;
+  --z-overlay: 35;
+  --z-dialog: 40;
+  --z-tooltip: 50;
+
+  font-family: var(--font-sans);
+}
+
+body {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}
+
+.codeview,
+.comments-panel,
+.chapter-panel,
+.todo-list,
+.turn-activity-panel,
+.hidden-files,
+.cmdk {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 125% 0;
+  }
+  to {
+    background-position: -125% 0;
+  }
+}
