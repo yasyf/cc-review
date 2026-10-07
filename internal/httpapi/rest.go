@@ -412,7 +412,7 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	s.emit(ctx, version.ReviewID, ccevent.OriginHuman, store.EventCommentCreated, version.VersionNumber,
 		map[string]any{"commentId": strconv.FormatInt(id, 10), "comment": wire.ToComment(c, nil)})
 	if pr {
-		s.outbound.PostComment(ctx, version.ReviewID, id)
+		s.outbound.PostComment(version.ReviewID, id)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": strconv.FormatInt(id, 10)})
 }
@@ -435,8 +435,15 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pr && req.Body != nil {
-		http.Error(w, "comments on a pull request are edited on GitHub", http.StatusConflict)
-		return
+		c, err := s.st().GetComment(ctx, id)
+		if err != nil {
+			notFoundOr500(w, err)
+			return
+		}
+		if c.Author == store.AuthorRemote {
+			http.Error(w, "only your own and Claude's comments can be edited", http.StatusConflict)
+			return
+		}
 	}
 	if req.Body != nil {
 		if err := s.st().UpdateCommentBody(ctx, id, *req.Body); err != nil {
@@ -458,8 +465,8 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, id)
 	}
-	if pr && req.Status != "" {
-		if err := s.outbound.SyncResolved(ctx, reviewID, id); err != nil {
+	if pr {
+		if err := s.outbound.SyncEdit(ctx, reviewID, id, req.Body != nil, req.Status != ""); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -521,7 +528,7 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 	// Claude-side stream see it.
 	s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, commentID)
 	if pr {
-		s.outbound.PostReply(ctx, reviewID, id)
+		s.outbound.PostReply(reviewID, id)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": strconv.FormatInt(id, 10)})
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/yasyf/cc-review/internal/ghapp"
@@ -23,7 +24,7 @@ const (
 	installURL = "https://github.com/apps/cc-review-alice/installations/new"
 )
 
-var prRepo = github.Repo{Owner: "o", Name: "r"}
+var outboundRepo = github.Repo{Owner: "o", Name: "r"}
 
 // seedPRComment seeds a PR review whose one comment is a coworker's thread
 // already on GitHub, and wires an outbound Syncer whose app client is app.
@@ -32,12 +33,16 @@ func seedPRComment(t *testing.T, s *Server, gh *githubtest.Server, app outbound.
 	ctx := context.Background()
 	gh.Login("user-token", "alice")
 	gh.Login(appToken, botLogin)
-	gh.AddPR(prRepo, github.PullRequest{Number: 7, AuthorLogin: "bob", HeadRefOid: "head7sha"})
-	th := gh.AddThread(prRepo, 7, github.Thread{
+	gh.AddPR(outboundRepo, github.PullRequest{Number: 7, AuthorLogin: "bob", HeadRefOid: "head7sha"})
+	th := gh.AddThread(outboundRepo, 7, github.Thread{
 		Path: "a.go", SubjectType: "LINE", Line: 2, DiffSide: "RIGHT",
 		Comments: []github.RemoteComment{{AuthorLogin: "carol", Body: "why?"}},
 	})
-	s.rv.outbound = outbound.New(s.cc.DB, s.appendEvent, gh.Client("user-token"), app)
+	s.rv.outbound = outbound.New(s.cc.DB, s.appendEvent, gh.Client("user-token"), app, applyLock())
+	if err := s.rv.outbound.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.rv.outbound.Stop)
 	root := t.TempDir()
 	r, err := s.createReview(ctx, "s1", 0, root, "feature", "")
 	if err != nil {
@@ -66,7 +71,17 @@ func seedPRComment(t *testing.T, s *Server, gh *githubtest.Server, app outbound.
 }
 
 func appClient(gh *githubtest.Server) outbound.AppClient {
-	return func(context.Context, github.Repo) (*github.Client, error) { return gh.Client(appToken), nil }
+	return func(context.Context, github.Repo) (*github.Client, string, error) {
+		return gh.Client(appToken), botLogin, nil
+	}
+}
+
+func applyLock() outbound.Exclusive {
+	var mu sync.Mutex
+	return func(string) func() {
+		mu.Lock()
+		return mu.Unlock
+	}
 }
 
 func writesTo(gh *githubtest.Server, path string) []githubtest.Write {
@@ -79,8 +94,8 @@ func writesTo(gh *githubtest.Server, path string) []githubtest.Write {
 	return out
 }
 
-func notInstalled(context.Context, github.Repo) (*github.Client, error) {
-	return nil, fmt.Errorf("%w on o/r: install it at %s", ghapp.ErrNotInstalled, installURL)
+func notInstalled(context.Context, github.Repo) (*github.Client, string, error) {
+	return nil, "", fmt.Errorf("%w on o/r: install it at %s", ghapp.ErrNotInstalled, installURL)
 }
 
 func TestClaudeReplyPostsAsTheApp(t *testing.T) {
@@ -142,7 +157,7 @@ func TestClaudeReplyFailsCleanlyWithoutTheApp(t *testing.T) {
 		want string
 	}{
 		{name: "not installed", app: notInstalled, want: installURL},
-		{name: "not set up", app: func(context.Context, github.Repo) (*github.Client, error) { return nil, outbound.ErrNoApp }, want: "cc-review github setup"},
+		{name: "not set up", app: func(context.Context, github.Repo) (*github.Client, string, error) { return nil, "", outbound.ErrNoApp }, want: "cc-review github setup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := testServer(t)
@@ -237,5 +252,51 @@ func TestClaudeAnnotateCommentFailsCleanlyWhenNotInstalled(t *testing.T) {
 	}
 	if len(comments) != 1 {
 		t.Fatalf("comments = %d, want only the seeded one", len(comments))
+	}
+}
+
+func TestClaudeAskReplyRetryAdoptsTheRenderedReplyAfterALostResponse(t *testing.T) {
+	s, _ := testServer(t)
+	gh := githubtest.New(t)
+	_, reviewID, threadID, cid := seedPRComment(t, s, gh, appClient(gh))
+	gh.LoseNext(replyOp)
+	ask := ReplyInput{CommentID: cid, Kind: "ask", Body: "Which fix?", Ask: &store.Ask{Header: "Fix", Options: []store.AskOption{
+		{Label: "Inline it", Description: "one call site"}, {Label: "Keep the helper"},
+	}}}
+	if res := s.handleReply(t.Context(), Request{Replies: []ReplyInput{ask}}); res.OK {
+		t.Fatal("reply succeeded, want the lost response reported")
+	}
+	replies, err := s.store.ListRepliesByComment(t.Context(), cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replies) != 1 || replies[0].SyncState != store.SyncFailed || replies[0].RemoteID != "" {
+		t.Fatalf("replies = %+v, want one failed reply with no remote id", replies)
+	}
+
+	if err := s.rv.outbound.Retry(t.Context(), reviewID, cid, replies[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rv.outbound.Serialize(t.Context(), reviewID, func(context.Context) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	var thread github.Thread
+	for _, th := range gh.Snapshot(outboundRepo, 7).Threads {
+		if th.NodeID == threadID {
+			thread = th
+		}
+	}
+	if len(thread.Comments) != 2 {
+		t.Fatalf("thread comments = %+v, want the seeded comment and exactly one reply", thread.Comments)
+	}
+	r, err := s.store.GetReply(t.Context(), replies[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.SyncState != store.SyncSynced || r.RemoteID != thread.Comments[1].NodeID {
+		t.Fatalf("reply after retry = %+v, want it to adopt %s", r, thread.Comments[1].NodeID)
+	}
+	if n := len(writesTo(gh, replyOp)); n != 1 {
+		t.Fatalf("GitHub saw %d replies, want the retry to adopt instead of replying again", n)
 	}
 }

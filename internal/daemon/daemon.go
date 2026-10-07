@@ -134,7 +134,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	rv := &review{
 		decisions: ledger,
 		log:       log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
-		gh:        github.New(github.UserTokenSource()),
+		gh:        userGitHub(),
 		cloneURL:  githubCloneURL,
 	}
 	spec, err := runtimeconfig.Spec()
@@ -168,8 +168,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	rv.prsync = rv.newPRSync(s)
 	rv.prReviewOpened = rv.startPRSync
 	rv.db, rv.append = s.DB, s.Append
-	user := userGitHub()
-	rv.outbound = outbound.New(s.DB, s.Append, user, outbound.GitHubApp())
+	rv.outbound = outbound.New(s.DB, s.Append, rv.gh, outbound.GitHubApp(), rv.prsync.Exclusive)
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)
@@ -192,7 +191,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		ConsumerConnected: s.ConsumerConnected,
 		Outbound:          rv.outbound,
 		Dist:              web.Dist(),
-		GitHub:            user,
+		GitHub:            rv.gh,
 	})
 	return s, rv, nil
 }
@@ -314,6 +313,13 @@ func (rv *review) bootReconcile(ctx context.Context, s *ccd.Server) error {
 	if _, err := rv.sweepStaleOpen(ctx, st, s.Append, time.Now().Add(-reviewIdleTTL)); err != nil {
 		return fmt.Errorf("expire stale reviews: %w", err)
 	}
+	if err := rv.outbound.Start(ctx); err != nil {
+		return fmt.Errorf("resume GitHub writes: %w", err)
+	}
+	s.Background(func(ctx context.Context) {
+		<-ctx.Done()
+		rv.outbound.Stop()
+	})
 	s.Background(func(ctx context.Context) { rv.resumePRSync(ctx, st) })
 	return nil
 }

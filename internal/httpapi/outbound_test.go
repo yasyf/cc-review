@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	ccstore "github.com/yasyf/cc-interact/store"
@@ -38,13 +39,41 @@ const (
 )
 
 type prServer struct {
-	st     *store.Store
-	cc     *ccstore.Store
-	srv    *httptest.Server
-	gh     *githubtest.Server
-	sync   *outbound.Syncer
-	review store.Review
-	sec    store.Section
+	st      *store.Store
+	cc      *ccstore.Store
+	srv     *httptest.Server
+	gh      *githubtest.Server
+	sync    *outbound.Syncer
+	review  store.Review
+	sec     store.Section
+	inbound *inboundLock
+}
+
+// inboundLock stands in for prsync's apply lock, recording the review's
+// comments as each holder releases it.
+type inboundLock struct {
+	mu        sync.Mutex
+	st        *store.Store
+	versionID int64
+	released  [][]store.Comment
+}
+
+func (l *inboundLock) releases() [][]store.Comment {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.released
+}
+
+func (l *inboundLock) exclusive(string) func() {
+	l.mu.Lock()
+	return func() {
+		comments, err := l.st.ListCommentsByVersion(context.Background(), l.versionID)
+		if err != nil {
+			panic(err)
+		}
+		l.released = append(l.released, comments)
+		l.mu.Unlock()
+	}
 }
 
 func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
@@ -67,10 +96,16 @@ func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
 		author = viewer
 	}
 	gh.AddPR(github.Repo{Owner: "o", Name: "r"}, github.PullRequest{Number: prNumber, AuthorLogin: author, HeadRefOid: prHeadSHA})
+	st := store.New(cc.DB())
+	inbound := &inboundLock{st: st}
 	syncer := outbound.New(cc.DB, cc.AppendEvent, gh.Client(userToken),
-		func(context.Context, github.Repo) (*github.Client, error) {
-			return nil, errors.New("no app in rest tests")
-		})
+		func(context.Context, github.Repo) (*github.Client, string, error) {
+			return nil, "", errors.New("no app in rest tests")
+		}, inbound.exclusive)
+	if err := syncer.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(syncer.Stop)
 	mux := http.NewServeMux()
 	RESTMount(mux, http.NewServeMux(), Deps{
 		DB: cc.DB, Decisions: ledger, Log: log.New(io.Discard, "", 0),
@@ -80,7 +115,6 @@ func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	st := store.New(cc.DB())
 	ctx := t.Context()
 	sub, err := ccstore.NewSubjectStore(st.DB()).Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), "s1", "/repo", 100, "open")
 	if err != nil {
@@ -89,7 +123,7 @@ func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
 	if err := st.SetReviewKind(ctx, sub.ID, store.ReviewKindPR, prRepo, prNumber); err != nil {
 		t.Fatal(err)
 	}
-	_, sections, err := st.CreateVersion(ctx, sub.ID, "feature", prHeadSHA, "",
+	version, sections, err := st.CreateVersion(ctx, sub.ID, "feature", prHeadSHA, "",
 		[]store.SectionInput{{Position: 0, Branch: "feature", ParentBranch: "main", BaseRef: "base7sha", HeadRef: prHeadSHA, FilesJSON: "[]", PRNumber: prNumber}})
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +135,8 @@ func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &prServer{st: st, cc: cc, srv: srv, gh: gh, sync: syncer, review: review, sec: sections[0]}
+	inbound.versionID = version.ID
+	return &prServer{st: st, cc: cc, srv: srv, gh: gh, sync: syncer, review: review, sec: sections[0], inbound: inbound}
 }
 
 // settle waits for every GitHub write already queued for the review.
@@ -215,6 +250,11 @@ func TestPRCommentPostsAsUserAndStoresRemoteID(t *testing.T) {
 			want: map[string]any{"commit_id": prHeadSHA, "path": "a.go", "body": "nit", "line": float64(4), "side": "LEFT"},
 		},
 		{
+			name: "cross-side range on one line number",
+			req:  map[string]any{"side": "deletions", "range": map[string]any{"start": 12, "end": 12, "startSide": "deletions", "endSide": "additions"}},
+			want: map[string]any{"commit_id": prHeadSHA, "path": "a.go", "body": "nit", "line": float64(12), "side": "RIGHT", "start_line": float64(12), "start_side": "LEFT"},
+		},
+		{
 			name: "file subject",
 			req:  map[string]any{"subject": "file", "range": map[string]any{"start": 0, "end": 0}},
 			want: map[string]any{"commit_id": prHeadSHA, "path": "a.go", "body": "nit", "subject_type": "file"},
@@ -245,6 +285,9 @@ func TestPRCommentPostsAsUserAndStoresRemoteID(t *testing.T) {
 			}
 			if got := syncedStates(t, p.cc, p.review.ID); !reflect.DeepEqual(got, []string{store.SyncSynced}) {
 				t.Fatalf("comment.synced states = %v, want [synced]", got)
+			}
+			if held := p.inbound.releases()[0]; len(held) != 1 || held[0].RemoteID != c.RemoteID || held[0].SyncState != store.SyncSynced {
+				t.Fatalf("comments as the post released the inbound lock = %+v, want the remote id already stored", held)
 			}
 		})
 	}
@@ -421,16 +464,65 @@ func TestPRLineCommentNeedsAPath(t *testing.T) {
 	}
 }
 
-func TestPRCommentBodyEditRefused(t *testing.T) {
+func TestPRCommentBodyEditSyncs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  map[string]any
+		op   string
+	}{
+		{name: "review comment", req: nil, op: "graphql:UpdateReviewComment"},
+		{name: "conversation comment", req: map[string]any{"subject": "file", "filePath": "", "range": map[string]any{"start": 0, "end": 0}}, op: "graphql:UpdateIssueComment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newPRServer(t, false)
+			id := p.comment(t, tc.req)
+			p.settle(t)
+			remoteID := p.getComment(t, id).RemoteID
+
+			p.gh.FailNext(tc.op, http.StatusBadGateway, "Bad Gateway")
+			resp := putJSON(t, p.srv.URL+"/api/comments/"+strconv.FormatInt(id, 10), map[string]any{"body": "changed"})
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("body edit status = %d, want 200", resp.StatusCode)
+			}
+			p.settle(t)
+			if c := p.getComment(t, id); c.Body != "changed" || c.SyncState != store.SyncFailed || c.RemoteID != remoteID {
+				t.Fatalf("comment after failed edit = %+v, want failed with its remote id kept", c)
+			}
+
+			resp = postJSON(t, p.srv.URL+"/api/comments/"+strconv.FormatInt(id, 10)+"/retry", map[string]any{})
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("retry status = %d", resp.StatusCode)
+			}
+			p.settle(t)
+			if c := p.getComment(t, id); c.SyncState != store.SyncSynced {
+				t.Fatalf("comment after retry = %+v, want synced", c)
+			}
+			edits := writesTo(p.gh, tc.op)
+			if len(edits) != 1 || edits[0].Token != userToken || edits[0].Body["body"] != "changed" || edits[0].Body["id"] != remoteID {
+				t.Fatalf("edits = %+v, want one user edit of %s", edits, remoteID)
+			}
+		})
+	}
+}
+
+func TestPRCommentEditPushesTheBodyItQueued(t *testing.T) {
 	p := newPRServer(t, false)
 	id := p.comment(t, nil)
 	p.settle(t)
+
+	release := p.inbound.exclusive(p.review.ID)
 	resp := putJSON(t, p.srv.URL+"/api/comments/"+strconv.FormatInt(id, 10), map[string]any{"body": "changed"})
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("body edit status = %d, want 409", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("body edit status = %d, want 200", resp.StatusCode)
 	}
-	if c := p.getComment(t, id); c.Body != "nit" {
-		t.Fatalf("body = %q, want unchanged", c.Body)
+	if err := p.st.UpdateCommentBody(t.Context(), id, "clobbered"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	p.settle(t)
+
+	if edits := writesTo(p.gh, "graphql:UpdateReviewComment"); len(edits) != 1 || edits[0].Body["body"] != "changed" {
+		t.Fatalf("edits = %+v, want the queued body", edits)
 	}
 }
 
