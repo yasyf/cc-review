@@ -115,6 +115,15 @@ func Serve(ctx context.Context, fixedPort int) error {
 		return err
 	}
 	defer func() { _ = ledger.Close() }()
+	s, rv, err := newDaemon(ledger, fixedPort)
+	if err != nil {
+		return err
+	}
+	go rv.sweepLoop(ctx, s)
+	return s.Serve(ctx)
+}
+
+func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, error) {
 	rv := &review{
 		decisions:      ledger,
 		log:            log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
@@ -124,7 +133,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	}
 	spec, err := runtimeconfig.Spec()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	s, err := ccd.New(ccd.Config{
@@ -145,7 +154,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		FixedPort:         fixedPort,
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	rv.injectEvent = s.InjectEvent
 	rv.db, rv.append = s.DB, s.Append
@@ -171,9 +180,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		ConsumerConnected: s.ConsumerConnected,
 		Dist:              web.Dist(),
 	})
-
-	go rv.sweepLoop(ctx, s)
-	return s.Serve(ctx)
+	return s, rv, nil
 }
 
 // decisionsPath is the family decision ledger location; CC_DECISIONS_DB

@@ -302,3 +302,41 @@ func TestRecapturePRRefusesALocalReview(t *testing.T) {
 		t.Fatalf("recapturePR(local) = %v, want a refusal", err)
 	}
 }
+
+func TestRecapturePRKeepsASubmittedReviewSubmitted(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	remote := newPRRemote(t)
+	gh := prStack(t, s, remote)
+	first := prStart(ctx, t, s, repo, 2)
+	if err := s.resolver.Store.SetStatus(ctx, first.ReviewID, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+	statusEvents := countEvents(t, s, first.ReviewID, store.EventStatusChanged)
+
+	gitRun(t, remote.src, "checkout", "-q", "feat-b")
+	pushed := remote.commit(t, "c.go", "package c\n")
+	remote.publish(t, 2, "feat-b")
+	gh.UpdatePR(prRepo, 2, func(pr *github.PullRequest) { pr.HeadRefOid = pushed })
+	gh.SetMergeBase(prRepo, remote.headA, pushed, remote.headA)
+
+	if err := s.rv.recapturePR(ctx, first.ReviewID); err != nil {
+		t.Fatal(err)
+	}
+	if n := countVersions(ctx, t, s, first.ReviewID); n != 2 {
+		t.Fatalf("versions = %d, want 2", n)
+	}
+	if status, err := s.reviewStatus(ctx, first.ReviewID); err != nil || status != "submitted" {
+		t.Fatalf("status after a poller recapture = %q (%v), want submitted", status, err)
+	}
+	if n := countEvents(t, s, first.ReviewID, store.EventStatusChanged); n != statusEvents {
+		t.Fatalf("status.changed events = %d, want %d", n, statusEvents)
+	}
+
+	if resumed := prStart(ctx, t, s, repo, 2); resumed.Version != 2 {
+		t.Fatalf("explicit start version = %d, want the recaptured v2", resumed.Version)
+	}
+	if status, err := s.reviewStatus(ctx, first.ReviewID); err != nil || status != statusOpen {
+		t.Fatalf("status after an explicit start = %q (%v), want open", status, err)
+	}
+}

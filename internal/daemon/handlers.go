@@ -151,7 +151,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 			}
 		}
 	}
-	version, err := rv.createVersion(hc.Ctx, st, hc.Subjects.Store, hc.Append, sub, capture)
+	version, err := rv.createVersion(hc.Ctx, st, hc.Subjects.Store, hc.Append, sub, capture, true)
 	if err != nil {
 		return errReply(err.Error())
 	}
@@ -163,7 +163,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	return rv.startReply(hc, sub, version, resumed, cs, info, reoffer)
 }
 
-func (rv *review) createVersion(ctx context.Context, st *store.Store, subjects subject.Store, ap ccd.AppendFunc, sub subject.Subject, capture captured) (int, error) {
+func (rv *review) createVersion(ctx context.Context, st *store.Store, subjects subject.Store, ap ccd.AppendFunc, sub subject.Subject, capture captured, reopen bool) (int, error) {
 	if err := paths.EnsureReviewDir(sub.ID); err != nil {
 		return 0, err
 	}
@@ -230,9 +230,10 @@ func (rv *review) createVersion(ctx context.Context, st *store.Store, subjects s
 			break
 		}
 	}
-	// A new version reopens the review (a prior round may have been submitted), so
-	// the edit guard blocks edits again until this round is submitted.
-	if sub.Status != statusOpen {
+	// An explicit start's new version reopens the review (a prior round may have
+	// been submitted), so the edit guard blocks edits again until this round is
+	// submitted; a poller recapture leaves the status alone.
+	if reopen && sub.Status != statusOpen {
 		if err := subjects.SetStatus(ctx, sub.ID, statusOpen); err != nil {
 			return 0, err
 		}
@@ -333,7 +334,7 @@ func (rv *review) recapturePR(ctx context.Context, reviewID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = rv.createVersion(ctx, st, subjects, rv.append, sub, capture)
+	_, err = rv.createVersion(ctx, st, subjects, rv.append, sub, capture, false)
 	return err
 }
 
