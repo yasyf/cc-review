@@ -687,6 +687,7 @@ func TestBotCommentsAreAutomationAndStayOffTheChannel(t *testing.T) {
 	if got := f.channel(); !slices.Equal(got, want) {
 		t.Fatalf("channel received %v, want %v", got, want)
 	}
+	f.drain()
 
 	f.gh.AddReply(testRepo, 2, humanThread.NodeID, github.RemoteComment{AuthorLogin: "github-actions[bot]", Body: "preview deployed"})
 	f.gh.SetResolved(testRepo, 2, botThread.NodeID, true)
