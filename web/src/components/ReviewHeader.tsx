@@ -1,15 +1,14 @@
-import { useState } from 'react';
-import { ciRollup, reviewRollup, sectionPullRequest } from '../lib/stack';
+import { useRef, useState } from 'react';
+import { ciRollup } from '../lib/stack';
 import type { CiState } from '../lib/stack';
-import type { PullRequest, PullRequestCheck, PullRequestReviewer, SessionResponse } from '../lib/types';
-import { Markdown } from './ui/Markdown';
-import { PopoverButton } from './PopoverButton';
-import { Button } from './ui/Button';
+import type { PullRequest, PullRequestCheck, PullRequestReviewer, Section, SessionResponse } from '../lib/types';
+import { CiIcon } from './StackRail';
 import { Icon } from './ui/Icon';
+import { Popover } from './ui/Popover';
 
 const CI_SUMMARY: Record<CiState, string> = {
-  success: 'All checks passed',
-  failure: 'Some checks failed',
+  success: 'Checks passed',
+  failure: 'Checks failed',
   pending: 'Checks running',
   none: 'No checks',
 };
@@ -21,8 +20,8 @@ const REVIEWER_STATE: Record<PullRequestReviewer['state'], string> = {
   PENDING: 'review requested',
 };
 
-function avatarUrl(login: string): string {
-  return `https://github.com/${encodeURIComponent(login)}.png?size=40`;
+export function avatarUrl(login: string): string {
+  return `https://github.com/${encodeURIComponent(login.replace(/\[bot\]$/, ''))}.png?size=40`;
 }
 
 function prState(pr: PullRequest): { label: string; tone: string } {
@@ -30,135 +29,164 @@ function prState(pr: PullRequest): { label: string; tone: string } {
   return { label: pr.state.charAt(0) + pr.state.slice(1).toLowerCase(), tone: pr.state.toLowerCase() };
 }
 
-function CheckRow({ check }: { check: PullRequestCheck }) {
-  return (
-    <li className="check-row">
-      <span className={`ci-dot ci-${ciRollup([check])}`} aria-hidden="true" />
-      {check.url ? (
-        <a href={check.url} target="_blank" rel="noreferrer">
-          {check.name}
-        </a>
-      ) : (
-        <span>{check.name}</span>
-      )}
-      <span className="check-state">{check.state.toLowerCase()}</span>
-    </li>
-  );
+function checkState(check: PullRequestCheck): CiState {
+  return check.state === 'SKIPPED' || check.state === 'NEUTRAL' ? 'none' : ciRollup([check]);
 }
 
-function ChecksRollup({ checks }: { checks: readonly PullRequestCheck[] }) {
-  const ci = ciRollup(checks);
-  const passed = checks.filter((c) => c.state === 'SUCCESS').length;
+export function CheckList({ checks }: { checks: readonly PullRequestCheck[] }) {
+  if (checks.length === 0) return <div className="dim">No checks reported for this head.</div>;
+  const order: Record<CiState, number> = { failure: 0, pending: 1, success: 2, none: 3 };
+  const sorted = [...checks].sort((a, b) => order[checkState(a)] - order[checkState(b)] || a.name.localeCompare(b.name));
   return (
-    <PopoverButton
-      className="pr-checks"
-      popoverLabel="Checks"
-      label={
-        <>
-          <span className={`ci-dot ci-${ci}`} aria-hidden="true" />
-          {CI_SUMMARY[ci]}
-          {checks.length > 0 ? (
-            <span className="dim">
-              {passed}/{checks.length}
-            </span>
-          ) : null}
-        </>
-      }
-    >
-      {checks.length === 0 ? (
-        <div className="dim">No checks reported for this head.</div>
-      ) : (
-        <ul className="check-list">
-          {checks.map((check) => (
-            <CheckRow key={check.name} check={check} />
-          ))}
-        </ul>
-      )}
-    </PopoverButton>
-  );
-}
-
-function Reviewers({ reviewers }: { reviewers: readonly PullRequestReviewer[] }) {
-  if (reviewers.length === 0) return <span className="dim">No reviewers</span>;
-  return (
-    <ul className="pr-reviewers">
-      {reviewers.map((r) => (
-        <li key={r.login} className={`pr-reviewer review-${reviewRollup([r])}`}>
-          <img className="avatar-img" src={r.avatarUrl} alt="" width={20} height={20} />
-          <span>{r.login}</span>
-          <span className="pr-reviewer-state">{REVIEWER_STATE[r.state]}</span>
+    <ul className="check-list">
+      {sorted.map((check, i) => (
+        <li key={`${check.name}-${i}`} className="check-row">
+          <CiIcon state={checkState(check)} />
+          {check.url ? (
+            <a href={check.url} target="_blank" rel="noreferrer">
+              {check.name}
+            </a>
+          ) : (
+            <span>{check.name}</span>
+          )}
+          <span className="check-state">{check.state.toLowerCase()}</span>
         </li>
       ))}
     </ul>
   );
 }
 
+export function ChecksPill({ checks }: { checks: readonly PullRequestCheck[] }) {
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const ci = ciRollup(checks);
+  const passed = checks.filter((c) => c.state === 'SUCCESS').length;
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        className={`pill pill-ci pill-ci-${ci}`}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <CiIcon state={ci} />
+        {CI_SUMMARY[ci]}
+        {checks.length > 0 ? (
+          <span className="dim">
+            {passed}/{checks.length}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <Popover anchor={anchor} label="Checks" className="checks-popover" onClose={() => setOpen(false)}>
+          <CheckList checks={checks} />
+        </Popover>
+      ) : null}
+    </>
+  );
+}
+
+function ReviewerStack({ reviewers }: { reviewers: readonly PullRequestReviewer[] }) {
+  if (reviewers.length === 0) return null;
+  return (
+    <span className="avatar-stack" aria-label="Reviewers">
+      {reviewers.map((r) => (
+        <img
+          key={r.login}
+          className={`avatar-img avatar-stacked reviewer-${r.state.toLowerCase()}`}
+          src={r.avatarUrl || avatarUrl(r.login)}
+          alt={r.login}
+          title={`${r.login} ${REVIEWER_STATE[r.state]}`}
+          width={20}
+          height={20}
+        />
+      ))}
+    </span>
+  );
+}
+
 function PrHeader({ pr }: { pr: PullRequest }) {
-  const [expanded, setExpanded] = useState(false);
   const state = prState(pr);
   return (
-    <section className="pr-header">
-      <div className="pr-header-title">
-        <h1>
-          {pr.title} <span className="pr-number">#{pr.number}</span>
+    <section className="review-header">
+      <div className="review-header-title">
+        <h1 title={pr.title}>
+          {pr.title} <span className="review-header-number">#{pr.number}</span>
         </h1>
-        <a className="btn btn-secondary btn-sm" href={pr.url} target="_blank" rel="noreferrer">
-          <Icon name="external" size={14} />
-          Open on GitHub
+        <a className="btn btn-ghost btn-sm btn-icon" href={pr.url} target="_blank" rel="noreferrer" aria-label="Open on GitHub" title="Open on GitHub">
+          <Icon name="external" />
         </a>
       </div>
-      <div className="pr-header-meta">
-        <span className={`pr-state pr-state-${state.tone}`}>{state.label}</span>
-        <span className="pr-author">
-          <img className="avatar-img" src={avatarUrl(pr.authorLogin)} alt="" width={20} height={20} />
+      <div className="review-header-meta">
+        <span className={`state-badge state-${state.tone}`}>{state.label}</span>
+        <span className="review-header-author">
+          <img className="avatar-img" src={avatarUrl(pr.authorLogin)} alt="" width={18} height={18} />
           {pr.authorLogin}
         </span>
-        <span className="pr-refs">
-          <code>{pr.baseRefName}</code> ← <code>{pr.headRefName}</code>
-        </span>
-        <ChecksRollup checks={pr.checks} />
-        <Reviewers reviewers={pr.reviewers} />
+        <code className="refs">
+          {pr.baseRefName} ← {pr.headRefName}
+        </code>
+        <ChecksPill checks={pr.checks} />
+        <ReviewerStack reviewers={pr.reviewers} />
       </div>
-      {pr.body.trim() ? (
-        <div className={`pr-description${expanded ? ' pr-description-open' : ''}`}>
-          <Markdown source={pr.body} />
-          <Button size="sm" variant="ghost" className="pr-description-toggle" onClick={() => setExpanded(!expanded)}>
-            {expanded ? 'Show less' : 'Show full description'}
-          </Button>
-        </div>
-      ) : null}
     </section>
   );
 }
 
-function BranchHeader({ session, scope }: { session: SessionResponse; scope: string | undefined }) {
-  const section =
-    session.sections.length === 1
-      ? session.sections[0]
-      : session.sections.find((s) => s.sectionKey === scope);
-  if (!section) return null;
+function BranchHeader({ section }: { section: Section }) {
   return (
-    <section className="branch-header">
-      <code>{section.pending ? 'Working tree' : section.branch}</code>
-      {section.parentBranch ? (
+    <section className="review-header">
+      <div className="review-header-title">
+        <h1>{section.pending ? 'Working tree' : section.branch}</h1>
+      </div>
+      <div className="review-header-meta">
+        {section.parentBranch ? (
+          <code className="refs">
+            {section.parentBranch} ← {section.pending ? 'working tree' : section.branch}
+          </code>
+        ) : null}
+        {!section.pending && section.baseRef && section.headRef ? (
+          <code className="refs dim">
+            {section.baseRef.slice(0, 7)}..{section.headRef.slice(0, 7)}
+          </code>
+        ) : null}
         <span className="dim">
-          ← <code>{section.parentBranch}</code>
+          {section.files.length} file{section.files.length === 1 ? '' : 's'}
         </span>
-      ) : null}
-      {!section.pending && section.baseRef && section.headRef ? (
-        <span className="dim">
-          {section.baseRef.slice(0, 7)}..{section.headRef.slice(0, 7)}
-        </span>
-      ) : null}
+      </div>
     </section>
   );
 }
 
-export function ReviewHeader({ session, scope }: { session: SessionResponse; scope: string | undefined }) {
-  if (session.review.kind === 'local') return <BranchHeader session={session} scope={scope} />;
-  const section = session.sections.find((s) => s.sectionKey === scope);
-  const pr = section
-    ? sectionPullRequest(section, session.pullRequests)
-    : session.pullRequests.find((p) => p.number === session.review.prNumber);
-  return pr ? <PrHeader pr={pr} /> : null;
+function StackHeader({ session }: { session: SessionResponse }) {
+  const prs = session.review.kind === 'pr';
+  const top = session.sections[session.sections.length - 1];
+  return (
+    <section className="review-header">
+      <div className="review-header-title">
+        <h1>{prs ? `Stack of ${session.sections.length} pull requests` : `Stack of ${session.sections.length} branches`}</h1>
+      </div>
+      <div className="review-header-meta">
+        <code className="refs">
+          {session.sections[0]?.parentBranch} ← {top?.pending ? 'working tree' : top?.branch}
+        </code>
+        <span className="dim">{session.sections.reduce((n, s) => n + s.files.length, 0)} files</span>
+      </div>
+    </section>
+  );
+}
+
+export function ReviewHeader({
+  session,
+  section,
+  pr,
+}: {
+  session: SessionResponse;
+  section: Section | undefined;
+  pr: PullRequest | null;
+}) {
+  if (pr) return <PrHeader pr={pr} />;
+  if (section) return <BranchHeader section={section} />;
+  return <StackHeader session={session} />;
 }

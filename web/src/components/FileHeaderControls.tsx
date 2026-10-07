@@ -1,16 +1,20 @@
+import { getRouteApi } from '@tanstack/react-router';
 import { useSession, useSetFileStates } from '../lib/api';
 import { fileItemId } from '../lib/diff/items';
 import { chapterFileOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import { useViewPrefs } from '../lib/view-prefs';
-import { FileThreads } from './FileThreads';
+import { FileComment } from './FileComment';
 import { IconButton } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 
 // Rendered through CodeView's renderHeaderMetadata portal; like CommentThread
 // it self-subscribes to the session cache instead of receiving it via props.
+const routeApi = getRouteApi('/s/$slug');
+
 export function FileHeaderControls({ sectionKey, path }: { sectionKey: string; path: string }) {
   const { slug, version } = useReview();
+  const scoped = routeApi.useSearch().section !== undefined;
   const { data } = useSession(slug, version);
   const { expandOverrides, toggleExpandOverride, clearExpandOverride } = useViewPrefs();
   const setStates = useSetFileStates(slug, version);
@@ -37,7 +41,7 @@ export function FileHeaderControls({ sectionKey, path }: { sectionKey: string; p
 
   return (
     <span className="file-controls">
-      {data.sections.length > 1 ? (
+      {data.sections.length > 1 && !scoped ? (
         <span className="section-chip">{section.prNumber ? `#${section.prNumber}` : section.branch || 'working tree'}</span>
       ) : null}
       {cf?.risk ? <span className={`risk-chip risk-${cf.risk}`}>{cf.risk}</span> : null}
@@ -68,7 +72,7 @@ export function FileHeaderControls({ sectionKey, path }: { sectionKey: string; p
           onClick={() => toggleExpandOverride(itemId)}
         />
       ) : null}
-      <FileThreads sectionKey={sectionKey} path={path} />
+      <FileComment sectionKey={sectionKey} path={path} />
       <label className="viewed-toggle">
         <input
           type="checkbox"

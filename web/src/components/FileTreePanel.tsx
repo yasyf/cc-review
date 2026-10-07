@@ -31,6 +31,9 @@ const ITEM_HEIGHT_PX = 30;
 
 const TREE_ICONS = { set: 'complete', spriteSheet: iconSprite(['check', 'alert']) } as const;
 
+const ACTION_ON_HOVER_CSS =
+  "[data-item-section='action']{display:none}[data-item-path]:hover [data-item-section='action']{display:flex}";
+
 function estimateTreeHeight(paths: string[]): number {
   const dirs = new Set<string>();
   for (const path of paths) {
@@ -83,11 +86,11 @@ function Tree({
   // changes (see the key below).
   const dimCSS = useMemo(() => {
     const reviewed = files.filter((f) => fileStates[f.path]?.reviewed);
-    if (reviewed.length === 0) return '';
+    if (reviewed.length === 0) return ACTION_ON_HOVER_CSS;
     const selectors = reviewed
       .map((f) => `[data-item-path="${f.path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`)
       .join(',');
-    return `${selectors}{opacity:0.5;text-decoration:line-through;}`;
+    return `${ACTION_ON_HOVER_CSS}${selectors}{opacity:0.5;text-decoration:line-through;}`;
   }, [files, fileStates]);
 
   const { model } = useFileTree({
@@ -222,7 +225,7 @@ export function FileTreePanel({
 
   return (
     <>
-      <div className="sidebar-tree">
+      <div className="files-tree">
         {flat ? (
           <Tree
             key={treeKey(flat, flatVisible)}

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { DiffViewHandle } from './diff/useDiffHandle';
-import { useSidebarLayout } from './sidebar-layout';
+import { useLayout } from './layout';
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -14,7 +14,7 @@ export function useKeyboardShortcuts(
   help: { helpOpen: boolean; setHelpOpen: Dispatch<SetStateAction<boolean>> },
 ) {
   const { helpOpen, setHelpOpen } = help;
-  const { toggle: toggleSidebar } = useSidebarLayout();
+  const { toggleRail, toggleFiles } = useLayout();
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Cmd/Ctrl+K belongs to the Command Deck (AiBar); typing surfaces own
@@ -43,7 +43,10 @@ export function useKeyboardShortcuts(
           diff?.focusPrevComment();
           break;
         case '[':
-          toggleSidebar();
+          toggleRail();
+          break;
+        case ']':
+          toggleFiles();
           break;
         case '?':
           setHelpOpen((open) => !open);
@@ -55,5 +58,5 @@ export function useKeyboardShortcuts(
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [diffRef, helpOpen, setHelpOpen, toggleSidebar]);
+  }, [diffRef, helpOpen, setHelpOpen, toggleRail, toggleFiles]);
 }

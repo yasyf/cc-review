@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { isAutomated } from './automation';
 import type { Author, Comment } from './types';
 
 // Map of comment id → id of the newest thread entry the user has seen (a reply
@@ -21,6 +22,7 @@ export function latestEntry(comment: Comment): { id: string; author: Author } {
 }
 
 export function isUnread(comment: Comment, seen: SeenMap): boolean {
+  if (isAutomated(comment)) return false;
   const latest = latestEntry(comment);
   return latest.author !== 'user' && latest.author !== 'automation' && seen[comment.id] !== latest.id;
 }

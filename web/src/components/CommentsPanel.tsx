@@ -44,7 +44,7 @@ export function CommentsPanel({
   );
 
   if (ordered.length === 0) {
-    return <div className="sidebar-empty">No comments yet — select lines in the diff to start a thread.</div>;
+    return <div className="pane-empty">No comments yet — select lines in the diff to start a thread.</div>;
   }
 
   return (

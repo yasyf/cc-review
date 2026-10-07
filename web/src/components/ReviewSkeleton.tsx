@@ -5,12 +5,12 @@ const FILE_BLOCKS = [6, 4, 8];
 export function ReviewSkeleton() {
   return (
     <div className="app review-skeleton" aria-busy="true">
-      <header className="submit-bar">
+      <header className="top-bar">
         <Skeleton lines={1} label="Loading review" className="skeleton-header" />
       </header>
       <div className="body">
-        <div className="sidebar">
-          <Skeleton lines={10} label="Loading files" className="skeleton-sidebar" />
+        <div className="sidebar rail">
+          <Skeleton lines={10} label="Loading files" className="skeleton-rail" />
         </div>
         <main className="main">
           <Skeleton lines={1} label="Loading toolbar" className="skeleton-toolbar" />

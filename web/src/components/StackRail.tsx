@@ -1,59 +1,78 @@
-import { stackCards } from '../lib/stack';
-import type { CiState, ReviewState, StackCard } from '../lib/stack';
+import { stackRows, trunkBranch } from '../lib/stack';
+import type { CiState, ReviewState, StackRow } from '../lib/stack';
+import { useLayout } from '../lib/layout';
 import { useUnread } from '../lib/unread';
 import type { SessionResponse } from '../lib/types';
+import { Icon } from './ui/Icon';
+import type { IconName } from './ui/icons';
 
-const CI_LABEL: Record<CiState, string> = {
-  success: 'Checks passing',
-  failure: 'Checks failing',
-  pending: 'Checks running',
-  none: 'No checks',
+const CI_ICON: Record<CiState, { icon: IconName; label: string }> = {
+  success: { icon: 'check-circle', label: 'Checks passing' },
+  failure: { icon: 'x-circle', label: 'Checks failing' },
+  pending: { icon: 'pending-circle', label: 'Checks running' },
+  none: { icon: 'circle', label: 'No checks' },
 };
 
-const REVIEW_LABEL: Record<ReviewState, string> = {
-  approved: 'Approved',
-  changes_requested: 'Changes requested',
-  commented: 'Commented',
-  pending: 'Review requested',
-  none: '',
+const REVIEW_ICON: Record<Exclude<ReviewState, 'none'>, { icon: IconName; label: string }> = {
+  approved: { icon: 'check', label: 'Approved' },
+  changes_requested: { icon: 'request-changes', label: 'Changes requested' },
+  commented: { icon: 'comment', label: 'Commented' },
+  pending: { icon: 'eye', label: 'Review requested' },
 };
 
-function Card({
-  card,
-  active,
-  onSelect,
-}: {
-  card: StackCard;
-  active: boolean;
-  onSelect(): void;
-}) {
+export function CiIcon({ state }: { state: CiState }) {
+  const { icon, label } = CI_ICON[state];
+  return (
+    <span className={`ci-icon ci-${state}`} role="img" aria-label={label} title={label}>
+      <Icon name={icon} size={14} />
+    </span>
+  );
+}
+
+function Row({ row, active, onSelect }: { row: StackRow; active: boolean; onSelect(): void }) {
+  const review = row.review === 'none' ? null : REVIEW_ICON[row.review];
   return (
     <button
       type="button"
-      className={`stack-card${active ? ' stack-card-active' : ''}`}
-      aria-pressed={active}
+      className="rail-row"
+      aria-current={active || undefined}
+      title={row.pr ? `#${row.pr.number} ${row.title}` : row.title}
       onClick={onSelect}
     >
-      <span className="stack-card-head">
-        <span className={`ci-dot ci-${card.ci}`} role="img" aria-label={CI_LABEL[card.ci]} />
-        {card.pr ? <span className="stack-card-number">#{card.pr.number}</span> : null}
-        <span className="stack-card-title">{card.title}</span>
+      <span className="rail-row-line">
+        <span className="rail-node" aria-hidden="true" />
+        <span className="rail-row-title">{row.title}</span>
       </span>
-      <span className="stack-card-meta">
-        {card.review !== 'none' ? (
-          <span className={`review-state review-${card.review}`}>{REVIEW_LABEL[card.review]}</span>
+      <span className="rail-row-meta">
+        {row.pr ? <CiIcon state={row.ci} /> : null}
+        {row.pr ? <span className="rail-row-number">#{row.pr.number}</span> : <code className="rail-row-branch">{row.branch || 'working tree'}</code>}
+        {review ? (
+          <span className={`review-icon review-${row.review}`} role="img" aria-label={review.label} title={review.label}>
+            <Icon name={review.icon} size={14} />
+          </span>
         ) : null}
-        {card.unread > 0 ? <span className="stack-card-unread">{card.unread} new</span> : null}
-        {card.open > 0 ? <span className="stack-card-open">{card.open} open</span> : null}
-        <span className="stack-card-progress">
-          {card.reviewed}/{card.total}
+        {row.threads > 0 ? (
+          <span
+            className={`rail-row-threads${row.unread > 0 ? ' rail-row-threads-unread' : ''}`}
+            title={`${row.threads} open thread${row.threads === 1 ? '' : 's'}`}
+          >
+            <Icon name="comment" size={12} />
+            {row.threads}
+          </span>
+        ) : null}
+        <span className="rail-row-count">
+          {row.reviewed}/{row.total}
         </span>
       </span>
-      <span className="progress-track">
-        <span
-          className="progress-fill"
-          style={{ width: `${card.total > 0 ? (card.reviewed / card.total) * 100 : 0}%` }}
-        />
+      <span
+        className="rail-row-progress"
+        role="progressbar"
+        aria-label="Files reviewed"
+        aria-valuemin={0}
+        aria-valuemax={row.total}
+        aria-valuenow={row.reviewed}
+      >
+        <span style={{ width: `${row.total > 0 ? (row.reviewed / row.total) * 100 : 0}%` }} />
       </span>
     </button>
   );
@@ -69,27 +88,58 @@ export function StackRail({
   onScope(sectionKey: string | undefined): void;
 }) {
   const { seen } = useUnread();
-  const cards = stackCards(session, seen).reverse();
+  const { dismissRail } = useLayout();
+  const rows = stackRows(session, seen);
+  const trunk = trunkBranch(session);
+  const reviewed = rows.reduce((n, r) => n + r.reviewed, 0);
+  const total = rows.reduce((n, r) => n + r.total, 0);
+
+  function select(sectionKey: string | undefined) {
+    onScope(sectionKey);
+    dismissRail();
+  }
 
   return (
-    <nav className="stack-rail" aria-label="Stack">
-      <button
-        type="button"
-        className={`stack-card stack-card-all${scope === undefined ? ' stack-card-active' : ''}`}
-        aria-pressed={scope === undefined}
-        onClick={() => onScope(undefined)}
-      >
-        <span className="stack-card-title">All</span>
-        <span className="stack-card-progress">{cards.length} sections</span>
-      </button>
-      {cards.map((card) => (
-        <Card
-          key={card.sectionKey}
-          card={card}
-          active={scope === card.sectionKey}
-          onSelect={() => onScope(card.sectionKey)}
-        />
-      ))}
+    <nav className="rail" aria-label="Stack">
+      <div className="rail-head">
+        <span>Stack</span>
+        <span className="dim">
+          {rows.length} {session.review.kind === 'pr' ? 'PRs' : 'branches'}
+        </span>
+      </div>
+      <div className="rail-list">
+        <button
+          type="button"
+          className="rail-row rail-row-all"
+          aria-current={scope === undefined || undefined}
+          onClick={() => select(undefined)}
+        >
+          <span className="rail-row-line">
+            <Icon name="tree" size={14} />
+            <span className="rail-row-title">Whole stack</span>
+            <span className="rail-row-count">
+              {reviewed}/{total}
+            </span>
+          </span>
+        </button>
+        <div className="rail-stack">
+          {rows.map((row) => (
+            <Row
+              key={row.sectionKey}
+              row={row}
+              active={scope === row.sectionKey}
+              onSelect={() => select(row.sectionKey)}
+            />
+          ))}
+          {trunk ? (
+            <div className="rail-trunk">
+              <span className="rail-node rail-node-trunk" aria-hidden="true" />
+              <Icon name="branch" size={12} />
+              <code>{trunk}</code>
+            </div>
+          ) : null}
+        </div>
+      </div>
     </nav>
   );
 }

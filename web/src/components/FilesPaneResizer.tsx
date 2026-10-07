@@ -1,16 +1,11 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
-import {
-  SIDEBAR_DEFAULT_WIDTH_PX,
-  SIDEBAR_MAX_WIDTH_PX,
-  SIDEBAR_MIN_WIDTH_PX,
-  useSidebarLayout,
-} from '../lib/sidebar-layout';
+import { FILES_DEFAULT_WIDTH_PX, FILES_MAX_WIDTH_PX, FILES_MIN_WIDTH_PX, useLayout } from '../lib/layout';
 
 const KEY_STEP_PX = 16;
 
-export function SidebarResizer() {
-  const { width, setWidth } = useSidebarLayout();
+export function FilesPaneResizer() {
+  const { filesWidth: width, setFilesWidth: setWidth } = useLayout();
   const drag = useRef<{ startX: number; startWidth: number } | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -39,12 +34,12 @@ export function SidebarResizer() {
 
   return (
     <div
-      className="sidebar-resizer"
+      className="pane-resizer"
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize sidebar"
-      aria-valuemin={SIDEBAR_MIN_WIDTH_PX}
-      aria-valuemax={SIDEBAR_MAX_WIDTH_PX}
+      aria-label="Resize file tree"
+      aria-valuemin={FILES_MIN_WIDTH_PX}
+      aria-valuemax={FILES_MAX_WIDTH_PX}
       aria-valuenow={width}
       tabIndex={0}
       data-dragging={dragging || undefined}
@@ -52,7 +47,7 @@ export function SidebarResizer() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onDoubleClick={() => setWidth(SIDEBAR_DEFAULT_WIDTH_PX)}
+      onDoubleClick={() => setWidth(FILES_DEFAULT_WIDTH_PX)}
       onKeyDown={onKeyDown}
     />
   );

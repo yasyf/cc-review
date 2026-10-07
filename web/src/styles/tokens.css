@@ -50,10 +50,14 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 
-  --control-h: 1.75rem;
-  --control-h-sm: 1.5rem;
-  --header-h: 2.75rem;
-  --sidebar-w: 18rem;
+  --control-h-sm: 24px;
+  --control-h: 28px;
+  --control-h-lg: 32px;
+  --header-h: 44px;
+  --rail-w: 280px;
+  --files-w: 300px;
+  --ai-bar-h: 40px;
+  --hairline: 1px solid var(--border);
 
   --z-popover: 30;
   --z-overlay: 35;
@@ -77,9 +81,14 @@ code,
 kbd,
 pre {
   font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .codeview,
+.rail-list,
+.tab-panel-scroll,
+.ai-pop,
+.files-tree,
 .comments-panel,
 .chapter-panel,
 .todo-list,

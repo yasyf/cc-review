@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, RefObject } from 'react';
-import { recentUserCommands, isActive, resultStream } from '../lib/ai-requests';
+import { aiStatus, isActive, recentUserCommands, resultStream } from '../lib/ai-requests';
 import { useCreateAiRequest, useSetFileStates } from '../lib/api';
 import type { FileStatePatch } from '../lib/api';
 import { fileItemId } from '../lib/diff/items';
@@ -38,6 +38,7 @@ export function AiBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [streamOpen, setStreamOpen] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -58,13 +59,16 @@ export function AiBar({
 
   // A click outside the deck dismisses the menu.
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !streamOpen) return;
     function onDown(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setStreamOpen(false);
+      }
     }
     window.addEventListener('mousedown', onDown);
     return () => window.removeEventListener('mousedown', onDown);
-  }, [menuOpen]);
+  }, [menuOpen, streamOpen]);
 
   const suggestions = useMemo(() => deriveSuggestions(session), [session]);
   const recents = useMemo(() => recentUserCommands(session.aiRequests), [session.aiRequests]);
@@ -93,6 +97,7 @@ export function AiBar({
       local.add(label, refs, prior);
       setFileStates.mutate(patches);
       setMenuOpen(false);
+      setStreamOpen(true);
     },
     [local, sectionByKey, setFileStates],
   );
@@ -117,6 +122,7 @@ export function AiBar({
       createRequest.mutate(text);
       setQuery('');
       setMenuOpen(false);
+      setStreamOpen(true);
     },
     [connected, createRequest],
   );
@@ -192,6 +198,14 @@ export function AiBar({
     setActiveIndex((i) => (rows.length === 0 ? 0 : Math.min(i, rows.length - 1)));
   }, [rows.length]);
 
+  const askingIds = session.aiRequests
+    .filter((r) => r.status === 'awaiting_input')
+    .map((r) => r.id)
+    .join(',');
+  useEffect(() => {
+    if (askingIds) setStreamOpen(true);
+  }, [askingIds]);
+
   if (session.review.status !== 'open') return null;
 
   function onComposerKey(e: KeyboardEvent<HTMLInputElement>) {
@@ -233,7 +247,8 @@ export function AiBar({
   const stream = resultStream(session.aiRequests, local.requests);
   const active = stream.filter((it) => it.kind === 'ai' && isActive(it.request));
   const rest = stream.filter((it) => !(it.kind === 'ai' && isActive(it.request)));
-  const shownRest = historyOpen ? rest : rest.slice(0, 1);
+  const shownRest = historyOpen ? rest : rest.slice(0, 3);
+  const status = aiStatus(session.aiRequests, connected);
 
   const renderItem = (it: (typeof stream)[number]) =>
     it.kind === 'ai' ? (
@@ -243,14 +258,21 @@ export function AiBar({
     );
 
   return (
-    <footer className="ai-bar deck" ref={rootRef}>
-      {active.length > 0 || shownRest.length > 0 ? (
-        <div className="deck-stream">
+    <footer className="ai-bar" ref={rootRef}>
+      {streamOpen && !menuOpen ? (
+        <div className="ai-pop" role="dialog" aria-label="Claude activity">
+          <div className="ai-pop-head">
+            <span>Claude activity</span>
+            <button type="button" className="ai-mini" onClick={() => setStreamOpen(false)} aria-label="Close">
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+          {stream.length === 0 ? <div className="ai-pop-empty">Nothing yet. Ask Claude below or press ⌘K.</div> : null}
           {active.map(renderItem)}
           {shownRest.map(renderItem)}
-          {rest.length > 1 ? (
-            <button type="button" className="ai-mini deck-history-toggle" onClick={() => setHistoryOpen(!historyOpen)}>
-              {historyOpen ? 'Hide history' : `${rest.length - 1} more`}
+          {rest.length > 3 ? (
+            <button type="button" className="ai-mini ai-pop-more" onClick={() => setHistoryOpen(!historyOpen)}>
+              {historyOpen ? 'Show fewer' : `${rest.length - 3} more`}
             </button>
           ) : null}
         </div>
@@ -260,45 +282,43 @@ export function AiBar({
         <CommandMenu rows={rows} activeIndex={activeIndex} connected={connected} onHover={setActiveIndex} />
       ) : null}
 
-      <div className="deck-row">
-        <div className="deck-chips">
-          {suggestions.length === 0 ? (
-            <span className="deck-empty">No quick actions — ask Claude below.</span>
-          ) : (
-            suggestions.slice(0, 3).map((s) => (
-              <button key={s.id} type="button" className="deck-chip" onClick={() => runSuggestion(s)}>
-                <Icon name="bolt" size={12} className="deck-bolt" />
-                {s.label}
-              </button>
-            ))
-          )}
-        </div>
-        <div className="deck-input">
+      <div className="ai-row">
+        <Tooltip
+          label={
+            connected
+              ? 'Show Claude activity'
+              : 'Run /cc-review:start in Claude Code to enable Claude actions; instant actions still work'
+          }
+          describe={false}
+        >
+          <button
+            type="button"
+            className={`ai-chip ai-chip-${status.tone}`}
+            aria-expanded={streamOpen}
+            onClick={() => {
+              setMenuOpen(false);
+              setStreamOpen(!streamOpen);
+            }}
+          >
+            <span className="ai-chip-dot" aria-hidden="true" />
+            {status.label}
+            {status.detail ? <span className="ai-chip-detail">· {status.detail}</span> : null}
+          </button>
+        </Tooltip>
+        <div className="ai-input">
+          <Icon name="sparkle" size={14} className="ai-input-icon" />
           <input
             ref={inputRef}
             type="text"
             value={query}
-            placeholder="Ask Claude…   ⌘K"
+            placeholder={connected ? 'Ask Claude or run a command…' : 'Run a command…'}
             onFocus={() => setMenuOpen(true)}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onComposerKey}
           />
-          <Tooltip label={connected ? 'Claude connected' : 'Claude not connected'}>
-            <span
-              className={`deck-presence${connected ? ' deck-presence-on' : ''}`}
-              role="img"
-              aria-label={connected ? 'Claude connected' : 'Claude not connected'}
-            />
-          </Tooltip>
+          <kbd className="ai-input-kbd">⌘K</kbd>
         </div>
       </div>
-
-      {!connected ? (
-        <div className="ai-hint">
-          <Icon name="bolt" size={12} /> actions work offline · run <code>/cc-review:start</code> to enable
-          <Icon name="sparkle" size={12} /> Claude actions.
-        </div>
-      ) : null}
     </footer>
   );
 }

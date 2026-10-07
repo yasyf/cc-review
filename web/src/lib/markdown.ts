@@ -24,12 +24,24 @@ function suggestionBlock(text: string): string {
   return `<div class="md-suggestion"><div class="md-suggestion-head">Suggested change</div>${body}</div>`;
 }
 
-const markdown = new Marked({
+const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*\n?/i;
+
+const HTML_COMMENT = /<!--[\s\S]*?(?:-->|$)/g;
+
+const markdown: Marked = new Marked({
   gfm: true,
   breaks: true,
   renderer: {
     code({ text, lang }) {
       return lang === 'suggestion' ? suggestionBlock(text) : false;
+    },
+    blockquote({ text }) {
+      const match = ALERT.exec(text);
+      if (!match) return false;
+      const kind = match[1].toLowerCase();
+      const body = this.parser.parse(markdown.lexer(text.slice(match[0].length)));
+      const title = kind.charAt(0).toUpperCase() + kind.slice(1);
+      return `<div class="md-alert md-alert-${kind}"><p class="md-alert-title">${title}</p>${body}</div>`;
     },
   },
 });
@@ -42,5 +54,6 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 });
 
 export function renderMarkdown(source: string): string {
-  return DOMPurify.sanitize(markdown.parse(source, { async: false }), { ADD_ATTR: ['target'] });
+  const html = markdown.parse(source.replace(HTML_COMMENT, ''), { async: false });
+  return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
 }

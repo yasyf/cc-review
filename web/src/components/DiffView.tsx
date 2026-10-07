@@ -22,13 +22,38 @@ import { themes } from '../worker';
 import { AnnotationPopover } from './AnnotationPopover';
 import { CommentThread } from './CommentThread';
 import { FileHeaderControls } from './FileHeaderControls';
+import { FileStrip } from './FileStrip';
 import { FocusPopover } from './FocusPopover';
 import { InlineComposer } from './InlineComposer';
 import { TurnPopover } from './TurnPopover';
 
-const UNSAFE_CSS = TURN_UNSAFE_CSS + IMPORTANCE_UNSAFE_CSS + ANNOTATION_UNSAFE_CSS;
+const SEPARATOR_HEIGHT_PX = 24;
 
-export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref<DiffViewHandle> }) {
+const SEPARATOR_UNSAFE_CSS = `
+[data-separator] { margin: 0; background: transparent; }
+[data-separator-wrapper] { height: ${SEPARATOR_HEIGHT_PX}px; padding: 0; background: transparent; }
+[data-separator-content] {
+  height: ${SEPARATOR_HEIGHT_PX}px;
+  padding: 0 12px;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--diffs-fg-number) 6%, transparent);
+  color: var(--diffs-fg-number);
+  font-size: 12px;
+}
+[data-separator-content]::before { content: "⋯"; margin-right: 8px; letter-spacing: 1px; }
+`;
+
+const UNSAFE_CSS = TURN_UNSAFE_CSS + IMPORTANCE_UNSAFE_CSS + ANNOTATION_UNSAFE_CSS + SEPARATOR_UNSAFE_CSS;
+
+export function DiffView({
+  session,
+  ref,
+  onCurrentSection,
+}: {
+  session: SessionResponse;
+  ref?: Ref<DiffViewHandle>;
+  onCurrentSection?: (sectionKey: string) => void;
+}) {
   const { diffStyle } = useViewPrefs();
   const themeMode = useThemeMode();
   const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
@@ -51,6 +76,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       themeType: themeMode,
       diffStyle,
       stickyHeaders: true,
+      itemMetrics: { hunkSeparatorHeight: SEPARATOR_HEIGHT_PX },
       enableLineSelection: !readOnly,
       enableGutterUtility: !readOnly,
       // The selection commit (pointer-up) is the single open/close authority: never
@@ -80,6 +106,9 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       if (annotation.metadata.kind === 'thread') {
         return <CommentThread commentId={annotation.metadata.commentId} />;
       }
+      if (annotation.metadata.kind === 'strip') {
+        return <FileStrip commentIds={annotation.metadata.commentIds} />;
+      }
       if (!draft || item.type !== 'diff') return null;
       return <InlineComposer draft={draft} fileDiff={item.fileDiff} onClose={closeDraft} />;
     },
@@ -98,7 +127,11 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         className="codeview"
         items={items}
         options={options}
-        onScroll={(_, viewer) => syncCurrentFromScroll(viewer)}
+        onScroll={(_, viewer) => {
+          syncCurrentFromScroll(viewer);
+          const current = currentItemRef.current;
+          if (current && onCurrentSection) onCurrentSection(parseItemId(current).sectionKey);
+        }}
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
       />

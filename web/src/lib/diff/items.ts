@@ -9,6 +9,7 @@ import type { Comment, Section, Side } from '../types';
 // one in-flight comment composer.
 export type AnnotationMeta =
   | { kind: 'thread'; commentId: string }
+  | { kind: 'strip'; commentIds: string[] }
   | { kind: 'composer' };
 
 // A file within the review, identified by its section (`sectionKey === ''` for
@@ -88,9 +89,18 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
 // (version' = base * 2 + (collapsed ? 1 : 0)). Ids and every key (order,
 // expandOverrides, autoCollapse) are itemIds so the same path in two sections
 // never collides.
+function stripAnchor(file: FileDiffMetadata): { side: Side; lineNumber: number } | null {
+  const hunk = file.hunks[0];
+  if (!hunk) return null;
+  return hunk.additionCount > 0
+    ? { side: 'additions', lineNumber: hunk.additionStart }
+    : { side: 'deletions', lineNumber: hunk.deletionStart };
+}
+
 export function buildItems(
   sections: readonly SectionFiles[],
   comments: readonly Comment[],
+  stripComments: readonly Comment[],
   draft: ComposerDraft | null,
   order: ReadonlyMap<string, number>,
   hideReviewed: boolean,
@@ -104,6 +114,12 @@ export function buildItems(
     const list = byItem.get(id) ?? [];
     list.push({ ...anchor, metadata: { kind: 'thread', commentId: comment.id } });
     byItem.set(id, list);
+  }
+
+  const stripByItem = new Map<string, string[]>();
+  for (const comment of stripComments) {
+    const id = commentItemId(comment);
+    stripByItem.set(id, [...(stripByItem.get(id) ?? []), comment.id]);
   }
 
   const draftItemId = draft ? fileItemId(draft.sectionKey, draft.filePath) : null;
@@ -126,7 +142,12 @@ export function buildItems(
 
     for (const file of visible) {
       const id = fileItemId(section.sectionKey, file.name);
-      const threads = byItem.get(id) ?? [];
+      const stripIds = stripByItem.get(id);
+      const anchor = stripIds ? stripAnchor(file) : null;
+      const threads = [
+        ...(stripIds && anchor ? [{ ...anchor, metadata: { kind: 'strip', commentIds: stripIds } satisfies AnnotationMeta }] : []),
+        ...(byItem.get(id) ?? []),
+      ];
       const fileDraft = draftItemId === id ? draft : null;
       const annotations = fileDraft
         ? [
@@ -142,7 +163,8 @@ export function buildItems(
         !fileDraft &&
         ((section.fileStates[file.name]?.reviewed ?? false) || autoCollapse.has(id)) &&
         !expandOverrides.has(id);
-      const base = fileDraft ? 2 * (threads.length + fileDraft.seq) + 1 : 2 * threads.length;
+      const weight = threads.length + (stripIds?.length ?? 0);
+      const base = fileDraft ? 2 * (weight + fileDraft.seq) + 1 : 2 * weight;
       items.push({
         id,
         type: 'diff',
