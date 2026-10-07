@@ -1,14 +1,11 @@
 package ghapp
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/yasyf/cc-review/internal/github"
@@ -28,10 +25,7 @@ var setupPage = template.Must(template.New("setup").Parse(`<!doctype html>
 <script>document.getElementById("manifest").submit()</script>
 `))
 
-var states = struct {
-	sync.Mutex
-	issued map[string]time.Time
-}{issued: map[string]time.Time{}}
+var states = newNonces[struct{}](stateTTL)
 
 type manifest struct {
 	Name               string            `json:"name"`
@@ -54,6 +48,7 @@ type conversion struct {
 	PEM   string `json:"pem"`
 	Owner struct {
 		Login string `json:"login"`
+		Type  string `json:"type"`
 	} `json:"owner"`
 }
 
@@ -66,7 +61,7 @@ func SetupHandler(user *github.Client) http.Handler {
 			http.Error(w, fmt.Sprintf("resolve github viewer: %v", err), http.StatusBadGateway)
 			return
 		}
-		state := issueState()
+		state := states.issue(struct{}{})
 		action := "https://github.com/settings/apps/new"
 		if org := r.URL.Query().Get("org"); org != "" {
 			action = "https://github.com/organizations/" + url.PathEscape(org) + "/settings/apps/new"
@@ -95,11 +90,12 @@ func SetupHandler(user *github.Client) http.Handler {
 }
 
 // CallbackHandler serves GET /github/setup/callback, exchanging the manifest
-// code for the app's credentials, saving them, and redirecting to InstallURL.
+// code for the app's credentials, saving them, and redirecting to the
+// picture page PictureHandler serves.
 func CallbackHandler(user *github.Client, onDone func(App)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if !consumeState(q.Get("state")) {
+		if !states.consume(q.Get("state")) {
 			http.Error(w, "unknown or expired setup state; run `cc-review github setup` again", http.StatusBadRequest)
 			return
 		}
@@ -119,7 +115,8 @@ func CallbackHandler(user *github.Client, onDone func(App)) http.Handler {
 			return
 		}
 		onDone(app)
-		http.Redirect(w, r, app.InstallURL(), http.StatusSeeOther)
+		grant := pictures.issue(picture{app: app, settings: conv.settingsURL()})
+		http.Redirect(w, r, "/github/setup/picture?"+url.Values{"state": {grant}}.Encode(), http.StatusSeeOther)
 	})
 }
 
@@ -130,25 +127,9 @@ func origin(r *http.Request) string {
 	return "http://" + r.Host
 }
 
-func issueState() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	state := hex.EncodeToString(b)
-	states.Lock()
-	defer states.Unlock()
-	for s, at := range states.issued {
-		if now().Sub(at) > stateTTL {
-			delete(states.issued, s)
-		}
+func (c conversion) settingsURL() string {
+	if c.Owner.Type == "Organization" {
+		return "https://github.com/organizations/" + url.PathEscape(c.Owner.Login) + "/settings/apps/" + url.PathEscape(c.Slug)
 	}
-	states.issued[state] = now()
-	return state
-}
-
-func consumeState(state string) bool {
-	states.Lock()
-	defer states.Unlock()
-	at, ok := states.issued[state]
-	delete(states.issued, state)
-	return ok && now().Sub(at) <= stateTTL
+	return "https://github.com/settings/apps/" + url.PathEscape(c.Slug)
 }

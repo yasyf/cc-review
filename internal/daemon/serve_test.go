@@ -139,8 +139,16 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 		t.Fatalf("GET /github/setup = %d with no state: %s", code, page)
 	}
 	callback := "/github/setup/callback?code=good-code&state=" + state[1]
-	if code, location, body := get(callback, true); code != http.StatusSeeOther || location != "https://github.com/apps/cc-review-octo/installations/new" {
-		t.Fatalf("cross-site callback with a valid state = %d Location %q: %s", code, location, body)
+	code, picture, body := get(callback, true)
+	if code != http.StatusSeeOther || !strings.HasPrefix(picture, "/github/setup/picture?state=") {
+		t.Fatalf("cross-site callback with a valid state = %d Location %q: %s", code, picture, body)
+	}
+	if code, _, page := get(picture, true); code != http.StatusOK || !strings.Contains(page, "https://github.com/apps/cc-review-octo/installations/new") {
+		t.Fatalf("cross-site GET %s = %d: %s", picture, code, page)
+	}
+	logoPath := "/github/setup/logo.png?state=" + strings.TrimPrefix(picture, "/github/setup/picture?state=")
+	if code, _, logo := get(logoPath, true); code != http.StatusOK || !strings.HasPrefix(logo, "\x89PNG") {
+		t.Fatalf("cross-site GET %s = %d with %d bytes, want the PNG", logoPath, code, len(logo))
 	}
 	if app, ok, err := ghapp.Load(); err != nil || !ok || app.BotLogin != "cc-review-octo[bot]" {
 		t.Fatalf("Load() after callback = %+v, %v, %v", app, ok, err)
@@ -153,6 +161,8 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 		{"replayed state is rejected by the handler", callback, http.StatusBadRequest},
 		{"unknown state is rejected by the handler", "/github/setup/callback?state=unknown&code=good-code", http.StatusBadRequest},
 		{"missing state is rejected by the handler", "/github/setup/callback?code=good-code", http.StatusBadRequest},
+		{"picture page without a state is rejected by the handler", "/github/setup/picture", http.StatusBadRequest},
+		{"logo without a state is rejected by the handler", "/github/setup/logo.png", http.StatusBadRequest},
 		{"spa shell is public", "/s/some-review", http.StatusOK},
 		{"setup stays guarded", "/github/setup", http.StatusUnauthorized},
 		{"api stays guarded", "/api/session/nope", http.StatusUnauthorized},

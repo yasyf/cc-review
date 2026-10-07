@@ -71,7 +71,12 @@ func newGitHubSetupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			logo, err := ghapp.WriteLogo()
+			if err != nil {
+				return err
+			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "app: "+app.Slug)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "logo: "+logo)
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "install: "+app.InstallURL())
 			return nil
 		},
