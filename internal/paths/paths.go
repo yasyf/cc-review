@@ -40,6 +40,12 @@ func FeedbackPath(reviewID string, version int) string {
 	return filepath.Join(ReviewDir(reviewID), fmt.Sprintf("feedback_%d.json", version))
 }
 
+// Repos is the directory of per-repository blobless git stores.
+func Repos() string { return filepath.Join(StateDir(), "repos") }
+
+// GitHubApp is the cc-review GitHub App's JSON record.
+func GitHubApp() string { return filepath.Join(StateDir(), "github-app.json") }
+
 // EnsureReviewDir creates a review's artifact dir (0700) if missing. It also
 // creates the per-subject cursor dir cc-interact's stream consumers write into.
 func EnsureReviewDir(reviewID string) error { return App().EnsureSubjectDir(reviewID) }
