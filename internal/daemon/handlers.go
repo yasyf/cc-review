@@ -700,8 +700,6 @@ func (rv *review) handleReply(hc ccd.HandlerCtx) ccd.Reply {
 	return ccd.Reply{OK: true}
 }
 
-// checkClaudeWrite reports whether reviewID is a PR review, whose Claude writes
-// post as the cc-review GitHub App; it fails when the app cannot write there.
 func (rv *review) checkClaudeWrite(ctx context.Context, st *store.Store, reviewID string) (bool, error) {
 	meta, _, err := st.GetReviewMeta(ctx, reviewID)
 	if err != nil {
