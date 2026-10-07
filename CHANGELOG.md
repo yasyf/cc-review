@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-07
+
 ### Added
 
 - Pull request reviews. `cc-review start --pr <url|owner/name#N|#N|N>` opens a
