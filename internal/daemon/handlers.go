@@ -707,7 +707,7 @@ func (rv *review) checkClaudeWrite(ctx context.Context, st *store.Store, reviewI
 	if err != nil {
 		return false, err
 	}
-	if meta.Kind != reviewKindPR {
+	if meta.Kind != store.ReviewKindPR {
 		return false, nil
 	}
 	repo, err := outbound.ParseRepo(meta.Repo)
@@ -719,9 +719,9 @@ func (rv *review) checkClaudeWrite(ctx context.Context, st *store.Store, reviewI
 
 func syncState(pr bool) string {
 	if pr {
-		return outbound.SyncPosting
+		return store.SyncPosting
 	}
-	return outbound.SyncLocal
+	return store.SyncLocal
 }
 
 // handleAnswer records a post-submit drain answer against a question or ask

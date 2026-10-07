@@ -19,11 +19,6 @@ import (
 )
 
 const (
-	SyncLocal   = "local"
-	SyncPosting = "posting"
-	SyncSynced  = "synced"
-	SyncFailed  = "failed"
-
 	VerdictComment        = "COMMENT"
 	VerdictApprove        = "APPROVE"
 	VerdictRequestChanges = "REQUEST_CHANGES"
@@ -135,7 +130,7 @@ func (s *Syncer) Retry(ctx context.Context, reviewID string, commentID, replyID 
 		if r.CommentID != commentID {
 			return fmt.Errorf("reply %d is not on comment %d: %w", replyID, commentID, store.ErrNotFound)
 		}
-		if r.SyncState != SyncFailed {
+		if r.SyncState != store.SyncFailed {
 			return fmt.Errorf("reply %d is %s: %w", replyID, r.SyncState, ErrNotFailed)
 		}
 		if err := s.markReply(ctx, r); err != nil {
@@ -148,7 +143,7 @@ func (s *Syncer) Retry(ctx context.Context, reviewID string, commentID, replyID 
 	if err != nil {
 		return err
 	}
-	if c.SyncState != SyncFailed {
+	if c.SyncState != store.SyncFailed {
 		return fmt.Errorf("comment %d is %s: %w", commentID, c.SyncState, ErrNotFailed)
 	}
 	if c.RemoteID != "" {
@@ -218,14 +213,14 @@ func (s *Syncer) postComment(ctx context.Context, commentID int64) error {
 	}
 	remote, threadID, err := s.createComment(ctx, st, c)
 	if err != nil {
-		return s.finishComment(ctx, c.ID, SyncFailed, "", "", "", err)
+		return s.finishComment(ctx, c.ID, store.SyncFailed, "", "", "", err)
 	}
 	if c.Status == "resolved" {
 		err = s.user.ResolveThread(ctx, threadID, true)
 	}
-	state := SyncSynced
+	state := store.SyncSynced
 	if err != nil {
-		state = SyncFailed
+		state = store.SyncFailed
 	}
 	return s.finishComment(ctx, c.ID, state, remoteID(remote), threadID, remote.URL, err)
 }
@@ -246,9 +241,9 @@ func (s *Syncer) postReply(ctx context.Context, replyID int64) error {
 	}
 	remote, err := s.createReply(ctx, st, r)
 	if err != nil {
-		return s.finishReply(ctx, r, SyncFailed, "", "", err)
+		return s.finishReply(ctx, r, store.SyncFailed, "", "", err)
 	}
-	return s.finishReply(ctx, r, SyncSynced, remoteID(remote), remote.URL, nil)
+	return s.finishReply(ctx, r, store.SyncSynced, remoteID(remote), remote.URL, nil)
 }
 
 func (s *Syncer) createReply(ctx context.Context, st *store.Store, r store.Reply) (github.RemoteComment, error) {
@@ -277,13 +272,13 @@ func (s *Syncer) syncResolved(ctx context.Context, commentID int64) error {
 		return err
 	}
 	if c.RemoteThreadID == "" {
-		return s.finishComment(ctx, c.ID, SyncFailed, c.RemoteID, "", c.RemoteURL,
+		return s.finishComment(ctx, c.ID, store.SyncFailed, c.RemoteID, "", c.RemoteURL,
 			fmt.Errorf("comment %d has no GitHub thread to resolve", c.ID))
 	}
 	if err := s.user.ResolveThread(ctx, c.RemoteThreadID, c.Status == "resolved"); err != nil {
-		return s.finishComment(ctx, c.ID, SyncFailed, c.RemoteID, c.RemoteThreadID, c.RemoteURL, err)
+		return s.finishComment(ctx, c.ID, store.SyncFailed, c.RemoteID, c.RemoteThreadID, c.RemoteURL, err)
 	}
-	return s.finishComment(ctx, c.ID, SyncSynced, c.RemoteID, c.RemoteThreadID, c.RemoteURL, nil)
+	return s.finishComment(ctx, c.ID, store.SyncSynced, c.RemoteID, c.RemoteThreadID, c.RemoteURL, nil)
 }
 
 func (s *Syncer) target(ctx context.Context, st *store.Store, c store.Comment, author string) (github.PRRef, store.Section, *github.Client, error) {
@@ -304,7 +299,7 @@ func (s *Syncer) target(ctx context.Context, st *store.Store, c store.Comment, a
 		return github.PRRef{}, store.Section{}, nil, err
 	}
 	pr := github.PRRef{Repo: repo, Number: sec.PRNumber}
-	if author != store.OriginClaude {
+	if author != store.AuthorClaude {
 		return pr, sec, s.user, nil
 	}
 	client, err := s.app(ctx, repo)
@@ -317,11 +312,11 @@ func (s *Syncer) markComment(ctx context.Context, commentID int64) error {
 	if err != nil {
 		return err
 	}
-	return s.finishComment(ctx, c.ID, SyncPosting, c.RemoteID, c.RemoteThreadID, c.RemoteURL, nil)
+	return s.finishComment(ctx, c.ID, store.SyncPosting, c.RemoteID, c.RemoteThreadID, c.RemoteURL, nil)
 }
 
 func (s *Syncer) markReply(ctx context.Context, r store.Reply) error {
-	return s.finishReply(ctx, r, SyncPosting, r.RemoteID, r.RemoteURL, nil)
+	return s.finishReply(ctx, r, store.SyncPosting, r.RemoteID, r.RemoteURL, nil)
 }
 
 func (s *Syncer) finishComment(ctx context.Context, commentID int64, state, remoteID, threadID, url string, cause error) error {

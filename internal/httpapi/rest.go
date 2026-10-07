@@ -23,8 +23,6 @@ import (
 	"github.com/yasyf/cc-review/internal/wire"
 )
 
-const reviewKindPR = "pr"
-
 // --- wire types ------------------------------------------------------------
 
 type sessionResponse struct {
@@ -925,7 +923,7 @@ func (s *Server) submitVerdict(ctx context.Context, reviewID string, req submitR
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if meta.Kind != reviewKindPR {
+	if meta.Kind != store.ReviewKindPR {
 		if req.Verdict != "" || req.Summary != "" {
 			return http.StatusBadRequest, errors.New("verdict and summary apply only to pull request reviews")
 		}
@@ -980,14 +978,14 @@ func (s *Server) submitVerdict(ctx context.Context, reviewID string, req submitR
 
 func (s *Server) isPRReview(ctx context.Context, reviewID string) (bool, error) {
 	meta, _, err := s.st().GetReviewMeta(ctx, reviewID)
-	return meta.Kind == reviewKindPR, err
+	return meta.Kind == store.ReviewKindPR, err
 }
 
 func syncState(pr bool) string {
 	if pr {
-		return outbound.SyncPosting
+		return store.SyncPosting
 	}
-	return outbound.SyncLocal
+	return store.SyncLocal
 }
 
 func (s *Server) emit(ctx context.Context, reviewID, origin, typ string, version int, fields map[string]any) {

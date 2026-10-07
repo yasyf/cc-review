@@ -72,8 +72,6 @@ const (
 
 	urlEnv = "CC_REVIEW_URL"
 
-	reviewKindPR = "pr"
-
 	gateBlockReason = "An open `cc-review` blocks edits until the reviewer presses Submit. Answer their comments with `cc-review reply` and resume editing after submit."
 	gateErrorReason = "Edits are blocked because the review status could not be read. Run `cc-review status`, then `cc-review stop` if the daemon is wedged."
 )
