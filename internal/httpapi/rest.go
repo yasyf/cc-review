@@ -378,6 +378,10 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("subject %q (want line | file)", req.Subject), http.StatusBadRequest)
 		return
 	}
+	if subject == "line" && req.FilePath == "" {
+		http.Error(w, "a line comment needs a filePath", http.StatusBadRequest)
+		return
+	}
 	pr, err := s.isPRReview(ctx, version.ReviewID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

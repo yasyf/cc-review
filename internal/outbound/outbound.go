@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -108,8 +107,16 @@ func (s *Syncer) PostReplyNow(ctx context.Context, reviewID string, replyID int6
 }
 
 // SyncResolved marks a comment posting and queues mirroring its current
-// open/resolved status onto its GitHub thread.
+// open/resolved status onto its GitHub thread. A PR conversation comment has
+// no thread, so its status stays local.
 func (s *Syncer) SyncResolved(ctx context.Context, reviewID string, commentID int64) error {
+	c, err := store.New(s.db()).GetComment(ctx, commentID)
+	if err != nil {
+		return err
+	}
+	if conversation(c) {
+		return nil
+	}
 	if err := s.markComment(ctx, commentID); err != nil {
 		return err
 	}
@@ -215,20 +222,24 @@ func (s *Syncer) postComment(ctx context.Context, commentID int64) error {
 	if err != nil {
 		return s.finishComment(ctx, c.ID, store.SyncFailed, "", "", "", err)
 	}
-	if c.Status == "resolved" {
+	if c.Status == "resolved" && threadID != "" {
 		err = s.user.ResolveThread(ctx, threadID, true)
 	}
 	state := store.SyncSynced
 	if err != nil {
 		state = store.SyncFailed
 	}
-	return s.finishComment(ctx, c.ID, state, remoteID(remote), threadID, remote.URL, err)
+	return s.finishComment(ctx, c.ID, state, remote.NodeID, threadID, remote.URL, err)
 }
 
 func (s *Syncer) createComment(ctx context.Context, st *store.Store, c store.Comment) (github.RemoteComment, string, error) {
 	pr, sec, client, err := s.target(ctx, st, c, c.Author)
 	if err != nil {
 		return github.RemoteComment{}, "", err
+	}
+	if conversation(c) {
+		remote, err := client.CreateIssueComment(ctx, pr, c.Body)
+		return remote, "", err
 	}
 	return client.CreateReviewComment(ctx, pr, newReviewComment(c, sec.HeadRef))
 }
@@ -243,7 +254,7 @@ func (s *Syncer) postReply(ctx context.Context, replyID int64) error {
 	if err != nil {
 		return s.finishReply(ctx, r, store.SyncFailed, "", "", err)
 	}
-	return s.finishReply(ctx, r, store.SyncSynced, remoteID(remote), remote.URL, nil)
+	return s.finishReply(ctx, r, store.SyncSynced, remote.NodeID, remote.URL, nil)
 }
 
 func (s *Syncer) createReply(ctx context.Context, st *store.Store, r store.Reply) (github.RemoteComment, error) {
@@ -254,15 +265,14 @@ func (s *Syncer) createReply(ctx context.Context, st *store.Store, r store.Reply
 	if parent.RemoteID == "" {
 		return github.RemoteComment{}, fmt.Errorf("comment %d is not on GitHub yet: retry it first", parent.ID)
 	}
-	inReplyTo, err := strconv.ParseInt(parent.RemoteID, 10, 64)
-	if err != nil {
-		return github.RemoteComment{}, fmt.Errorf("comment %d remote id %q: %w", parent.ID, parent.RemoteID, err)
-	}
 	pr, _, client, err := s.target(ctx, st, parent, r.Origin)
 	if err != nil {
 		return github.RemoteComment{}, err
 	}
-	return client.ReplyToReviewComment(ctx, pr, inReplyTo, replyBody(r))
+	if conversation(parent) {
+		return client.CreateIssueComment(ctx, pr, replyBody(r))
+	}
+	return client.ReplyToThread(ctx, parent.RemoteThreadID, replyBody(r))
 }
 
 func (s *Syncer) syncResolved(ctx context.Context, commentID int64) error {
@@ -415,8 +425,8 @@ func replyBody(r store.Reply) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func remoteID(c github.RemoteComment) string {
-	return strconv.FormatInt(c.DatabaseID, 10)
+func conversation(c store.Comment) bool {
+	return c.Subject == "file" && c.FilePath == ""
 }
 
 func errText(err error) string {
