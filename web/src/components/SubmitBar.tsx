@@ -4,7 +4,8 @@ import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
 import { STATUS_NOTICES } from '../lib/status';
 import type { SessionResponse } from '../lib/types';
-import { Button } from './ui/Button';
+import { useSidebarLayout } from '../lib/sidebar-layout';
+import { Button, IconButton } from './ui/Button';
 import { ThemeToggle } from './ui/ThemeToggle';
 
 export function SubmitBar({ session }: { session: SessionResponse }) {
@@ -12,6 +13,7 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   const submit = useSubmit(slug);
   const close = useClose(slug);
   const { connected } = useEventStream();
+  const { mode, toggle } = useSidebarLayout();
 
   const status = session.review.status;
   // Claude-authored comments are informational annotations, not reviewer TODOs.
@@ -29,6 +31,13 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   return (
     <header className="submit-bar">
       <div className="meta">
+        <IconButton
+          icon="sidebar"
+          label={mode === 'docked' || mode === 'overlay' ? 'Hide sidebar' : 'Show sidebar'}
+          shortcut="["
+          aria-pressed={mode !== 'hidden'}
+          onClick={toggle}
+        />
         <strong className="brand">cc-review</strong>
         <span className="branch">{session.review.branch}</span>
         <span className="dim">v{session.version}</span>

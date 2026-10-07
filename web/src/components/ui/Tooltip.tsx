@@ -52,7 +52,9 @@ export function Tooltip({
       className="tooltip-anchor"
       onMouseEnter={show}
       onMouseLeave={hide}
-      onFocus={show}
+      onFocus={(e) => {
+        if (e.target.matches(':focus-visible')) show();
+      }}
       onBlur={hide}
       onMouseDown={hide}
       onKeyDown={(e) => {

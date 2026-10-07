@@ -5,6 +5,7 @@ const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ['v'], label: 'Toggle Viewed, then advance' },
   { keys: ['c'], label: 'Collapse / expand file' },
   { keys: ['n', 'p'], label: 'Next / previous comment' },
+  { keys: ['['], label: 'Show / hide the sidebar' },
   { keys: ['⌘', 'K'], label: 'Open the command deck' },
   { keys: ['?'], label: 'Toggle this help' },
   { keys: ['Esc'], label: 'Close help' },
