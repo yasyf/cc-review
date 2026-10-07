@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-07
+
 ### Added
 
 - A default picture for the GitHub App. GitHub has no API or manifest field for
