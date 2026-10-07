@@ -20,7 +20,7 @@ function putComment(session: SessionResponse, comment: Comment): SessionResponse
   return { ...session, comments };
 }
 
-function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionResponse {
+export function reduceSession(session: SessionResponse, ev: ReviewEvent): SessionResponse {
   switch (ev.type) {
     case 'comment.created':
     case 'comment.updated':

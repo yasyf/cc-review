@@ -30,6 +30,6 @@
     "jsdom": "^29",
     "typescript": "^5",
     "vite": "^7",
-    "vitest": "^3"
+    "vitest": "^5"
   }
 }
