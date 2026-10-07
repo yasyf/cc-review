@@ -340,11 +340,15 @@ func (s *Server) handleResolve(ctx context.Context, req Request) Response {
 }
 
 // handleGuardEdit mirrors the daemon's core guard-edit driving cc-review's gate:
-// resolve the subject, fail closed on a resolve error, allow when none, else the
-// gate verdict plus the decision-ledger observation.
+// resolve the subject in the edited file's scope (the cwd's when the input names
+// no file), fail closed on a resolve error, allow when none, else the gate verdict.
 func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
 	w := subject.Window{Session: req.Session, ClaudePID: req.ClaudePID}
-	sub, ok, err := s.resolver.Find(ctx, w, repoScope(ctx, req.Cwd))
+	scope := req.Cwd
+	if dir := ccd.EditDir(req.ToolInput); dir != "" {
+		scope = dir
+	}
+	sub, ok, err := s.resolver.Find(ctx, w, repoScope(ctx, scope))
 	if err != nil {
 		return Response{OK: true, Allow: false, Reason: gateErrorReason}
 	}
