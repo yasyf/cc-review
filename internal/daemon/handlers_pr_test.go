@@ -230,3 +230,75 @@ func TestStartPRRefusesToResumeAnotherReview(t *testing.T) {
 		}
 	}
 }
+
+func TestStartPROutsideAnyRepoKeysTheReviewToTheCwd(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testServer(t)
+	prStack(t, s, newPRRemote(t))
+	cwd := t.TempDir()
+
+	first := prStart(ctx, t, s, cwd, 2)
+	sub, err := s.resolver.Store.Get(ctx, first.ReviewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.Scope != cwd {
+		t.Fatalf("scope = %q, want the cwd %q", sub.Scope, cwd)
+	}
+	plain := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: cwd})
+	if !plain.OK || plain.ReviewID != first.ReviewID || plain.PR == nil || plain.Version != 1 {
+		t.Fatalf("plain start from the same cwd = %+v, want the PR review reused", plain)
+	}
+}
+
+func TestRecapturePRTreatsAMovedHeadAsAChange(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	remote := newPRRemote(t)
+	gh := prStack(t, s, remote)
+	first := prStart(ctx, t, s, repo, 2)
+
+	if err := s.rv.recapturePR(ctx, first.ReviewID); err != nil {
+		t.Fatal(err)
+	}
+	if n := countVersions(ctx, t, s, first.ReviewID); n != 1 {
+		t.Fatalf("versions after an unchanged recapture = %d, want 1", n)
+	}
+
+	gitRun(t, remote.src, "checkout", "-q", "feat-b")
+	gitRun(t, remote.src, "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "empty")
+	moved := strings.TrimSpace(gitRun(t, remote.src, "rev-parse", "HEAD"))
+	remote.publish(t, 2, "feat-b")
+	gh.UpdatePR(prRepo, 2, func(pr *github.PullRequest) { pr.HeadRefOid = moved })
+	gh.SetMergeBase(prRepo, remote.headA, moved, remote.headA)
+
+	if err := s.rv.recapturePR(ctx, first.ReviewID); err != nil {
+		t.Fatal(err)
+	}
+	got := shapes(t, s.latestSections(ctx, t, first.ReviewID))
+	if n := countVersions(ctx, t, s, first.ReviewID); n != 2 || got[1].HeadRef != moved || got[1].Paths != "b.go" {
+		t.Fatalf("versions = %d, sections = %+v, want v2 with feat-b at the moved head and the same diff", n, got)
+	}
+	if n := countEvents(t, s, first.ReviewID, store.EventVersionCreated); n != 2 {
+		t.Fatalf("version.created events = %d, want 2", n)
+	}
+	if err := s.rv.recapturePR(ctx, first.ReviewID); err != nil {
+		t.Fatal(err)
+	}
+	if n := countVersions(ctx, t, s, first.ReviewID); n != 2 {
+		t.Fatalf("versions after a settled recapture = %d, want 2", n)
+	}
+}
+
+func TestRecapturePRRefusesALocalReview(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	writeFile(t, repo, "pending.go", "package p\n")
+	resp := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+	if !resp.OK {
+		t.Fatalf("local start: %s", resp.Error)
+	}
+	if err := s.rv.recapturePR(ctx, resp.ReviewID); err == nil || !strings.Contains(err.Error(), "is not a pull-request review") {
+		t.Fatalf("recapturePR(local) = %v, want a refusal", err)
+	}
+}

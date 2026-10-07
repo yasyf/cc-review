@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -80,8 +81,10 @@ var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 // the shared decision ledger, the daemon logger, the SSE inject hook
 // ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through,
 // the GitHub client and clone URL a pull-request capture reads through, the
-// hook that hands an opened pull-request review to its poller, and the ids of
-// the turns this daemon opened on a fresh tree snapshot.
+// hook that hands an opened pull-request review to its poller, the DB, Append
+// chokepoint, and subject store an off-RPC recapture writes through, the
+// per-review locks serializing version creation, and the ids of the turns this
+// daemon opened on a fresh tree snapshot.
 type review struct {
 	decisions      *decisions.Log
 	log            *log.Logger
@@ -89,6 +92,10 @@ type review struct {
 	gh             *github.Client
 	cloneURL       func(github.Repo) string
 	prReviewOpened func(ctx context.Context, reviewID string)
+	db             *sql.DB
+	append         ccd.AppendFunc
+	subjects       subject.Store
+	reviewLocks    sync.Map
 	sliceWarn      sync.Once
 
 	snapshotMu  sync.Mutex
@@ -142,6 +149,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		return err
 	}
 	rv.injectEvent = s.InjectEvent
+	rv.db, rv.append, rv.subjects = s.DB(), s.Append, ccstore.NewSubjectStore(s.DB())
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)

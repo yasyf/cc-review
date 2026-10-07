@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 	ccevent "github.com/yasyf/cc-interact/event"
@@ -128,6 +129,8 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		info.PR = prInfoFor(capture)
 		info.GitHubSetup = githubSetup(hc.Ctx, capture.PR.Repo)
 	}
+	unlock := rv.lockReview(sub.ID)
+	defer unlock()
 	// An unchanged worktree on resume reuses the latest version. A section whose
 	// patch is unreadable (crash mid-rename) misses the dedup and gets a fresh one.
 	if resumed {
@@ -139,7 +142,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 				return errReply(err.Error())
 			}
 			if sectionsUnchanged(existing, capture) {
-				if err := rv.recordPullRequests(hc, st, sub.ID, latest.VersionNumber, capture); err != nil {
+				if err := rv.recordPullRequests(hc.Ctx, st, hc.Append, sub.ID, latest.VersionNumber, capture); err != nil {
 					return errReply(err.Error())
 				}
 				info.Stack = nil
@@ -147,12 +150,25 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 			}
 		}
 	}
-	if err := paths.EnsureReviewDir(sub.ID); err != nil {
+	version, err := rv.createVersion(hc.Ctx, st, hc.Subjects.Store, hc.Append, sub, capture)
+	if err != nil {
 		return errReply(err.Error())
+	}
+	cs := rv.channelStateProbed(hc, sub.ID)
+	reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, version)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	return rv.startReply(hc, sub, version, resumed, cs, info, reoffer)
+}
+
+func (rv *review) createVersion(ctx context.Context, st *store.Store, subjects subject.Store, ap ccd.AppendFunc, sub subject.Subject, capture captured) (int, error) {
+	if err := paths.EnsureReviewDir(sub.ID); err != nil {
+		return 0, err
 	}
 	sectionInputs := make([]store.SectionInput, len(capture.Sections))
 	for i, sec := range capture.Sections {
-		classified := generated.Classify(hc.Ctx, capture.RepoRoot, sec.Files)
+		classified := generated.Classify(ctx, capture.RepoRoot, sec.Files)
 		cfiles := make([]store.ClassifiedFile, len(sec.Files))
 		for j, f := range sec.Files {
 			flags := classified[f.Path]
@@ -160,7 +176,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		}
 		filesJSON, err := json.Marshal(cfiles)
 		if err != nil {
-			return errReply(err.Error())
+			return 0, err
 		}
 		sectionInputs[i] = store.SectionInput{
 			Position: i, Branch: sec.Branch, ParentBranch: sec.ParentBranch,
@@ -177,49 +193,49 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		tmp, err := os.CreateTemp(paths.ReviewDir(sub.ID), "snap-*.tmp")
 		if err != nil {
 			removeAll(tmps)
-			return errReply(err.Error())
+			return 0, err
 		}
 		tmps[i] = tmp.Name()
 		if _, err := tmp.WriteString(sec.PatchText); err != nil {
 			_ = tmp.Close()
 			removeAll(tmps)
-			return errReply(err.Error())
+			return 0, err
 		}
 		if err := tmp.Close(); err != nil {
 			removeAll(tmps)
-			return errReply(err.Error())
+			return 0, err
 		}
 	}
-	v, sections, err := st.CreateVersion(hc.Ctx, sub.ID, capture.Branch, capture.BaseRef, sub.SessionID, sectionInputs)
+	v, sections, err := st.CreateVersion(ctx, sub.ID, capture.Branch, capture.BaseRef, sub.SessionID, sectionInputs)
 	if err != nil {
 		removeAll(tmps)
-		return errReply(err.Error())
+		return 0, err
 	}
 	for _, sec := range sections {
 		patchPath := paths.SectionSnapshotPath(sub.ID, v.VersionNumber, sec.Position)
 		if err := os.Rename(tmps[sec.Position], patchPath); err != nil {
 			removeAll(tmps)
-			return errReply(err.Error())
+			return 0, err
 		}
-		if err := st.UpdateSectionPatchPath(hc.Ctx, sec.ID, patchPath); err != nil {
+		if err := st.UpdateSectionPatchPath(ctx, sec.ID, patchPath); err != nil {
 			removeAll(tmps)
-			return errReply(err.Error())
+			return 0, err
 		}
 	}
 	// Attribution holds only on the pending section; a clean stack has none.
 	for _, sec := range sections {
 		if sec.Pending {
-			rv.attributeVersion(hc.Ctx, st, capture.RepoRoot, sec.ID, capture.Sections[sec.Position].PatchText)
+			rv.attributeVersion(ctx, st, capture.RepoRoot, sec.ID, capture.Sections[sec.Position].PatchText)
 			break
 		}
 	}
 	// A new version reopens the review (a prior round may have been submitted), so
 	// the edit guard blocks edits again until this round is submitted.
 	if sub.Status != statusOpen {
-		if err := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, statusOpen); err != nil {
-			return errReply(err.Error())
+		if err := subjects.SetStatus(ctx, sub.ID, statusOpen); err != nil {
+			return 0, err
 		}
-		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventStatusChanged,
+		emit(ctx, ap, sub.ID, ccevent.OriginSystem, store.EventStatusChanged,
 			v.VersionNumber, map[string]any{"status": statusOpen})
 	}
 	// The carry upsert lands before version.created (the SPA refetches on it),
@@ -230,57 +246,98 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 			fingerprints[store.SectionFileKey{SectionKey: sec.Key(), Path: f.Path}] = f.Fingerprint
 		}
 	}
-	carried, allCarried, err := rv.carrySectionOrganizations(hc.Ctx, st, sub.ID, sections)
+	carried, allCarried, err := rv.carrySectionOrganizations(ctx, st, sub.ID, sections)
 	if err != nil {
-		return errReply(err.Error())
+		return 0, err
 	}
-	unmarked, err := st.UnreviewChangedFiles(hc.Ctx, sub.ID, fingerprints)
+	unmarked, err := st.UnreviewChangedFiles(ctx, sub.ID, fingerprints)
 	if err != nil {
-		return errReply(err.Error())
+		return 0, err
 	}
-	emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventVersionCreated, v.VersionNumber, nil)
-	if err := rv.recordPullRequests(hc, st, sub.ID, v.VersionNumber, capture); err != nil {
-		return errReply(err.Error())
+	emit(ctx, ap, sub.ID, ccevent.OriginSystem, store.EventVersionCreated, v.VersionNumber, nil)
+	if err := rv.recordPullRequests(ctx, st, ap, sub.ID, v.VersionNumber, capture); err != nil {
+		return 0, err
 	}
 	if len(unmarked) > 0 {
 		states := make([]map[string]any, 0, len(unmarked))
 		for _, fs := range unmarked {
 			states = append(states, map[string]any{"sectionKey": fs.SectionKey, "path": fs.Path, "reviewed": false, "hidden": fs.Hidden})
 		}
-		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventFileStates, v.VersionNumber,
+		emit(ctx, ap, sub.ID, ccevent.OriginSystem, store.EventFileStates, v.VersionNumber,
 			map[string]any{"states": states})
 	}
 	// A question parked on a now-superseded version can never be re-offered or
 	// answered, so fail it rather than leave the chip lit forever.
-	if err := failStrandedQuestions(hc.Ctx, st, hc.Append, sub.ID, v.VersionNumber); err != nil {
-		return errReply(err.Error())
+	if err := failStrandedQuestions(ctx, st, ap, sub.ID, v.VersionNumber); err != nil {
+		return 0, err
 	}
-	cs := rv.channelStateProbed(hc, sub.ID)
 	// A carried organization is the agent's own content reattached, so its event
 	// keeps agent origin (the channel stream filters agent-origin frames).
 	for _, sec := range sections {
 		if org, ok := carried[sec.ID]; ok {
-			emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginAgent, store.EventOrganizationUpdated, v.VersionNumber,
+			emit(ctx, ap, sub.ID, ccevent.OriginAgent, store.EventOrganizationUpdated, v.VersionNumber,
 				map[string]any{"sectionKey": sec.Key(), "organization": org})
 		}
 	}
 	if allCarried {
-		if err := closeStaleOrganizeRequests(hc.Ctx, st, hc.Append, sub.ID, v.VersionNumber,
+		if err := closeStaleOrganizeRequests(ctx, st, ap, sub.ID, v.VersionNumber,
 			fmt.Sprintf("diff unchanged; organization carried to version %d", v.VersionNumber)); err != nil {
-			return errReply(err.Error())
+			return 0, err
 		}
 	} else {
-		organize, err := st.CreateAIRequest(hc.Ctx, sub.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
+		organize, err := st.CreateAIRequest(ctx, sub.ID, v.VersionNumber, store.OriginSystem, organizePrompt)
 		if err != nil {
-			return errReply(err.Error())
+			return 0, err
 		}
-		emitAIRequest(hc.Ctx, hc.Append, ccevent.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
+		emitAIRequest(ctx, ap, ccevent.OriginSystem, store.EventAIRequestCreated, v.VersionNumber, organize)
 	}
-	reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, v.VersionNumber)
+	return v.VersionNumber, nil
+}
+
+func (rv *review) recapturePR(ctx context.Context, reviewID string) error {
+	st := store.New(rv.db)
+	meta, ok, err := st.GetReviewMeta(ctx, reviewID)
 	if err != nil {
-		return errReply(err.Error())
+		return err
 	}
-	return rv.startReply(hc, sub, v.VersionNumber, resumed, cs, info, reoffer)
+	if !ok || meta.Kind != store.ReviewKindPR {
+		return fmt.Errorf("review %s is not a pull-request review", reviewID)
+	}
+	ref, err := prRefOf(meta)
+	if err != nil {
+		return err
+	}
+	capture, err := rv.capturePR(ctx, ref)
+	if err != nil {
+		return err
+	}
+	unlock := rv.lockReview(reviewID)
+	defer unlock()
+	latest, ok, err := st.LatestVersion(ctx, reviewID)
+	if err != nil {
+		return err
+	}
+	if ok {
+		existing, err := st.ListSections(ctx, latest.ID)
+		if err != nil {
+			return err
+		}
+		if sectionsUnchanged(existing, capture) {
+			return nil
+		}
+	}
+	sub, err := rv.subjects.Get(ctx, reviewID)
+	if err != nil {
+		return err
+	}
+	_, err = rv.createVersion(ctx, st, rv.subjects, rv.append, sub, capture)
+	return err
+}
+
+func (rv *review) lockReview(reviewID string) func() {
+	mu, _ := rv.reviewLocks.LoadOrStore(reviewID, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
 }
 
 // reuseVersion handles a resume whose capture matches the latest version
@@ -372,7 +429,7 @@ func (c captured) kind() string {
 // current refs; a flat review diffs its pinned base verbatim.
 func (rv *review) captureForResume(hc ccd.HandlerCtx, meta store.ReviewMeta) (captured, error) {
 	if meta.Kind == store.ReviewKindPR {
-		ref, err := github.ParsePRRef(fmt.Sprintf("%s#%d", meta.Repo, meta.PRNumber), nil)
+		ref, err := prRefOf(meta)
 		if err != nil {
 			return captured{}, err
 		}
@@ -467,6 +524,10 @@ func (rv *review) capturePR(ctx context.Context, ref github.PRRef) (captured, er
 	return capture, nil
 }
 
+func prRefOf(meta store.ReviewMeta) (github.PRRef, error) {
+	return github.ParsePRRef(fmt.Sprintf("%s#%d", meta.Repo, meta.PRNumber), nil)
+}
+
 func samePR(slug string, meta store.ReviewMeta, ref *github.PRRef) error {
 	if ref == nil || (meta.Kind == store.ReviewKindPR && meta.Repo == ref.Repo.String() && meta.PRNumber == ref.Number) {
 		return nil
@@ -474,22 +535,22 @@ func samePR(slug string, meta store.ReviewMeta, ref *github.PRRef) error {
 	return fmt.Errorf("review %s is not a review of %s; pass --new to start one", slug, ref)
 }
 
-func (rv *review) recordPullRequests(hc ccd.HandlerCtx, st *store.Store, reviewID string, version int, capture captured) error {
+func (rv *review) recordPullRequests(ctx context.Context, st *store.Store, ap ccd.AppendFunc, reviewID string, version int, capture captured) error {
 	if capture.PR == nil {
 		return nil
 	}
-	viewer, err := rv.gh.Viewer(hc.Ctx)
+	viewer, err := rv.gh.Viewer(ctx)
 	if err != nil {
 		return err
 	}
 	for _, pr := range capture.PRs {
 		row := storePullRequest(reviewID, pr, viewer)
-		changed, err := st.UpsertPullRequest(hc.Ctx, row)
+		changed, err := st.UpsertPullRequest(ctx, row)
 		if err != nil {
 			return err
 		}
 		if changed {
-			emit(hc.Ctx, hc.Append, reviewID, ccevent.OriginSystem, store.EventPRUpdated, version,
+			emit(ctx, ap, reviewID, ccevent.OriginSystem, store.EventPRUpdated, version,
 				map[string]any{"pullRequest": wire.ToPullRequest(row)})
 		}
 	}
@@ -553,15 +614,17 @@ func stackInfoFor(capture captured) *StackInfo {
 }
 
 // sectionsUnchanged reports whether an existing version matches a fresh capture
-// position-for-position: same branch, parent, pending, and patch bytes (refs
-// excluded — a no-op restack rewrites shas, not diffs).
+// position-for-position: same branch, parent, pending, and patch bytes. Local
+// refs are excluded — a no-op restack rewrites shas, not diffs — but a PR head
+// is what GitHub anchors comments to, so a moved PR head is a change.
 func sectionsUnchanged(existing []store.Section, capture captured) bool {
 	if len(existing) != len(capture.Sections) {
 		return false
 	}
 	for i, sec := range existing {
 		want := capture.Sections[i]
-		if sec.Branch != want.Branch || sec.ParentBranch != want.ParentBranch || sec.Pending != want.Pending {
+		if sec.Branch != want.Branch || sec.ParentBranch != want.ParentBranch || sec.Pending != want.Pending ||
+			(capture.PR != nil && sec.HeadRef != want.HeadRef) {
 			return false
 		}
 		prev, err := os.ReadFile(sec.PatchPath)

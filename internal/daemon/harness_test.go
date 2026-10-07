@@ -191,6 +191,7 @@ func newServer(cc *ccstore.Store, ledger *decisions.Log) *Server {
 		s.injected = append(s.injected, injectCall{subjectID, consumer, pid, payload})
 		return 1
 	}
+	s.rv.db, s.rv.append, s.rv.subjects = cc.DB(), s.appendEvent, s.resolver.Store
 	s.rv.prReviewOpened = func(_ context.Context, reviewID string) {
 		s.openedMu.Lock()
 		defer s.openedMu.Unlock()
