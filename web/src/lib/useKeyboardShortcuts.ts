@@ -12,13 +12,14 @@ export function useKeyboardShortcuts(
   diffRef: RefObject<DiffViewHandle | null>,
   help: { helpOpen: boolean; setHelpOpen: Dispatch<SetStateAction<boolean>> },
 ) {
-  const { setHelpOpen } = help;
+  const { helpOpen, setHelpOpen } = help;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Cmd/Ctrl+K belongs to the Command Deck (AiBar); typing surfaces own
       // every other key (Esc included — that's the composer's).
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
+      if (helpOpen && e.key !== '?') return;
       const diff = diffRef.current;
       switch (e.key) {
         case 'j':
@@ -42,9 +43,6 @@ export function useKeyboardShortcuts(
         case '?':
           setHelpOpen((open) => !open);
           break;
-        case 'Escape':
-          setHelpOpen(false);
-          break;
         default:
           return;
       }
@@ -52,5 +50,5 @@ export function useKeyboardShortcuts(
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [diffRef, setHelpOpen]);
+  }, [diffRef, helpOpen, setHelpOpen]);
 }

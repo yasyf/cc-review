@@ -6,6 +6,8 @@ import { useUnread } from '../lib/unread';
 import { STATUS_NOTICES } from '../lib/status';
 import type { Origin, Reply, ReviewStatus } from '../lib/types';
 import { QuestionCard } from './QuestionCard';
+import { Button } from './ui/Button';
+import { Markdown } from './ui/Markdown';
 
 function Avatar({ origin }: { origin: Origin }) {
   return <div className={`avatar avatar-${origin}`}>{origin === 'claude' ? 'C' : 'Y'}</div>;
@@ -24,7 +26,7 @@ function ReplyBubble({ reply, status }: { reply: Reply; status: ReviewStatus }) 
         {reply.kind === 'ask' ? (
           <QuestionCard reply={reply} commentId={reply.commentId} status={status} />
         ) : (
-          <div className="reply-body">{reply.body}</div>
+          <Markdown className="reply-body" source={reply.body} />
         )}
       </div>
     </div>
@@ -84,16 +86,15 @@ export function CommentThread({ commentId }: { commentId: string }) {
     <div ref={rootRef} className={`thread${resolved ? ' thread-resolved' : ''}`}>
       <div className="thread-head">
         <code className="thread-line">{comment.lineContent}</code>
-        <button
-          type="button"
-          className="resolve-btn"
+        <Button
+          size="sm"
           disabled={resolveComment.isPending}
           onClick={() =>
             resolveComment.mutate({ id: comment.id, status: resolved ? 'open' : 'resolved' })
           }
         >
           {resolved ? 'Reopen' : 'Resolve'}
-        </button>
+        </Button>
       </div>
 
       <div className={`reply reply-${comment.origin}`}>
@@ -102,7 +103,7 @@ export function CommentThread({ commentId }: { commentId: string }) {
           <div className="reply-meta">
             <span className="reply-who">{comment.origin === 'claude' ? 'Claude' : 'You'}</span>
           </div>
-          <div className="reply-body">{comment.body}</div>
+          <Markdown className="reply-body" source={comment.body} />
         </div>
       </div>
 
@@ -127,9 +128,9 @@ export function CommentThread({ commentId }: { commentId: string }) {
               }
             }}
           />
-          <button type="button" disabled={createReply.isPending || !answer.trim()} onClick={sendAnswer}>
+          <Button variant="primary" disabled={createReply.isPending || !answer.trim()} onClick={sendAnswer}>
             Send
-          </button>
+          </Button>
         </div>
       )}
     </div>

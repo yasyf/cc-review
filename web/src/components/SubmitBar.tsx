@@ -4,6 +4,8 @@ import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
 import { STATUS_NOTICES } from '../lib/status';
 import type { SessionResponse } from '../lib/types';
+import { Button } from './ui/Button';
+import { ThemeToggle } from './ui/ThemeToggle';
 
 export function SubmitBar({ session }: { session: SessionResponse }) {
   const { slug } = useReview();
@@ -46,23 +48,15 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
         <ConnectionFrame connected={connected} />
       </div>
       <div className="actions">
+        <ThemeToggle />
         {status === 'open' ? (
           <>
-            <button
-              type="button"
-              disabled={close.isPending}
-              onClick={() => close.mutate()}
-            >
+            <Button variant="ghost" disabled={close.isPending} onClick={() => close.mutate()}>
               {close.isPending ? 'Closing…' : 'Close without submitting'}
-            </button>
-            <button
-              type="button"
-              className="primary"
-              disabled={submit.isPending}
-              onClick={() => submit.mutate()}
-            >
+            </Button>
+            <Button variant="primary" disabled={submit.isPending} onClick={() => submit.mutate()}>
               {submit.isPending ? 'Submitting…' : 'Submit review'}
-            </button>
+            </Button>
           </>
         ) : (
           <>
@@ -74,9 +68,9 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
                 : STATUS_NOTICES[status]}
             </span>
             {status === 'expired' && (
-              <button type="button" disabled={close.isPending} onClick={() => close.mutate()}>
+              <Button disabled={close.isPending} onClick={() => close.mutate()}>
                 {close.isPending ? 'Closing…' : 'Close'}
-              </button>
+              </Button>
             )}
           </>
         )}

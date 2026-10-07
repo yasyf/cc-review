@@ -55,6 +55,43 @@
 .sidebar {
   background: var(--bg);
 }
+.sidebar-tabs {
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+}
+.tab-btn {
+  gap: var(--space-1);
+  min-height: var(--control-h-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  box-shadow: none;
+}
+.tab-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: transparent;
+  color: var(--text);
+}
+.tab-btn[aria-selected='true'] {
+  background: var(--selected);
+}
+.tab-badge {
+  position: static;
+  margin-left: 2px;
+}
+
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.skeleton {
+  display: block;
+  height: 0.7rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--skeleton) 25%, var(--skeleton-shine) 50%, var(--skeleton) 75%);
+  background-size: 250% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
 .sidebar-tree {
   flex: 1;
   min-height: 0;
@@ -563,11 +600,6 @@
 .cmdk-row-disabled {
   opacity: 0.45;
 }
-.cmdk-lane {
-  flex: none;
-  width: var(--space-4);
-  text-align: center;
-}
 .cmdk-label {
   flex: 1;
   min-width: 0;
@@ -575,51 +607,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cmdk-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.cmdk-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.cmdk-lane {
+  color: var(--accent);
+}
 .cmdk-footer,
 .cmdk-empty {
   font-size: var(--text-2xs);
   color: var(--dim);
   padding: var(--space-1) var(--space-2) 2px;
-}
-
-.shortcut-help {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-dialog);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--scrim);
-}
-.shortcut-help-panel {
-  min-width: 22rem;
-  max-width: 30rem;
-  padding: var(--space-4) var(--space-5);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-3);
-}
-.shortcut-help-title {
-  font-weight: 600;
-  margin-bottom: var(--space-3);
-}
-.shortcut-help-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-}
-.shortcut-help-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.shortcut-help-row dt {
-  flex: 0 0 4.5rem;
-  margin: 0;
-}
-.shortcut-help-row dd {
-  margin: 0;
-  color: var(--dim);
 }

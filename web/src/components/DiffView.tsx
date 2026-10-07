@@ -24,6 +24,7 @@ import type { AnnotationMeta, ComposerDraft, FileRef, ReviewItem, SectionFiles }
 import { clearDraft, composerDraftKey } from '../lib/drafts';
 import { fileOrder } from '../lib/order';
 import { useReview } from '../lib/review-context';
+import { useThemeMode } from '../lib/theme';
 import type { AttributionRange, Comment, LineLevel, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import { themes } from '../worker';
@@ -33,6 +34,7 @@ import { FocusPopover } from './FocusPopover';
 import { InlineComposer } from './InlineComposer';
 import { SectionHeader } from './SectionHeader';
 import { TurnPopover } from './TurnPopover';
+import type { Rect } from './ui/floating';
 
 // The imperative surface the rest of the app uses to navigate the diff; only
 // this component talks to @pierre/diffs directly.
@@ -56,8 +58,8 @@ const CURRENT_FILE_OFFSET_PX = 1;
 type PendingScroll = { kind: 'file'; id: string } | { kind: 'comment'; comment: Comment };
 
 type Hover =
-  | { kind: 'turn'; entry: TurnIndexEntry; x: number; y: number }
-  | { kind: 'focus'; note: string; level: LineLevel; x: number; y: number };
+  | { kind: 'turn'; entry: TurnIndexEntry; anchor: Rect }
+  | { kind: 'focus'; note: string; level: LineLevel; anchor: Rect };
 
 // A pending scroll whose target never re-enters `items` (e.g. its reveal
 // mutation failed) must not fire a surprise scrollTo minutes later; drop it
@@ -93,6 +95,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     activeTurnId,
   } = useViewPrefs();
   const { mutate: mutateStates } = useSetFileStates(slug, version);
+  const themeMode = useThemeMode();
   const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
   const seqRef = useRef(0);
   const [draft, setDraft] = useState<ComposerDraft | null>(null);
@@ -285,6 +288,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
   const options = useMemo<CodeViewOptions<AnnotationMeta, undefined>>(
     () => ({
       theme: themes,
+      themeType: themeMode,
       diffStyle: 'unified',
       stickyHeaders: true,
       enableLineSelection: !readOnly,
@@ -334,9 +338,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
           setHover(null);
           return;
         }
-        const rect = props.lineElement.getBoundingClientRect();
-        const x = rect.left + 8;
-        const y = rect.bottom + 4;
+        const anchor = props.lineElement.getBoundingClientRect();
         // A focus note (when no turn is selected) owns the popover, mirroring
         // how decorateImportance owns opacity on the same row.
         const notes = importanceIndexRef.current.get(context.item.id);
@@ -345,7 +347,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
             ? noteAt(notes, props.lineNumber)
             : undefined;
         if (note) {
-          setHover({ kind: 'focus', note: note.note, level: note.level, x, y });
+          setHover({ kind: 'focus', note: note.note, level: note.level, anchor });
           return;
         }
         const turnId = turnIdAt(attributionsRef.current[context.item.id] ?? [], props.lineNumber);
@@ -354,11 +356,11 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
           setHover(null);
           return;
         }
-        setHover({ kind: 'turn', entry, x, y });
+        setHover({ kind: 'turn', entry, anchor });
       },
       onLineLeave: () => setHover(null),
     }),
-    [readOnly, openDraft, closeDraft],
+    [readOnly, openDraft, closeDraft, themeMode],
   );
 
   const renderAnnotation = useCallback(
@@ -586,9 +588,9 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
       />
-      {hover?.kind === 'turn' ? <TurnPopover entry={hover.entry} x={hover.x} y={hover.y} /> : null}
+      {hover?.kind === 'turn' ? <TurnPopover entry={hover.entry} anchor={hover.anchor} /> : null}
       {hover?.kind === 'focus' ? (
-        <FocusPopover note={hover.note} level={hover.level} x={hover.x} y={hover.y} />
+        <FocusPopover note={hover.note} level={hover.level} anchor={hover.anchor} />
       ) : null}
     </div>
   );

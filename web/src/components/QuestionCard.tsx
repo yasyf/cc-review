@@ -3,6 +3,8 @@ import { useAskAnswer } from '../lib/ask-answer';
 import { STATUS_NOTICES } from '../lib/status';
 import type { Reply, ReviewStatus } from '../lib/types';
 import { AskOptionPicker } from './AskOptionPicker';
+import { Button } from './ui/Button';
+import { Markdown } from './ui/Markdown';
 
 type AskReply = Extract<Reply, { kind: 'ask' }>;
 
@@ -27,7 +29,7 @@ export function QuestionCard({
     return (
       <div className="question-card qc-answered">
         {ask.header ? <div className="qc-chip">{ask.header}</div> : null}
-        <div className="reply-body">{reply.body}</div>
+        <Markdown className="reply-body" source={reply.body} />
         <div className="qc-options">
           {ask.options.map((option) => (
             <div
@@ -61,7 +63,7 @@ export function QuestionCard({
   return (
     <div className="question-card">
       {ask.header ? <div className="qc-chip">{ask.header}</div> : null}
-      <div className="reply-body">{reply.body}</div>
+      <Markdown className="reply-body" source={reply.body} />
       <AskOptionPicker
         options={ask.options}
         selected={form.selected}
@@ -89,14 +91,9 @@ export function QuestionCard({
         </div>
       ) : (
         <div className="qc-actions">
-          <button
-            type="button"
-            className="primary"
-            disabled={!form.canSubmit || createReply.isPending}
-            onClick={submit}
-          >
+          <Button variant="primary" disabled={!form.canSubmit || createReply.isPending} onClick={submit}>
             {createReply.isPending ? 'Sending…' : 'Submit'}
-          </button>
+          </Button>
           {createReply.isError ? <div className="qc-error">{createReply.error.message}</div> : null}
         </div>
       )}

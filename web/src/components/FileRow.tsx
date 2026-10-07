@@ -1,4 +1,5 @@
 import type { Risk } from '../lib/types';
+import { Tooltip } from './ui/Tooltip';
 
 // risk/rationale are absent for patch files the organization hasn't ranked yet
 // (the todo view's "Unsorted" pseudo-group).
@@ -28,15 +29,15 @@ export function FileRow({
   onToggle(): void;
 }) {
   const name = file.path.split('/').pop();
+  const hint = [file.path, file.focus && `Focus: ${file.focus}`, file.rationale].filter(Boolean).join('\n');
   return (
-    <div
-      className={`chapter-row${reviewed ? ' chapter-row-reviewed' : ''}`}
-      title={[file.focus && `Focus: ${file.focus}`, file.rationale].filter(Boolean).join('\n')}
-    >
+    <div className={`chapter-row${reviewed ? ' chapter-row-reviewed' : ''}`}>
       <input type="checkbox" checked={reviewed} onChange={onToggle} aria-label="Viewed" />
-      <button type="button" className="chapter-row-path" onClick={onSelect}>
-        {name}
-      </button>
+      <Tooltip label={hint} placement="bottom">
+        <button type="button" className="chapter-row-path" onClick={onSelect}>
+          {name}
+        </button>
+      </Tooltip>
       {branch ? <span className="row-branch">{branch}</span> : null}
       {file.risk ? <span className={`risk-chip risk-${file.risk}`}>{file.risk}</span> : null}
       {needsReply ? <span className="needs-reply-chip">needs reply</span> : null}

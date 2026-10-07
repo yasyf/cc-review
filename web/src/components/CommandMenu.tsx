@@ -1,6 +1,4 @@
-// Presentational, footer-anchored command list. The deck (AiBar) owns the row
-// model and keyboard nav (↑↓/⏎/→); this only renders grouped rows and reports
-// hover. ⚡ rows run client-side; ✦ rows need Claude and dim when disconnected.
+import { Icon } from './ui/Icon';
 
 export interface MenuRow {
   id: string;
@@ -52,7 +50,7 @@ export function CommandMenu({
                         if (!disabled) row.run();
                       }}
                     >
-                      <span className="cmdk-lane">{row.lane === 'instant' ? '⚡' : '✦'}</span>
+                      <Icon name={row.lane === 'instant' ? 'bolt' : 'sparkle'} size={14} className="cmdk-lane" />
                       <span className="cmdk-label">{row.label}</span>
                     </button>
                   );
@@ -61,7 +59,24 @@ export function CommandMenu({
             );
           })}
           <div className="cmdk-footer">
-            ⚡ instant · ✦ Claude · ↑↓ move · ⏎ run{canEdit ? ' · → edit' : ''}
+            <span className="cmdk-hint">
+              <Icon name="bolt" size={12} /> instant
+            </span>
+            <span className="cmdk-hint">
+              <Icon name="sparkle" size={12} /> Claude
+            </span>
+            <span className="cmdk-hint">
+              <kbd>↑</kbd>
+              <kbd>↓</kbd> move
+            </span>
+            <span className="cmdk-hint">
+              <kbd>⏎</kbd> run
+            </span>
+            {canEdit ? (
+              <span className="cmdk-hint">
+                <kbd>→</kbd> edit
+              </span>
+            ) : null}
           </div>
         </>
       )}

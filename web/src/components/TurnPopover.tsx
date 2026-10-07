@@ -1,12 +1,11 @@
 import type { TurnIndexEntry } from '../lib/attribution';
+import type { Rect } from './ui/floating';
+import { Popover } from './ui/Popover';
 
-export function TurnPopover({ entry, x, y }: { entry: TurnIndexEntry; x: number; y: number }) {
+export function TurnPopover({ entry, anchor }: { entry: TurnIndexEntry; anchor: Rect }) {
   return (
-    <div className="turn-popover" style={{ left: x, top: y }}>
-      <span
-        className="turn-chip"
-        style={{ color: `var(--turn-${entry.colorVar})` }}
-      >
+    <Popover anchor={anchor} interactive={false} className="turn-popover">
+      <span className="turn-chip" style={{ color: `var(--turn-${entry.colorVar})` }}>
         T{entry.seq}
       </span>
       <span className="turn-popover-prompt">{entry.turn.prompt}</span>
@@ -14,6 +13,6 @@ export function TurnPopover({ entry, x, y }: { entry: TurnIndexEntry; x: number;
         {new Date(entry.turn.startedAt).toLocaleTimeString()}
         {entry.turn.interrupted ? ' · interrupted' : ''}
       </span>
-    </div>
+    </Popover>
   );
 }
