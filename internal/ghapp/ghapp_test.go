@@ -205,10 +205,10 @@ func TestTokenSourceNotInstalled(t *testing.T) {
 	}
 }
 
-func renderSetup(t *testing.T, f *fakeGitHub, query string) (action string, m manifest) {
+func renderSetup(t *testing.T, f *fakeGitHub, target string) (action string, m manifest) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	SetupHandler(f.client()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4321/github/setup"+query, nil))
+	SetupHandler(f.client()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup status = %d: %s", rec.Code, rec.Body)
 	}
@@ -226,15 +226,17 @@ func renderSetup(t *testing.T, f *fakeGitHub, query string) (action string, m ma
 
 func TestSetupHandler(t *testing.T) {
 	cases := []struct {
-		name, query, wantPath string
+		name, target, wantPath, wantRedirect string
 	}{
-		{"personal account", "", "/settings/apps/new"},
-		{"organization", "?org=acme", "/organizations/acme/settings/apps/new"},
+		{"personal account", "http://127.0.0.1:4321/github/setup", "/settings/apps/new", "http://127.0.0.1:4321/github/setup/callback"},
+		{"organization", "http://127.0.0.1:4321/github/setup?org=acme", "/organizations/acme/settings/apps/new", "http://127.0.0.1:4321/github/setup/callback"},
+		{"tailnet label", "http://devbox:4321/github/setup", "/settings/apps/new", "http://devbox:4321/github/setup/callback"},
+		{"tailnet tls", "https://devbox.tail1234.ts.net:4321/github/setup", "/settings/apps/new", "https://devbox.tail1234.ts.net:4321/github/setup/callback"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f, _, _ := setup(t)
-			action, m := renderSetup(t, f, c.query)
+			action, m := renderSetup(t, f, c.target)
 			u, err := url.Parse(action)
 			if err != nil {
 				t.Fatal(err)
@@ -249,7 +251,7 @@ func TestSetupHandler(t *testing.T) {
 				Name:           "cc-review-octo",
 				URL:            "https://github.com/yasyf/cc-review",
 				HookAttributes: hookAttributes{URL: "https://github.com/yasyf/cc-review", Active: false},
-				RedirectURL:    "http://127.0.0.1:4321/github/setup/callback",
+				RedirectURL:    c.wantRedirect,
 				DefaultPermissions: map[string]string{
 					"pull_requests": "write", "contents": "read", "checks": "read", "metadata": "read",
 				},
@@ -267,7 +269,7 @@ func TestSetupHandler(t *testing.T) {
 func TestCallbackHandler(t *testing.T) {
 	f, key, clock := setup(t)
 	issue := func() string {
-		action, _ := renderSetup(t, f, "")
+		action, _ := renderSetup(t, f, "http://127.0.0.1:4321/github/setup")
 		u, _ := url.Parse(action)
 		return u.Query().Get("state")
 	}
