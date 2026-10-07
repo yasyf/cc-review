@@ -31,7 +31,8 @@ export function Sidebar({
   onSelectFile(ref: FileRef): void;
   onSelectComment(comment: Comment): void;
 }) {
-  const { tab = 'files' } = routeApi.useSearch();
+  const search = routeApi.useSearch();
+  const tab = search.tab === 'conversation' && session.review.kind !== 'pr' ? 'files' : (search.tab ?? 'files');
   const navigate = routeApi.useNavigate();
   const { mode, dismissOverlay } = useSidebarLayout();
   const { seen } = useUnread();

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 
-export type SidebarTab = 'files' | 'comments' | 'activity';
+export type SidebarTab = 'files' | 'comments' | 'conversation' | 'activity';
 
 export type SidebarMode = 'docked' | 'hidden' | 'overlay';
 
@@ -14,7 +14,7 @@ const COLLAPSED_KEY = 'cc-review:sidebar-collapsed';
 const NARROW_QUERY = '(max-width: 900px)';
 
 export function parseSidebarTab(raw: unknown): SidebarTab | undefined {
-  return raw === 'comments' || raw === 'activity' ? raw : undefined;
+  return raw === 'comments' || raw === 'conversation' || raw === 'activity' ? raw : undefined;
 }
 
 export function clampSidebarWidth(width: number): number {
