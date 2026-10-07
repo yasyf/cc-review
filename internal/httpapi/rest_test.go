@@ -784,3 +784,71 @@ func TestSessionCarriesTurnActivity(t *testing.T) {
 		t.Fatalf("turnActivity = %+v, want %+v", out.TurnActivity, want)
 	}
 }
+
+func TestListReviewsNewestFirstWithPRTitle(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	ctx := context.Background()
+	ss := ccstore.NewSubjectStore(st.DB())
+	base := time.Unix(1_750_000_000, 0)
+	setCreatedAt := func(id string, at time.Time) {
+		t.Helper()
+		if _, err := st.DB().ExecContext(ctx, `UPDATE subjects SET created_at=? WHERE id=?`, at.Unix(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	local, _, _ := createReviewVersion(t, st, `[]`)
+	setCreatedAt(local.ID, base.Add(-2*time.Hour))
+
+	pr, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), "s2", "/repo", 101, "open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setCreatedAt(pr.ID, base.Add(-time.Hour))
+	if err := st.SetReviewKind(ctx, pr.ID, store.ReviewKindPR, "o/r", 7); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []store.PullRequest{
+		{ReviewID: pr.ID, Number: 6, Title: "Base change", UpdatedAt: base},
+		{ReviewID: pr.ID, Number: 7, Title: "Add the thing", UpdatedAt: base},
+	} {
+		if _, err := st.UpsertPullRequest(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := ss.Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), "s3", "/repo", 102, "submitted"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/api/reviews")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got []reviewSummary
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	localSlug, err := ss.Get(ctx, local.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []reviewSummary{
+		{
+			ID: pr.ID, Slug: pr.Slug, Scope: "/repo", Status: "open", Kind: "pr", Repo: "o/r", PRNumber: 7,
+			Title:     "Add the thing",
+			CreatedAt: "2025-06-15T14:06:40Z", LastActivity: "2025-06-15T14:06:40Z",
+		},
+		{
+			ID: local.ID, Slug: localSlug.Slug, Scope: "/repo", Status: "open", Kind: "local", Branch: "main",
+			CreatedAt: "2025-06-15T13:06:40Z", LastActivity: "2025-06-15T13:06:40Z",
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviews = %+v\nwant %+v", got, want)
+	}
+}
