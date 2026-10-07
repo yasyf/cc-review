@@ -166,6 +166,9 @@ func Load(path string) (Feedback, error) {
 func toReplies(in []store.Reply) []Reply {
 	out := make([]Reply, 0, len(in))
 	for _, r := range in {
+		if r.Origin == store.AuthorAutomation {
+			continue
+		}
 		out = append(out, Reply{
 			ID: r.ID, Origin: r.Origin, AuthorLogin: r.AuthorLogin, Kind: r.Kind, Body: r.Body, Ask: r.Ask,
 			Answered: r.Answered, Answer: r.Answer, AskAnswer: r.AskAnswer, AnsweredVia: r.AnsweredVia,

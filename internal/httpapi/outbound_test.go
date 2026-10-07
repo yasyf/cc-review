@@ -664,3 +664,23 @@ func TestLocalCommentStaysLocal(t *testing.T) {
 		t.Fatalf("local comment = %+v, want sync_state local, subject line", c)
 	}
 }
+
+func TestPRAutomatedCommentCannotBeEditedOrResolved(t *testing.T) {
+	p := newPRServer(t, false)
+	c, _, err := p.st.UpsertRemoteComment(t.Context(), store.Comment{
+		VersionID: p.sec.VersionID, SectionID: p.sec.ID, Branch: p.sec.Key(), Side: "additions", Subject: "file",
+		Body: "### Merge activity", Author: store.AuthorAutomation, AuthorLogin: "graphite-app[bot]", RemoteID: "IC_bot",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []map[string]any{{"status": "resolved"}, {"body": "changed"}} {
+		resp := putJSON(t, p.srv.URL+"/api/comments/"+strconv.FormatInt(c.ID, 10), req)
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("%v on an automated comment = %d, want 409", req, resp.StatusCode)
+		}
+	}
+	if got, err := p.st.GetComment(t.Context(), c.ID); err != nil || got.Status != "open" || got.Body != "### Merge activity" {
+		t.Fatalf("automated comment = %+v %v, want it untouched", got, err)
+	}
+}

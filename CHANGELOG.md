@@ -32,11 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Claude gets one `pr.imported` summary instead of a `comment.created`
   each, delivered only when it lists open line comments from people.
   Comments that arrive later stream as before.
-- Graphite's stack comment, which posts under the user's own token, is no
-  longer read as the user's feedback. cc-review files it as an `automation`
-  comment: the UI shows it collapsed, Claude's channel never receives it, and
-  the frozen feedback leaves it out. Other bots' comments still reach Claude,
-  with their hidden `<!-- ... -->` markup removed.
+- Bot noise no longer reaches Claude. Every `[bot]` login, Graphite's stack
+  and merge-activity comments, and pr-reviewer summary and companion posts
+  are stored as `author: automation`, including the stack comment Graphite
+  posts under the user's own token. Automated comments render collapsed,
+  never reach Claude's channel, never count as open or unread, can't be
+  edited or resolved, and stay out of the frozen feedback. A bot's reply in
+  a person's thread stays in that thread as automation.
+- `pr.updated` fires only when a PR's metadata changes, not when GitHub bumps
+  `updatedAt` for a new comment.
 
 ## [0.39.0] - 2026-10-07
 

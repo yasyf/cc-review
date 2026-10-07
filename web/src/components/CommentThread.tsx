@@ -134,15 +134,17 @@ export function CommentThread({ commentId }: { commentId: string }) {
               Hide
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            disabled={resolveComment.isPending}
-            onClick={() =>
-              resolveComment.mutate({ id: comment.id, status: resolved ? 'open' : 'resolved' })
-            }
-          >
-            {resolved ? 'Reopen' : 'Resolve'}
-          </Button>
+          {automation ? null : (
+            <Button
+              size="sm"
+              disabled={resolveComment.isPending}
+              onClick={() =>
+                resolveComment.mutate({ id: comment.id, status: resolved ? 'open' : 'resolved' })
+              }
+            >
+              {resolved ? 'Reopen' : 'Resolve'}
+            </Button>
+          )}
         </span>
       </div>
 

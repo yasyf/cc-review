@@ -29,10 +29,13 @@ const (
 )
 
 var (
-	htmlComment  = regexp.MustCompile(`(?s)<!--.*?-->`)
-	stackMarkers = []string{
+	htmlComment       = regexp.MustCompile(`(?s)<!--.*?-->`)
+	automationMarkers = []string{
 		"<!-- Current dependencies on/for this PR: -->",
 		"This stack of pull requests is managed by Graphite",
+		"### Merge activity",
+		"<!-- pr-reviewer bot summary -->",
+		"<!-- pr-reviewer bot companion -->",
 	}
 )
 
@@ -256,34 +259,30 @@ func prNumbers(sections []store.Section) []int {
 // authorOf maps a GitHub login to the local author and the event origin its
 // activity carries: the app's bot is Claude under the agent origin, so the
 // channel's ExcludeOrigin=agent never echoes Claude's own comments back.
-func (p *poller) authorOf(login string) (author, origin string) {
-	switch login {
-	case p.app.BotLogin:
+func (p *poller) authorOf(login, body string) (author, origin string) {
+	switch {
+	case login == p.app.BotLogin:
 		return store.AuthorClaude, ccevent.OriginAgent
-	case p.viewer:
+	case automated(login, body):
+		return store.AuthorAutomation, ccevent.OriginAgent
+	case login == p.viewer:
 		return store.AuthorUser, ccevent.OriginHuman
 	default:
 		return store.AuthorRemote, ccevent.OriginHuman
 	}
 }
 
-func (p *poller) issueAuthorOf(ic github.RemoteComment) (author, origin string) {
-	if slices.ContainsFunc(stackMarkers, func(m string) bool { return strings.Contains(ic.Body, m) }) {
-		return store.AuthorAutomation, ccevent.OriginAgent
-	}
-	return p.authorOf(ic.AuthorLogin)
+func automated(login, body string) bool {
+	return strings.HasSuffix(login, "[bot]") ||
+		slices.ContainsFunc(automationMarkers, func(m string) bool { return strings.Contains(body, m) })
 }
 
 func adoptable(author string) bool {
 	return author == store.AuthorUser || author == store.AuthorClaude
 }
 
-func isBot(login string) bool {
-	return strings.HasSuffix(login, "[bot]")
-}
-
 func humanAuthored(c store.Comment) bool {
-	return c.Author == store.AuthorUser || (c.Author == store.AuthorRemote && !isBot(c.AuthorLogin))
+	return c.Author == store.AuthorUser || c.Author == store.AuthorRemote
 }
 
 func sideOf(diffSide string) string {
@@ -322,7 +321,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 		return nil
 	}
 	root := th.Comments[0]
-	author, rootOrigin := sc.p.authorOf(root.AuthorLogin)
+	author, rootOrigin := sc.p.authorOf(root.AuthorLogin, root.Body)
 	subject, outdated, start, end, startSide, endSide := threadAnchor(th)
 	status := "open"
 	if th.IsResolved {
@@ -374,7 +373,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 	}
 	statusOnly := d.status && !d.content && !d.anchor
 	for _, rc := range th.Comments[1:] {
-		rAuthor, rOrigin := sc.p.authorOf(rc.AuthorLogin)
+		rAuthor, rOrigin := sc.p.authorOf(rc.AuthorLogin, rc.Body)
 		r := store.Reply{
 			CommentID: saved.ID, Origin: rAuthor, Kind: replyKindNote, Body: rc.Body,
 			RemoteID: rc.NodeID, RemoteURL: rc.URL,
@@ -399,7 +398,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 	case created:
 		return sc.created(ctx, ch.origin(), saved)
 	case statusOnly && saved.Status == "resolved":
-		return sc.emit(ctx, ccevent.OriginHuman, store.EventCommentResolved, map[string]any{"commentId": strconv.FormatInt(saved.ID, 10)})
+		return sc.emit(ctx, ownOrigin(saved, ccevent.OriginHuman), store.EventCommentResolved, map[string]any{"commentId": strconv.FormatInt(saved.ID, 10)})
 	case ch.any():
 		return sc.emitComment(ctx, ch.origin(), store.EventCommentUpdated, saved)
 	}
@@ -412,7 +411,7 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	author, origin := sc.p.issueAuthorOf(ic)
+	author, origin := sc.p.authorOf(ic.AuthorLogin, ic.Body)
 	c := store.Comment{
 		VersionID: sc.version.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
 		Side: "additions", Body: ic.Body, Author: author, Status: "open",
@@ -535,20 +534,22 @@ func (sc syncCtx) emitImported(ctx context.Context) error {
 	return sc.emit(ctx, origin, store.EventPRImported, wire.PRImportedFields(prs, sc.backfill.unresolved))
 }
 
-func (sc syncCtx) emitComment(ctx context.Context, origin, typ string, c store.Comment) error {
+func ownOrigin(c store.Comment, origin string) string {
 	if c.Author == store.AuthorAutomation {
-		origin = ccevent.OriginAgent
+		return ccevent.OriginAgent
 	}
+	return origin
+}
+
+func (sc syncCtx) emitComment(ctx context.Context, origin, typ string, c store.Comment) error {
+	origin = ownOrigin(c, origin)
 	replies, err := sc.rt.ListRepliesByComment(ctx, c.ID)
 	if err != nil {
 		return err
 	}
 	comment := wire.ToComment(c, replies)
-	if c.Author == store.AuthorRemote && isBot(c.AuthorLogin) {
-		comment.Body = stripHTMLComments(comment.Body)
-	}
 	for i, r := range replies {
-		if r.Origin == store.AuthorRemote && isBot(r.AuthorLogin) {
+		if r.Origin == store.AuthorAutomation {
 			comment.Replies[i].Body = stripHTMLComments(comment.Replies[i].Body)
 		}
 	}

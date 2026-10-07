@@ -56,7 +56,7 @@ export function stackCards(session: SessionResponse, seen: SeenMap): StackCard[]
       ci: pr ? ciRollup(pr.checks) : 'none',
       review: pr ? reviewRollup(pr.reviewers) : 'none',
       unread: comments.filter((c) => isUnread(c, seen)).length,
-      open: comments.filter((c) => c.status === 'open').length,
+      open: comments.filter((c) => c.status === 'open' && c.author !== 'automation').length,
       reviewed: section.files.filter((f) => section.fileStates[f.path]?.reviewed).length,
       total: section.files.length,
     };

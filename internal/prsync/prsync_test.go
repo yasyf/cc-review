@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -637,40 +636,86 @@ func TestGraphiteStackCommentIsAutomation(t *testing.T) {
 	}
 }
 
-func TestBotCommentPayloadDropsHTMLComments(t *testing.T) {
+func TestBotCommentsAreAutomationAndStayOffTheChannel(t *testing.T) {
 	f := newFixture(t, true)
 	f.poll()
 	f.drain()
 
-	const body = "Two findings.\n<!-- forge-pr-reviewer:eyJmaW5kaW5ncyI6W119 -->\n<!--\nmulti\nline\n-->"
-	review := f.gh.AddIssueComment(testRepo, 1, github.RemoteComment{AuthorLogin: reviewerBot, Body: body})
-	thread := f.gh.AddThread(testRepo, 2, github.Thread{
+	const body = "<!-- pr-reviewer bot summary -->\nTwo findings.\n<!-- forge:eyJmaW5kaW5ncyI6W119 -->"
+	summary := f.gh.AddIssueComment(testRepo, 1, github.RemoteComment{AuthorLogin: reviewerBot, Body: body})
+	merge := f.gh.AddIssueComment(testRepo, 2, github.RemoteComment{AuthorLogin: "graphite-app[bot]", Body: "### Merge activity\n\n* queued"})
+	botThread := f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 2, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: reviewerBot, Body: "finding: nil deref"}},
+	})
+	humanThread := f.gh.AddThread(testRepo, 2, github.Thread{
 		Path: "main.go", SubjectType: "LINE", Line: 4, DiffSide: "RIGHT",
 		Comments: []github.RemoteComment{{AuthorLogin: coworker, Body: "keep <!-- this --> as written"}},
 	})
-	f.gh.AddReply(testRepo, 2, thread.NodeID, github.RemoteComment{AuthorLogin: reviewerBot, Body: "agreed <!-- blob -->"})
+	f.gh.AddReply(testRepo, 2, humanThread.NodeID, github.RemoteComment{AuthorLogin: reviewerBot, Body: "agreed <!-- blob -->"})
 	f.poll()
 
-	if c := f.comment(review.NodeID); c.Author != store.AuthorRemote || c.Body != body {
-		t.Fatalf("bot comment = %+v, want it stored whole as remote", c)
+	for _, id := range []string{summary.NodeID, merge.NodeID, botThread.Comments[0].NodeID} {
+		if c := f.comment(id); c.Author != store.AuthorAutomation {
+			t.Fatalf("comment %s author = %q, want automation", id, c.Author)
+		}
 	}
-	bodies := map[string]string{}
+	if c := f.comment(summary.NodeID); c.Body != body {
+		t.Fatalf("stored summary body = %q, want it whole", c.Body)
+	}
+	human := f.comment(humanThread.Comments[0].NodeID)
+	replies, err := f.st.ListRepliesByComment(t.Context(), human.ID)
+	if err != nil || len(replies) != 1 || replies[0].Origin != store.AuthorAutomation {
+		t.Fatalf("human thread replies = %+v %v, want the bot reply kept in the thread as automation", replies, err)
+	}
+	var humanEvent *firedEvent
+	evs := f.drain()
+	for i, e := range evs {
+		if e.Payload.CommentID == strconv.FormatInt(human.ID, 10) {
+			humanEvent = &evs[i]
+		} else if e.Origin != ccevent.OriginAgent {
+			t.Fatalf("automated comment event %s/%s, want agent origin", e.Type, e.Origin)
+		}
+	}
+	if humanEvent == nil || humanEvent.Type != "comment.created" || humanEvent.Origin != ccevent.OriginHuman {
+		t.Fatalf("human thread event = %+v, want comment.created/human", humanEvent)
+	}
+	if c := humanEvent.Payload.Comment; c.Body != "keep <!-- this --> as written" || len(c.Replies) != 1 || c.Replies[0].Body != "agreed" {
+		t.Fatalf("human thread payload = %+v, want the human body whole and the bot reply stripped", c)
+	}
+	want := []string{"comment.created:keep <!-- this --> as written", "test.done:"}
+	if got := f.channel(); !slices.Equal(got, want) {
+		t.Fatalf("channel received %v, want %v", got, want)
+	}
+
+	f.gh.AddReply(testRepo, 2, humanThread.NodeID, github.RemoteComment{AuthorLogin: "github-actions[bot]", Body: "preview deployed"})
+	f.gh.SetResolved(testRepo, 2, botThread.NodeID, true)
+	f.poll()
 	for _, e := range f.drain() {
-		if e.Type != "comment.created" || e.Origin != ccevent.OriginHuman {
-			t.Fatalf("event %s/%s, want comment.created/human", e.Type, e.Origin)
-		}
-		bodies[e.Payload.CommentID] = e.Payload.Comment.Body
-		for _, r := range e.Payload.Comment.Replies {
-			bodies[e.Payload.CommentID+"/reply"] = r.Body
+		if e.Origin != ccevent.OriginAgent {
+			t.Fatalf("bot-only activity emitted %s/%s, want agent origin", e.Type, e.Origin)
 		}
 	}
-	want := map[string]string{
-		strconv.FormatInt(f.comment(review.NodeID).ID, 10):                        "Two findings.",
-		strconv.FormatInt(f.comment(thread.Comments[0].NodeID).ID, 10):            "keep <!-- this --> as written",
-		strconv.FormatInt(f.comment(thread.Comments[0].NodeID).ID, 10) + "/reply": "agreed",
+}
+
+func TestBackfillSummaryListsNoBotThreads(t *testing.T) {
+	f := newFixture(t, true)
+	f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 2, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: reviewerBot, Body: "finding"}},
+	})
+	f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 5, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: viewerLogin, Body: "mine"}},
+	})
+	f.poll()
+	evs := f.drain()
+	imported := evs[len(evs)-1]
+	if imported.Type != "pr.imported" || imported.Origin != ccevent.OriginHuman {
+		t.Fatalf("last event = %s/%s, want pr.imported/human", imported.Type, imported.Origin)
 	}
-	if !maps.Equal(bodies, want) {
-		t.Fatalf("payload bodies = %q, want %q", bodies, want)
+	if u := imported.Payload.Unresolved; len(u) != 1 || u[0].Body != "mine" {
+		t.Fatalf("unresolved = %+v, want only the viewer's thread", u)
 	}
 }
 

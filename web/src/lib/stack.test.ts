@@ -76,6 +76,7 @@ describe('stackCards', () => {
     stackComment('c1', 'b1', { author: 'remote', authorLogin: 'coworker' }),
     stackComment('c2', 'b1', { status: 'resolved' }),
     stackComment('c3', 'b2', { author: 'claude', origin: 'claude' }),
+    stackComment('c4', 'b1', { author: 'automation', authorLogin: 'graphite-app[bot]' }),
   ];
 
   it('derives one card per section in stack order', () => {

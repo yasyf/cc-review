@@ -329,7 +329,7 @@ func TestBuildCarriesAuthors(t *testing.T) {
 	}
 }
 
-func TestBuildSkipsAutomationComments(t *testing.T) {
+func TestBuildSkipsAutomation(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -362,9 +362,20 @@ func TestBuildSkipsAutomationComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	stack(v2, s2[0], "IC_current")
-	if _, err := st.CreateComment(ctx, store.Comment{
+	userID, err := st.CreateComment(ctx, store.Comment{
 		VersionID: v2.ID, SectionID: s2[0].ID, Branch: "feat", FilePath: "a.go", Side: "additions",
 		StartLine: 1, EndLine: 1, Body: "rename", Author: store.AuthorUser, Status: "open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertRemoteReply(ctx, store.Reply{
+		CommentID: userID, Origin: store.AuthorAutomation, Kind: "note", Body: "<!-- pr-reviewer bot companion -->", AuthorLogin: "forge-pr-reviewer[bot]", RemoteID: "PRRC_bot",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertRemoteReply(ctx, store.Reply{
+		CommentID: userID, Origin: store.AuthorRemote, Kind: "note", Body: "+1", AuthorLogin: "octo", RemoteID: "PRRC_human",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -375,5 +386,8 @@ func TestBuildSkipsAutomationComments(t *testing.T) {
 	}
 	if len(fb.Threads) != 1 || fb.Threads[0].Body != "rename" {
 		t.Fatalf("threads = %+v, want only the user's comment", fb.Threads)
+	}
+	if r := fb.Threads[0].Replies; len(r) != 1 || r[0].Body != "+1" {
+		t.Fatalf("replies = %+v, want only the coworker's", r)
 	}
 }

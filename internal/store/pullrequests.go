@@ -39,8 +39,9 @@ func scanPullRequest(row interface{ Scan(...any) error }) (PullRequest, error) {
 }
 
 // UpsertPullRequest stores a PR's latest GitHub metadata under its review.
-// changed is false when the stored row already matches, so a poll that saw
-// nothing new emits no pr.updated.
+// changed is false when the stored row matches apart from UpdatedAt, which
+// GitHub bumps on every comment, so only a real metadata change emits
+// pr.updated.
 func (s *Store) UpsertPullRequest(ctx context.Context, pr PullRequest) (changed bool, err error) {
 	err = s.ApplyRemote(ctx, func(rt *RemoteTx) error {
 		changed, err = rt.UpsertPullRequest(ctx, pr)
@@ -67,6 +68,7 @@ func upsertPullRequest(ctx context.Context, tx *sql.Tx, pr PullRequest) (bool, e
 	}
 	stored, err := scanPullRequest(tx.QueryRowContext(ctx,
 		`SELECT `+pullRequestCols+` FROM pull_requests WHERE review_id=? AND number=?`, pr.ReviewID, pr.Number))
+	found := err == nil
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
@@ -86,7 +88,8 @@ func upsertPullRequest(ctx context.Context, tx *sql.Tx, pr PullRequest) (bool, e
 		unix(pr.UpdatedAt)); err != nil {
 		return false, fmt.Errorf("upsert pull request #%d: %w", pr.Number, err)
 	}
-	return true, nil
+	stored.UpdatedAt = pr.UpdatedAt
+	return !found || !reflect.DeepEqual(stored, pr), nil
 }
 
 // PullRequests returns every PR cached under a review, by number.
