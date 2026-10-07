@@ -14,6 +14,7 @@ export function section(overrides: Partial<Section> = {}): Section {
     files: [],
     fileStates: {},
     organization: null,
+    prNumber: 0,
     ...overrides,
   };
 }
@@ -31,6 +32,14 @@ export function comment(overrides: Partial<Comment> = {}): Comment {
     lineContent: 'const a = 1;',
     body: 'why?',
     origin: 'user',
+    author: 'user',
+    authorLogin: '',
+    authorAvatarUrl: '',
+    remoteUrl: '',
+    outdated: false,
+    subject: 'line',
+    syncState: 'local',
+    syncError: '',
     status: 'open',
     createdAt: '2026-10-01T00:00:00Z',
     replies: [],
@@ -43,6 +52,12 @@ export function reply(overrides: Partial<Exclude<Reply, { kind: 'ask' }>> = {}):
     id: 'r1',
     commentId: 'c1',
     origin: 'claude',
+    author: 'claude',
+    authorLogin: '',
+    authorAvatarUrl: '',
+    remoteUrl: '',
+    syncState: 'local',
+    syncError: '',
     kind: 'clarification',
     body: 'because',
     createdAt: '2026-10-01T00:00:00Z',
@@ -71,7 +86,16 @@ export function chapterFile(path: string, risk: ChapterFile['risk']): ChapterFil
 
 export function session(overrides: Partial<SessionResponse> = {}): SessionResponse {
   return {
-    review: { id: 'rev', status: 'open', repoRoot: '/repo', branch: 'feat/x', createdAt: '2026-10-01T00:00:00Z' },
+    review: {
+      id: 'rev',
+      status: 'open',
+      repoRoot: '/repo',
+      branch: 'feat/x',
+      createdAt: '2026-10-01T00:00:00Z',
+      kind: 'local',
+      repo: '',
+      prNumber: 0,
+    },
     version: 1,
     versionId: 'v1',
     sections: [section()],
@@ -82,6 +106,7 @@ export function session(overrides: Partial<SessionResponse> = {}): SessionRespon
     turnActivity: {},
     claudeConnected: false,
     latestEventSeq: '0',
+    pullRequests: [],
     ...overrides,
   };
 }
