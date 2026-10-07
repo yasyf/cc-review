@@ -19,6 +19,8 @@ func TestPersistedSchemaFingerprintsPinned(t *testing.T) {
 		{replyAskSchemaIdentity, replyAskSchemaDescriptor, replyAskSchemaFingerprint},
 		{replyAskAnswerSchemaIdentity, replyAskAnswerSchemaDescriptor, replyAskAnswerSchemaFingerprint},
 		{attributionSchemaIdentity, attributionSchemaDescriptor, attributionSchemaFingerprint},
+		{prChecksSchemaIdentity, prChecksSchemaDescriptor, prChecksSchemaFingerprint},
+		{prReviewersSchemaIdentity, prReviewersSchemaDescriptor, prReviewersSchemaFingerprint},
 	} {
 		digest := sha256.Sum256([]byte(schema.identity + "\x00v1\x00" + schema.descriptor))
 		want := schema.identity + "." + hex.EncodeToString(digest[:])
@@ -38,6 +40,8 @@ func TestPersistedCodecsRejectNonExactEnvelopes(t *testing.T) {
 	ask, _ := encodeReplyAsk(Ask{Options: []AskOption{{Label: "A"}}})
 	askAnswer, _ := encodeReplyAskAnswer(AskAnswer{Selected: []string{"A"}})
 	attributions, _ := encodeAttributionRanges([]AttributionRange{{Start: 1, End: 2, TurnID: 3}})
+	checks, _ := encodePRChecks([]PRCheck{{Name: "ci", State: "SUCCESS", URL: "u"}})
+	reviewers, _ := encodePRReviewers([]PRReviewer{{Login: "octo", AvatarURL: "a", State: "APPROVED"}})
 
 	for _, codec := range []struct {
 		name, identity, fingerprint, valid string
@@ -50,6 +54,8 @@ func TestPersistedCodecsRejectNonExactEnvelopes(t *testing.T) {
 		{"reply ask", replyAskSchemaIdentity, replyAskSchemaFingerprint, ask, func(value string) error { _, err := decodeReplyAsk(value); return err }},
 		{"reply ask answer", replyAskAnswerSchemaIdentity, replyAskAnswerSchemaFingerprint, askAnswer, func(value string) error { _, err := decodeReplyAskAnswer(value); return err }},
 		{"attributions", attributionSchemaIdentity, attributionSchemaFingerprint, attributions, func(value string) error { _, err := decodeAttributionRanges(value); return err }},
+		{"pr checks", prChecksSchemaIdentity, prChecksSchemaFingerprint, checks, func(value string) error { _, err := decodePRChecks(value); return err }},
+		{"pr reviewers", prReviewersSchemaIdentity, prReviewersSchemaFingerprint, reviewers, func(value string) error { _, err := decodePRReviewers(value); return err }},
 	} {
 		t.Run(codec.name, func(t *testing.T) {
 			payloadIndex := strings.Index(codec.valid, `"payload":`)
@@ -82,6 +88,8 @@ func TestPersistedCodecsRejectNonExactEnvelopes(t *testing.T) {
 		{"ask missing option description", strings.Replace(ask, `,"description":""`, "", 1), func(value string) error { _, err := decodeReplyAsk(value); return err }},
 		{"ask answer missing notes", strings.Replace(askAnswer, `,"notes":""`, "", 1), func(value string) error { _, err := decodeReplyAskAnswer(value); return err }},
 		{"attribution missing turn", strings.Replace(attributions, `,"turnId":3`, "", 1), func(value string) error { _, err := decodeAttributionRanges(value); return err }},
+		{"pr check missing url", strings.Replace(checks, `,"url":"u"`, "", 1), func(value string) error { _, err := decodePRChecks(value); return err }},
+		{"pr reviewer missing avatar", strings.Replace(reviewers, `,"avatarUrl":"a"`, "", 1), func(value string) error { _, err := decodePRReviewers(value); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.decode(tc.value); err == nil {

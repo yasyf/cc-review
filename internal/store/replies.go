@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,7 +13,8 @@ import (
 // between the card render and the POST.
 var ErrReviewNotOpen = errors.New("review is not open")
 
-const replyCols = `id, comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at`
+const replyCols = `id, comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at,
+	remote_id, remote_url, author_login, author_avatar_url, sync_state, sync_error`
 
 // OpenQuestion is a Claude question awaiting an answer, with enough comment
 // context to surface it in the feedback drain. Branch/Pending are copied off the
@@ -36,11 +38,14 @@ func scanReply(row interface{ Scan(...any) error }) (Reply, error) {
 		answered               int
 		answer                 string
 		created                int64
+		remoteID               sql.NullString
 	)
 	if err := row.Scan(&r.ID, &r.CommentID, &r.Origin, &r.Kind, &r.Body, &askJSON,
-		&answered, &answer, &askAnswerJSON, &r.AnsweredVia, &created); err != nil {
+		&answered, &answer, &askAnswerJSON, &r.AnsweredVia, &created,
+		&remoteID, &r.RemoteURL, &r.AuthorLogin, &r.AuthorAvatarURL, &r.SyncState, &r.SyncError); err != nil {
 		return Reply{}, err
 	}
+	r.RemoteID = remoteID.String
 	r.Answered = answered != 0
 	r.CreatedAt = fromUnix(created)
 	if r.Kind == "ask" {
@@ -100,12 +105,7 @@ func (s *Store) CreateReply(ctx context.Context, r Reply) (id int64, inserted bo
 		}
 		askJSON = encoded
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO replies(comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at, dedup_key)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)
-		 ON CONFLICT(dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
-		r.CommentID, r.Origin, r.Kind, r.Body, askJSON,
-		boolInt(r.Answered), r.Answer, nil, r.AnsweredVia, unix(time.Now()), nullString(r.DedupKey))
+	res, err := insertReply(ctx, s.db, r, askJSON)
 	if err != nil {
 		return 0, false, fmt.Errorf("create reply: %w", err)
 	}
@@ -125,6 +125,93 @@ func (s *Store) CreateReply(ctx context.Context, r Reply) (id int64, inserted bo
 	return id, err == nil, err
 }
 
+type execQueryer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func insertReply(ctx context.Context, db execQueryer, r Reply, askJSON any) (sql.Result, error) {
+	return db.ExecContext(ctx,
+		`INSERT INTO replies(comment_id, origin, kind, body, ask_json, answered, answer, ask_answer_json, answered_via, created_at, dedup_key,
+		                     remote_id, remote_url, author_login, author_avatar_url, sync_state, sync_error)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+		r.CommentID, r.Origin, r.Kind, r.Body, askJSON,
+		boolInt(r.Answered), r.Answer, nil, r.AnsweredVia, unix(time.Now()), nullString(r.DedupKey),
+		nullString(r.RemoteID), r.RemoteURL, r.AuthorLogin, r.AuthorAvatarURL, defaultStr(r.SyncState, SyncLocal), r.SyncError)
+}
+
+// UpsertRemoteReply inserts or overwrites r.CommentID's reply mirroring
+// r.RemoteID and marks it synced. created reports an insert. Remote replies
+// are never asks.
+func (s *Store) UpsertRemoteReply(ctx context.Context, r Reply) (saved Reply, created bool, err error) {
+	err = s.ApplyRemote(ctx, func(rt *RemoteTx) error {
+		saved, created, err = rt.UpsertReply(ctx, r)
+		return err
+	})
+	return saved, created, err
+}
+
+func upsertRemoteReply(ctx context.Context, tx *sql.Tx, r Reply) (Reply, bool, error) {
+	if r.RemoteID == "" {
+		return Reply{}, false, errors.New("upsert remote reply: empty remote id")
+	}
+	if r.Kind == "ask" || r.Ask != nil || r.AskAnswer != nil {
+		return Reply{}, false, errors.New("upsert remote reply: remote replies cannot be asks")
+	}
+	r.SyncState, r.SyncError = SyncSynced, ""
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM replies WHERE comment_id=? AND remote_id=?`, r.CommentID, r.RemoteID).Scan(&id)
+	created := errors.Is(err, sql.ErrNoRows)
+	switch {
+	case created:
+		res, err := insertReply(ctx, tx, r, nil)
+		if err != nil {
+			return Reply{}, false, fmt.Errorf("insert remote reply: %w", err)
+		}
+		if id, err = res.LastInsertId(); err != nil {
+			return Reply{}, false, err
+		}
+	case err != nil:
+		return Reply{}, false, fmt.Errorf("lookup remote reply: %w", err)
+	default:
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE replies SET body=?, remote_url=?, author_login=?, author_avatar_url=?, sync_state=?, sync_error=? WHERE id=?`,
+			r.Body, r.RemoteURL, r.AuthorLogin, r.AuthorAvatarURL, r.SyncState, r.SyncError, id); err != nil {
+			return Reply{}, false, fmt.Errorf("update remote reply: %w", err)
+		}
+	}
+	row, err := scanReply(tx.QueryRowContext(ctx, `SELECT `+replyCols+` FROM replies WHERE id=?`, id))
+	if err != nil {
+		return Reply{}, false, fmt.Errorf("reread remote reply: %w", err)
+	}
+	return row, created, nil
+}
+
+func replyByRemoteID(ctx context.Context, q execQueryer, reviewID, remoteID string) (Reply, error) {
+	r, err := scanReply(q.QueryRowContext(ctx,
+		`SELECT `+replyCols+` FROM replies WHERE remote_id=? AND comment_id IN (SELECT id FROM comments WHERE review_id=?)`,
+		remoteID, reviewID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Reply{}, ErrNotFound
+	}
+	return r, err
+}
+
+// SetReplySync records a reply's outbound sync transition. Empty remoteID and
+// url keep the stored values, as in SetCommentSync.
+func (s *Store) SetReplySync(ctx context.Context, id int64, state, remoteID, url, syncErr string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE replies SET sync_state=?, sync_error=?, remote_id=COALESCE(?, remote_id), remote_url=COALESCE(NULLIF(?, ''), remote_url)
+		  WHERE id=?`,
+		state, syncErr, nullString(remoteID), url, id)
+	if err != nil {
+		return fmt.Errorf("set reply sync: %w", err)
+	}
+	return requireRow(res, "reply", id)
+}
+
 // GetReply returns one reply by id, or ErrNotFound.
 func (s *Store) GetReply(ctx context.Context, replyID int64) (Reply, error) {
 	r, err := scanReply(s.db.QueryRowContext(ctx,
@@ -140,7 +227,11 @@ func (s *Store) GetReply(ctx context.Context, replyID int64) (Reply, error) {
 
 // ListRepliesByComment returns every reply under a comment, oldest first.
 func (s *Store) ListRepliesByComment(ctx context.Context, commentID int64) ([]Reply, error) {
-	rows, err := s.db.QueryContext(ctx,
+	return listReplies(ctx, s.db, commentID)
+}
+
+func listReplies(ctx context.Context, q execQueryer, commentID int64) ([]Reply, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+replyCols+` FROM replies WHERE comment_id=? ORDER BY created_at ASC, id ASC`, commentID)
 	if err != nil {
 		return nil, err
@@ -274,4 +365,27 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// GitHubBody renders the reply as outbound posts it to GitHub: an ask's
+// options follow its body as a bulleted list under the optional header.
+func (r Reply) GitHubBody() string {
+	if r.Ask == nil {
+		return r.Body
+	}
+	var b strings.Builder
+	b.WriteString(r.Body)
+	b.WriteString("\n")
+	if r.Ask.Header != "" {
+		b.WriteString("\n**" + r.Ask.Header + "**\n")
+	}
+	b.WriteString("\n")
+	for _, o := range r.Ask.Options {
+		b.WriteString("- **" + o.Label + "**")
+		if o.Description != "" {
+			b.WriteString(": " + o.Description)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
