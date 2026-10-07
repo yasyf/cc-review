@@ -20,6 +20,12 @@ func TestV1NamespaceIgnoresPreEpochState(t *testing.T) {
 	if got := App().SocketPath(); got != filepath.Join(want, "daemon.sock") {
 		t.Fatalf("SocketPath = %q, want v1 namespace", got)
 	}
+	if got := Repos(); got != filepath.Join(want, "repos") {
+		t.Fatalf("Repos = %q, want v1 namespace", got)
+	}
+	if got := GitHubApp(); got != filepath.Join(want, "github-app.json") {
+		t.Fatalf("GitHubApp = %q, want v1 namespace", got)
+	}
 	if DBPath() == filepath.Join(home, ".cc-review", "state.db") {
 		t.Fatal("v1 namespace reused pre-epoch state.db")
 	}

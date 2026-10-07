@@ -17,6 +17,7 @@ type Repo struct {
 	Name  string
 }
 
+// String formats r as owner/name.
 func (r Repo) String() string { return r.Owner + "/" + r.Name }
 
 // PRRef names one pull request.
@@ -25,6 +26,7 @@ type PRRef struct {
 	Number int
 }
 
+// String formats r as owner/name#number.
 func (r PRRef) String() string { return r.Repo.String() + "#" + strconv.Itoa(r.Number) }
 
 // ParsePRRef reads a pull request URL, owner/name#N, #N, or N. The last two
@@ -92,7 +94,7 @@ func parseRepoPath(p string) (Repo, error) {
 
 // RepoFromRemote reads the GitHub repository dir's origin remote points at.
 func RepoFromRemote(ctx context.Context, dir string) (Repo, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "config", "--get", "remote.origin.url").Output()
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "config", "--get", "remote.origin.url").Output() //nolint:gosec // G204: fixed git subcommand; only dir, the caller's checkout, varies.
 	if err != nil {
 		return Repo{}, fmt.Errorf("read the origin url of %s: %w", dir, err)
 	}

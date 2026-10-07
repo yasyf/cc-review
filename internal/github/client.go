@@ -99,6 +99,7 @@ type StatusError struct {
 	Message string
 }
 
+// Error names the request and GitHub's message for its status.
 func (e *StatusError) Error() string {
 	message := e.Message
 	if message == "" {
@@ -107,6 +108,7 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("github: %s %s: %d %s", e.Method, e.URL, e.Status, message)
 }
 
+// Unwrap maps 404 to ErrNotFound and 401 to ErrUnauthorized.
 func (e *StatusError) Unwrap() error {
 	switch e.Status {
 	case http.StatusNotFound:
@@ -129,6 +131,7 @@ type GraphQLError struct {
 	Messages []GraphQLMessage
 }
 
+// Error joins the response's error messages.
 func (e *GraphQLError) Error() string {
 	texts := make([]string, 0, len(e.Messages))
 	for _, m := range e.Messages {
@@ -137,6 +140,7 @@ func (e *GraphQLError) Error() string {
 	return "github: graphql: " + strings.Join(texts, "; ")
 }
 
+// Unwrap maps a NOT_FOUND entry to ErrNotFound.
 func (e *GraphQLError) Unwrap() error {
 	for _, m := range e.Messages {
 		if m.Type == "NOT_FOUND" {
