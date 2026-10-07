@@ -12,7 +12,13 @@ export interface LineRange {
 
 export type ReviewStatus = 'open' | 'submitted' | 'closed' | 'expired';
 export type CommentStatus = 'open' | 'resolved';
+// Origin is the side that wrote a comment or reply; Author also tells the
+// viewer apart from another GitHub user on a PR review.
 export type Origin = 'user' | 'claude';
+export type Author = Origin | 'remote';
+export type SyncState = 'local' | 'posting' | 'synced' | 'failed';
+export type CommentSubject = 'line' | 'file';
+export type ReviewKind = 'local' | 'pr';
 export type AnsweredVia = 'web' | 'askuserquestion';
 
 export interface AskOption {
@@ -39,14 +45,25 @@ export interface Review {
   repoRoot: string;
   branch: string;
   createdAt: string;
+  kind: ReviewKind;
+  // owner/name; '' for a local review.
+  repo: string;
+  // The PR the user pointed at; 0 for a local review.
+  prNumber: number;
 }
 
 interface ReplyBase {
   id: string;
   commentId: string;
   origin: Origin;
+  author: Author;
   body: string;
   createdAt: string;
+  authorLogin: string;
+  authorAvatarUrl: string;
+  remoteUrl: string;
+  syncState: SyncState;
+  syncError: string;
 }
 
 // Claude streams these reply kinds under a comment; a user answer is kind 'answer'.
@@ -76,9 +93,50 @@ export interface Comment {
   lineContent: string;
   body: string;
   origin: Origin;
+  author: Author;
   status: CommentStatus;
   createdAt: string;
   replies: Reply[];
+  authorLogin: string;
+  authorAvatarUrl: string;
+  remoteUrl: string;
+  outdated: boolean;
+  subject: CommentSubject;
+  syncState: SyncState;
+  syncError: string;
+}
+
+export type CheckState = 'SUCCESS' | 'FAILURE' | 'PENDING' | 'NEUTRAL' | 'SKIPPED';
+export type ReviewerState = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'PENDING';
+
+export interface PullRequestCheck {
+  name: string;
+  state: CheckState;
+  url: string;
+}
+
+export interface PullRequestReviewer {
+  login: string;
+  avatarUrl: string;
+  state: ReviewerState;
+}
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  draft: boolean;
+  url: string;
+  authorLogin: string;
+  headRefName: string;
+  headSha: string;
+  baseRefName: string;
+  mergeable: string;
+  checks: PullRequestCheck[];
+  reviewers: PullRequestReviewer[];
+  viewerIsAuthor: boolean;
+  updatedAt: string;
 }
 
 // Mirrors the daemon's gitdiff.FileChange. The diff itself is parsed from
@@ -262,6 +320,8 @@ export interface Section {
   organization: Organization | null;
   // Present only on the pending section; keyed by path, ranges sorted by start.
   attributions?: Record<string, AttributionRange[]>;
+  // The GitHub PR this section renders; 0 outside a PR review.
+  prNumber: number;
 }
 
 export interface SessionResponse {
@@ -277,6 +337,8 @@ export interface SessionResponse {
   annotations: Annotation[];
   // Newest first.
   aiRequests: AiRequest[];
+  // Every PR of a PR review's stack, by number; empty for a local review.
+  pullRequests: PullRequest[];
   // Ordered; display seq = index + 1.
   turns: Turn[];
   // Keyed by turn id; every listed turn has an entry, possibly empty.
@@ -331,7 +393,17 @@ export type ReviewEvent =
       organization: Organization;
     }
   | { type: 'annotations.updated'; version_number: number; annotations: Annotation[] }
-  | { type: 'channel.changed'; version_number: number; connected: boolean };
+  | { type: 'channel.changed'; version_number: number; connected: boolean }
+  | { type: 'pr.updated'; version_number: number; pullRequest: PullRequest }
+  | {
+      type: 'comment.synced';
+      version_number: number;
+      commentId: string;
+      replyId?: string;
+      syncState: SyncState;
+      syncError: string;
+      remoteUrl: string;
+    };
 
 export type ReviewEventType = ReviewEvent['type'];
 
