@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -73,6 +74,8 @@ const (
 	gateErrorReason = "Edits are blocked because the review status could not be read. Run `cc-review status`, then `cc-review stop` if the daemon is wedged."
 )
 
+var userGitHub = func() *github.Client { return github.New(github.UserTokenSource()) }
+
 // lifecycle names the subject statuses the resolver writes: a fresh review is
 // born open; a fresh start closes the window's prior review.
 var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
@@ -136,6 +139,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		return nil, nil, err
 	}
 
+	public := http.NewServeMux()
 	s, err := ccd.New(ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
@@ -152,6 +156,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		StoreSchema:       store.Schema(),
 		UnsupportedSchema: ccstore.ArchiveUnsupportedSchema,
 		FixedPort:         fixedPort,
+		PublicHandler:     public,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -172,13 +177,14 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	s.Register(OpClose, rv.handleClose)
 	s.Register(OpList, rv.handleList)
 
-	httpapi.RESTMount(s.Mux(), httpapi.Deps{
+	httpapi.RESTMount(s.Mux(), public, httpapi.Deps{
 		DB:                s.DB,
 		Decisions:         ledger,
 		Log:               rv.log,
 		Append:            s.Append,
 		ConsumerConnected: s.ConsumerConnected,
 		Dist:              web.Dist(),
+		GitHub:            userGitHub(),
 	})
 	return s, rv, nil
 }

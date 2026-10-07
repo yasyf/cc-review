@@ -114,7 +114,7 @@ func CallbackHandler(user *github.Client, onDone func(App)) http.Handler {
 			return
 		}
 		app := App{ID: conv.ID, Slug: conv.Slug, BotLogin: conv.Slug + "[bot]", Owner: conv.Owner.Login}
-		if err := save(app, conv.PEM); err != nil {
+		if err := Save(app, conv.PEM); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

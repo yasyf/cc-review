@@ -116,7 +116,7 @@ func setup(t *testing.T) (*fakeGitHub, *rsa.PrivateKey, *time.Time) {
 func installApp(t *testing.T, key *rsa.PrivateKey) App {
 	t.Helper()
 	app := App{ID: 7, Slug: "cc-review-octo", BotLogin: "cc-review-octo[bot]", Owner: "octo"}
-	if err := save(app, pemOf(key)); err != nil {
+	if err := Save(app, pemOf(key)); err != nil {
 		t.Fatal(err)
 	}
 	return app

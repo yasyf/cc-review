@@ -66,7 +66,9 @@ func (a App) InstallURL() string {
 	return "https://github.com/apps/" + a.Slug + "/installations/new"
 }
 
-func save(a App, pem string) error {
+// Save stores the app's private key in the Keychain and its identity in
+// github-app.json, where Load reads it.
+func Save(a App, pem string) error {
 	if err := keyring.Set(keyringService, strconv.FormatInt(a.ID, 10), pem); err != nil {
 		return fmt.Errorf("store github app key in keychain: %w", err)
 	}
