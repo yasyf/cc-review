@@ -24,7 +24,6 @@ const (
 	replyKindNote = "note"
 )
 
-// change accumulates what one thread's sync altered and under which origins.
 type change struct{ touched, human bool }
 
 func (c *change) add(origin string) {
@@ -62,8 +61,6 @@ func replyChanged(prev, next store.Reply) bool {
 	return prev.Body != next.Body || prev.AuthorAvatarURL != next.AuthorAvatarURL || prev.RemoteURL != next.RemoteURL
 }
 
-// poll syncs one snapshot of the review's stack and reports whether the poller
-// should keep running.
 func (s *Syncer) poll(ctx context.Context, p *poller) (bool, error) {
 	st := store.New(s.cfg.DB())
 	rev, err := st.GetReview(ctx, p.reviewID)
@@ -193,9 +190,6 @@ func sideOf(diffSide string) string {
 	return "additions"
 }
 
-// threadAnchor places a thread on the diff: a live line thread on its lines,
-// an outdated or file-subject thread on the file header keeping its original
-// lines for display.
 func threadAnchor(th github.Thread) (subject string, outdated bool, start, end int, startSide, endSide string) {
 	side := sideOf(th.DiffSide)
 	startSide = side

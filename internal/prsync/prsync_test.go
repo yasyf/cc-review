@@ -18,8 +18,8 @@ import (
 	"github.com/yasyf/cc-interact/consume"
 	ccd "github.com/yasyf/cc-interact/daemon"
 	ccevent "github.com/yasyf/cc-interact/event"
-	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/sse"
+	ccstore "github.com/yasyf/cc-interact/store"
 
 	"github.com/yasyf/cc-review/internal/ghapp"
 	"github.com/yasyf/cc-review/internal/ghapp/ghapptest"
@@ -94,7 +94,7 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 	if err := f.st.SetReviewKind(ctx, f.reviewID, store.ReviewKindPR, testRepo.String(), 2); err != nil {
 		t.Fatal(err)
 	}
-	f.createVersion(headA, headB)
+	f.createVersion(ctx, headA, headB)
 
 	client := github.New(countingToken{token: viewerToken, n: &f.requests}, github.WithBaseURL(f.gh.URL(), f.gh.URL()+"/graphql"))
 	f.syncer = New(Config{
@@ -111,7 +111,7 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 	return f
 }
 
-func (f *fixture) createVersion(heads ...string) {
+func (f *fixture) createVersion(ctx context.Context, heads ...string) {
 	f.t.Helper()
 	inputs := make([]store.SectionInput, len(heads))
 	for i, head := range heads {
@@ -120,14 +120,14 @@ func (f *fixture) createVersion(heads ...string) {
 			FilesJSON: "[]", PRNumber: i + 1,
 		}
 	}
-	if _, _, err := f.st.CreateVersion(f.t.Context(), f.reviewID, "feat-b", "", "s1", inputs); err != nil {
+	if _, _, err := f.st.CreateVersion(ctx, f.reviewID, "feat-b", "", "s1", inputs); err != nil {
 		f.t.Fatalf("create version: %v", err)
 	}
 }
 
-func (f *fixture) recapture(ctx context.Context, reviewID string) error {
+func (f *fixture) recapture(ctx context.Context, _ string) error {
 	heads := []string{f.gh.Snapshot(testRepo, 1).PR.HeadRefOid, f.gh.Snapshot(testRepo, 2).PR.HeadRefOid}
-	f.createVersion(heads...)
+	f.createVersion(ctx, heads...)
 	return nil
 }
 
@@ -466,7 +466,9 @@ func TestBotCommentNeverReachesTheChannel(t *testing.T) {
 		t.Fatalf("bot comment = %+v", c)
 	}
 	const sentinel = "test.done"
-	f.append(t.Context(), &ccevent.Event{SubjectID: f.reviewID, Origin: ccevent.OriginHuman, Type: sentinel, Payload: []byte(`{"type":"test.done"}`)})
+	if _, err := f.append(t.Context(), &ccevent.Event{SubjectID: f.reviewID, Origin: ccevent.OriginHuman, Type: sentinel, Payload: []byte(`{"type":"test.done"}`)}); err != nil {
+		t.Fatal(err)
+	}
 
 	srv := httptest.NewServer(sse.NewServer(sseBackend{f}, sse.Config{}).Handler())
 	t.Cleanup(srv.Close)

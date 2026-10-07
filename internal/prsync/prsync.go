@@ -57,7 +57,6 @@ type poller struct {
 	done     chan struct{}
 }
 
-// New returns a Syncer with no pollers running.
 func New(cfg Config) *Syncer {
 	return &Syncer{cfg: cfg, pollers: make(map[string]*poller), applyMu: make(map[string]*sync.Mutex)}
 }
@@ -97,7 +96,7 @@ func (s *Syncer) Start(ctx context.Context, reviewID string) error {
 	if _, running := s.pollers[reviewID]; running {
 		return nil
 	}
-	pctx, cancel := context.WithCancel(context.Background())
+	pctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	p := &poller{reviewID: reviewID, app: app, viewer: viewer, cancel: cancel, done: make(chan struct{})}
 	s.pollers[reviewID] = p
 	s.cfg.Background(func(daemonCtx context.Context) {
@@ -121,7 +120,6 @@ func (s *Syncer) Stop(reviewID string) {
 	<-p.done
 }
 
-// Running reports whether the review has a live poller.
 func (s *Syncer) Running(reviewID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,9 +154,6 @@ func (s *Syncer) forget(p *poller) {
 	close(p.done)
 }
 
-// run polls on every watchedInterval tick while the review is watched, and at
-// most once per idleInterval otherwise, until the review leaves open/submitted
-// or ctx ends.
 func (s *Syncer) run(ctx context.Context, p *poller) {
 	t := time.NewTicker(watchedInterval)
 	defer t.Stop()
