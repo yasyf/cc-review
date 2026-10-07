@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 
 export type ViewMode = 'default' | 'story' | 'todo';
 
+export type DiffStyle = 'unified' | 'split';
+
 interface StoredPrefs {
   viewMode: ViewMode;
   hideReviewed: boolean;
@@ -10,6 +12,12 @@ interface StoredPrefs {
 }
 
 const storageKey = (reviewId: string) => `cc-review:view:${reviewId}`;
+
+const DIFF_STYLE_KEY = 'cc-review:diff-style';
+
+function readDiffStyle(): DiffStyle {
+  return localStorage.getItem(DIFF_STYLE_KEY) === 'split' ? 'split' : 'unified';
+}
 
 function sanitizeViewMode(stored: unknown): ViewMode {
   return stored === 'story' || stored === 'todo' ? stored : 'default';
@@ -38,7 +46,9 @@ interface ViewPrefsValue extends StoredPrefs {
   // The turn whose attributed lines are highlighted in the diff; everything
   // else dims. In-memory only.
   activeTurnId: string | null;
+  diffStyle: DiffStyle;
   setViewMode(mode: ViewMode): void;
+  setDiffStyle(style: DiffStyle): void;
   setHideReviewed(hide: boolean): void;
   setFocusMode(focus: boolean): void;
   toggleExpandOverride(id: string): void;
@@ -71,6 +81,12 @@ export function ViewPrefsProvider({
 
   const [expandOverrides, setExpandOverrides] = useState<ReadonlySet<string>>(new Set());
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
+  const [diffStyle, setDiffStyleState] = useState<DiffStyle>(readDiffStyle);
+
+  const setDiffStyle = useCallback((style: DiffStyle) => {
+    localStorage.setItem(DIFF_STYLE_KEY, style);
+    setDiffStyleState(style);
+  }, []);
 
   // Peeks and turn focus are per version: a new version's reviewed files start
   // folded again and its turns are a different set.
@@ -115,7 +131,9 @@ export function ViewPrefsProvider({
         ...prefs,
         expandOverrides,
         activeTurnId,
+        diffStyle,
         setViewMode,
+        setDiffStyle,
         setHideReviewed,
         setFocusMode,
         toggleExpandOverride,

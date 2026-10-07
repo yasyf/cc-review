@@ -1,4 +1,4 @@
-import type { FileRef } from './diff';
+import type { FileRef } from './diff/items';
 import { riskOf } from './order';
 import type { FileState, Section, SessionResponse } from './types';
 

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import type { DiffViewHandle } from '../components/DiffView';
+import type { DiffViewHandle } from './diff/useDiffHandle';
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

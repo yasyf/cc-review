@@ -1,5 +1,5 @@
 import { useSession, useSetFileStates } from '../lib/api';
-import { fileItemId } from '../lib/diff';
+import { fileItemId } from '../lib/diff/items';
 import { chapterFileOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import { useViewPrefs } from '../lib/view-prefs';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { FileRef } from '../lib/diff';
+import type { FileRef } from '../lib/diff/items';
 import { unreadCount, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';

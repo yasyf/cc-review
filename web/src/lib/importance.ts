@@ -1,4 +1,4 @@
-import { fileItemId } from './diff';
+import { fileItemId } from './diff/items';
 import type { LineNote, Section } from './types';
 
 // Injected into each diff's shadow root via the CodeView `unsafeCSS` option.

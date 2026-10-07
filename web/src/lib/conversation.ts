@@ -1,7 +1,7 @@
 // Per-item rollup of open comment threads for the sidebar panels, keyed by
 // itemId so a path in two sections is counted per section.
 
-import { commentItemId } from './diff';
+import { commentItemId } from './diff/items';
 import type { Comment } from './types';
 
 export interface FileConversation {

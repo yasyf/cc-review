@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { FileDiffMetadata } from '@pierre/diffs';
 import { useCreateComment } from '../lib/api';
-import { lineContentAt } from '../lib/diff';
-import type { ComposerDraft } from '../lib/diff';
+import { lineContentAt } from '../lib/diff/items';
+import type { ComposerDraft } from '../lib/diff/items';
 import { composerDraftKey, readDraft, writeDraft } from '../lib/drafts';
 import { useReview } from '../lib/review-context';
 import type { LineRange, Side } from '../lib/types';

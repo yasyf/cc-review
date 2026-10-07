@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { GitStatus } from '@pierre/trees';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { useSetFileStates } from '../lib/api';
-import type { FileRef } from '../lib/diff';
+import type { FileRef } from '../lib/diff/items';
 import { riskOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import type { FileMeta, FileState, Organization, Section, SessionResponse } from '../lib/types';

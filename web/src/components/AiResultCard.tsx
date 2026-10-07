@@ -6,7 +6,7 @@ import { useReview } from '../lib/review-context';
 import type { LocalRequest } from '../lib/local-requests';
 import type { Ask, AiRequest } from '../lib/types';
 import { AskOptionPicker } from './AskOptionPicker';
-import type { DiffViewHandle } from './DiffView';
+import type { DiffViewHandle } from '../lib/diff/useDiffHandle';
 import { Button } from './ui/Button';
 import { Icon } from './ui/Icon';
 import { Markdown } from './ui/Markdown';

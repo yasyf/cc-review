@@ -1,4 +1,4 @@
-import { fileItemId } from './diff';
+import { fileItemId } from './diff/items';
 import type { Annotation, Side } from './types';
 
 export const ANNOTATION_UNSAFE_CSS = `
@@ -18,7 +18,7 @@ export function annotationsByItem(
   return out;
 }
 
-function covers(annotations: readonly Annotation[], side: Side, line: number): Annotation | undefined {
+export function annotationAt(annotations: readonly Annotation[], side: Side, line: number): Annotation | undefined {
   return annotations.find((a) => a.side === side && line >= a.start && line <= a.end);
 }
 
@@ -34,13 +34,7 @@ export function decorateAnnotations(
   );
   for (const row of rows ?? []) {
     const side: Side = row.dataset.lineType === 'change-deletion' ? 'deletions' : 'additions';
-    const hit = covers(fileAnnotations, side, Number(row.dataset.line));
-    if (hit) {
-      row.dataset.ccAnnotation = '';
-      if (hit.label) row.title = hit.label;
-    } else {
-      delete row.dataset.ccAnnotation;
-      if (row.title) row.removeAttribute('title');
-    }
+    if (annotationAt(fileAnnotations, side, Number(row.dataset.line))) row.dataset.ccAnnotation = '';
+    else delete row.dataset.ccAnnotation;
   }
 }

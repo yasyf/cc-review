@@ -1,4 +1,4 @@
-import { commentItemId } from '../lib/diff';
+import { commentItemId } from '../lib/diff/items';
 import { fileOrder } from '../lib/order';
 import { isUnread, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';

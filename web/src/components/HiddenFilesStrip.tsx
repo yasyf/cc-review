@@ -1,5 +1,5 @@
 import { useSetFileStates } from '../lib/api';
-import type { FileRef } from '../lib/diff';
+import type { FileRef } from '../lib/diff/items';
 import { useReview } from '../lib/review-context';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';

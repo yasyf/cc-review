@@ -29,8 +29,8 @@
   color: var(--dim);
   cursor: pointer;
 }
-.hide-reviewed:first-of-type {
-  margin-left: auto;
+.toolbar-spacer {
+  flex: 1;
 }
 
 .turn-legend {
@@ -77,6 +77,9 @@
 .turn-popover-time {
   font-size: var(--text-2xs);
   color: var(--dim);
+}
+.annotation-popover .focus-popover-chip {
+  color: var(--warn);
 }
 .focus-popover-note {
   line-height: var(--leading-snug);

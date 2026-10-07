@@ -12,7 +12,7 @@ import { ViewPrefsProvider } from '../lib/view-prefs';
 import { AiBar } from '../components/AiBar';
 import { DiffToolbar } from '../components/DiffToolbar';
 import { DiffView } from '../components/DiffView';
-import type { DiffViewHandle } from '../components/DiffView';
+import type { DiffViewHandle } from '../lib/diff/useDiffHandle';
 import { ShortcutHelp } from '../components/ShortcutHelp';
 import { Sidebar } from '../components/Sidebar';
 import { SubmitBar } from '../components/SubmitBar';
