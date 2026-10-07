@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -136,6 +137,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		return nil, nil, err
 	}
 
+	public := http.NewServeMux()
 	s, err := ccd.New(ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
@@ -152,6 +154,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		StoreSchema:       store.Schema(),
 		UnsupportedSchema: ccstore.ArchiveUnsupportedSchema,
 		FixedPort:         fixedPort,
+		PublicHandler:     public,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -172,13 +175,14 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	s.Register(OpClose, rv.handleClose)
 	s.Register(OpList, rv.handleList)
 
-	httpapi.RESTMount(s.Mux(), httpapi.Deps{
+	httpapi.RESTMount(s.Mux(), public, httpapi.Deps{
 		DB:                s.DB,
 		Decisions:         ledger,
 		Log:               rv.log,
 		Append:            s.Append,
 		ConsumerConnected: s.ConsumerConnected,
 		Dist:              web.Dist(),
+		GitHub:            github.New(github.UserTokenSource()),
 	})
 	return s, rv, nil
 }

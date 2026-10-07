@@ -19,6 +19,8 @@ import (
 	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/decisions"
+	"github.com/yasyf/cc-review/internal/ghapp"
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -37,6 +39,7 @@ type Deps struct {
 	Append            appendFunc
 	ConsumerConnected func(reviewID string) bool
 	Dist              fs.FS
+	GitHub            *github.Client
 }
 
 // Server holds the REST handlers' shared state.
@@ -56,10 +59,9 @@ func (s *Server) st() *store.Store            { return store.New(s.db()) }
 func (s *Server) subjectStore() subject.Store { return ccstore.NewSubjectStore(s.db()) }
 func (s *Server) turnStore() *vcs.TurnStore   { return vcs.NewTurnStore(s.db()) }
 
-// RESTMount registers cc-review's REST routes and the SPA static handler on the
-// daemon's mux. The daemon already mounts GET /events; Go's pattern mux gives the
-// more specific /api routes precedence over the catch-all "/".
-func RESTMount(mux *http.ServeMux, d Deps) {
+// RESTMount registers the REST routes on the daemon's auth-guarded mux, and the
+// SPA shell plus the cross-site GitHub App setup callback on the public mux.
+func RESTMount(mux, public *http.ServeMux, d Deps) {
 	s := &Server{
 		db:         d.DB,
 		decisions:  d.Decisions,
@@ -81,8 +83,11 @@ func RESTMount(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("POST /api/submit", s.handleSubmit)
 	mux.HandleFunc("POST /api/close", s.handleClose)
 	mux.HandleFunc("GET /api/turns/{id}/provenance", s.handleTurnProvenance)
-	// Registered last and least-specific: the SPA shell + embedded assets. The
-	// "s" prefix keeps /s/<slug> deep links on the SPA even when a legacy slug
-	// contains a dot.
-	mux.Handle("/", sse.StaticHandler(d.Dist, "s"))
+	mux.Handle("GET /github/setup", ghapp.SetupHandler(d.GitHub))
+	public.Handle("GET /github/setup/callback", ghapp.CallbackHandler(d.GitHub, func(a ghapp.App) {
+		d.Log.Printf("github app %s created; install it at %s", a.Slug, a.InstallURL())
+	}))
+	// The "s" prefix keeps /s/<slug> deep links on the SPA even when a legacy
+	// slug contains a dot.
+	public.Handle("/", sse.StaticHandler(d.Dist, "s"))
 }

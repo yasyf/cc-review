@@ -69,6 +69,32 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 		t.Fatalf("GET /api/session/nope status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 
+	origin := "http://" + resp.Request.URL.Host
+	crossSite := []struct {
+		name, path string
+		want       int
+	}{
+		{"setup callback is public", "/github/setup/callback?state=unknown&code=c", http.StatusBadRequest},
+		{"spa shell is public", "/s/some-review", http.StatusOK},
+		{"setup stays guarded", "/github/setup", http.StatusUnauthorized},
+		{"api stays guarded", "/api/session/nope", http.StatusUnauthorized},
+	}
+	for _, c := range crossSite {
+		req, err := http.NewRequest(http.MethodGet, origin+c.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		got, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		_ = got.Body.Close()
+		if got.StatusCode != c.want {
+			t.Errorf("%s: cross-site GET %s status = %d, want %d", c.name, c.path, got.StatusCode, c.want)
+		}
+	}
+
 	cancel()
 	select {
 	case serveErr := <-served:
