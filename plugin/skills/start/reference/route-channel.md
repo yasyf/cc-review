@@ -8,7 +8,7 @@ Each `<channel>` tag is one event. React to it exactly as skill step 4 — `Read
 
 ## Write back
 
-The channel exposes the same five tools the CLI does — `reply`, `set_file_states`, `update_ai_request`, `submit_organization`, `get_review_files`. Use them (or the `cc-review` CLI) to post clarifying questions and drive organize work.
+The channel server exposes seven tools: `reply`, `annotate`, `set_file_states`, `set_file_states_by_risk`, `update_ai_request`, `submit_organization`, and `get_review_files`. Use them (or the `cc-review` CLI) to post clarifying questions and drive organize work. In a PR review, `reply` and a comment-kind `annotate` post to GitHub as the user's cc-review App.
 
 ## Edges
 

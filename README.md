@@ -71,11 +71,22 @@ You pressed Submit, Claude applied the feedback, and now you owe round two. Run 
 
 The review resumes as a new version against the fresh diff. Prior threads carry over, files you already marked reviewed stay marked, and only files whose diff changed come back for re-reading. Everything persists in the derived v1 namespace under `~/.cc-review/v1`, and a review idle for 24 hours expires on its own, so an abandoned one never wedges Claude.
 
+### Review a teammate's PR stack without leaving the review UI
+
+A coworker opened four stacked PRs and wants eyes on all of them. Point cc-review at any one:
+
+```sh
+cc-review start --pr '#123' --open
+```
+
+The whole stack loads as one review, a section per PR, pulled from GitHub through a blobless clone that never touches your checkout. Every comment you leave posts to GitHub as you write it, comments from everyone else stream back in, and Submit posts your verdict as one GitHub review per PR. Claude's replies post under its own `cc-review-<you>[bot]` account, so nobody mistakes them for yours.
+
 ## More in the docs
 
 - [The edit guard](https://yasyf.github.io/cc-review/docs/guide/how-a-review-works.html#the-edit-guard) covers what the PreToolUse hook blocks, when it lifts, and why it fails open.
 - [Claude's side](https://yasyf.github.io/cc-review/docs/guide/how-a-review-works.html#claudes-side) explains the three kinds of reply Claude posts under your comments.
 - [Resume and versions](https://yasyf.github.io/cc-review/docs/guide/how-a-review-works.html#resume-and-versions) traces how reviewed state carries across rounds.
+- [Reviewing pull requests](https://yasyf.github.io/cc-review/docs/guide/pull-requests.html) covers the one-time GitHub App setup, how stacks resolve, and how comments sync both ways.
 - [CLI reference](https://yasyf.github.io/cc-review/docs/guide/cli-reference.html) lists every `cc-review` subcommand and flag.
 
 Read the [docs](https://yasyf.github.io/cc-review) for the full guide. Licensed under [PolyForm Noncommercial 1.0.0](LICENSE).

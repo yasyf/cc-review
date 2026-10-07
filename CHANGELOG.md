@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pull request reviews. `cc-review start --pr <url|owner/name#N|#N|N>` opens a
+  review of a GitHub pull request and the open stack around it, one section per
+  PR, trunk-most first. The stack is read from GitHub's base and head branches,
+  so a Graphite stack and a hand-built chain of PRs resolve the same way. None
+  of the branches needs to be checked out, because diffs come from a blobless
+  bare clone per repo under `~/.cc-review/v1/repos/`. `--open` opens the review in
+  the browser after printing its URL, for local reviews too. A plain `start`
+  resumes the window's PR review on the PRs' current heads.
+- Two-way comment sync. Comments, replies, resolves, and body edits you make in
+  a PR review post to GitHub with your `gh auth token`, and each one shows
+  whether it is posting, synced, or failed, with Retry on a failure. A poller
+  mirrors coworkers' threads, replies, resolves, and pushes back into the
+  review, every 15 seconds while the review is watched and every 2 minutes
+  otherwise. Both directions key every comment and reply by its GitHub node ID,
+  so a thread never duplicates however often it round-trips. Submit asks for a
+  verdict, Comment, Approve, or Request changes, plus an optional summary, and
+  posts one GitHub review per PR in the stack.
+- A per-user cc-review GitHub App for Claude's side of a PR review.
+  `cc-review github setup [--org X]` creates it through GitHub's manifest flow
+  and keeps its private key in the Keychain; `cc-review github status` reports
+  the app and whether it is installed on the current repo. Claude's replies and
+  comments post as the app, never as you, and the poller keeps the app's own
+  comments off Claude's channel. Without the app, or without an install on the
+  repo, Claude's writes fail with the setup command or the install URL instead
+  of falling back to your token.
+- A redesigned review UI on `@cc-interact/react` 0.5. A stack rail with one card
+  per PR (CI, review state, unread threads, reviewed files) replaces the section
+  banners, a PR header and a Conversation tab carry the PR's own discussion, and
+  threads show each GitHub author. The landing page lists recent reviews. The
+  UI gains a light, dark, and system theme, a unified/split diff toggle,
+  Markdown comment bodies, and a resizable, collapsible sidebar.
+
 ### Changed
 
 - **Upgrading wipes local review state.** The review database schema changes

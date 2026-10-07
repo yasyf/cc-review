@@ -9,13 +9,15 @@ A review is a conversation about a diff that hasn't been committed yet. You ask 
 
 ## The snapshot
 
-When Claude runs `cc-review start`, the daemon captures the state of your working tree as a patch. In a git repo, that means everything uncommitted, including tracked, staged, and untracked files but excluding ignored ones, diffed against `HEAD`. A repo with no commits is diffed against the empty tree. In a jj repo, including a colocated one, it diffs the working-copy change (`@`) against its parent.
+When Claude runs `cc-review start`, the daemon captures the state of your working tree as a patch. In a git repo with uncommitted work, that means everything uncommitted, including tracked, staged, and untracked files but excluding ignored ones, diffed against `HEAD`. With a clean tree, the base falls back to the branch's fork point from trunk, so the review covers the whole branch; `--base <ref>` pins a base of your choosing. A repo with no commits is diffed against the empty tree. In a jj repo, including a colocated one, it diffs the working-copy change (`@`) against its parent.
 
 In a [Graphite](https://graphite.dev)-tracked repo, the snapshot is a stack rather than a single diff. The daemon reads Graphite's branch metadata and the review becomes ordered sections: one per stacked branch, each diffed against its parent, trunk-most first, with the uncommitted working tree as a final pending section. You read the stack the way stacked PRs are meant to be read — each section building on the one before it — and the section a comment lands on travels with the comment. A plain repo is the one-section case of the same model.
 
 The patch is stored as a numbered version inside the review, in SQLite under `~/.cc-review/v1`. The web UI renders that frozen patch, not the live filesystem, so the diff you're reading stays stable even if files change underneath it. Each later round of review captures a new version of the same review, and the history of every version is retained.
 
-If there are no uncommitted changes — and, in a stack review, every stacked branch is empty too — the diff is empty and there is nothing to review.
+If that diff is empty — and, in a stack review, every stacked branch is empty too — there is nothing to review, and `start` says so.
+
+A GitHub pull request is the third shape. `start --pr` loads the PR's stack from GitHub into one section per PR, with no working-tree section, and syncs comments both ways; [Reviewing pull requests](pull-requests.md) covers it.
 
 ## Commenting
 

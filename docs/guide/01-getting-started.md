@@ -61,7 +61,7 @@ Linux trusts every process with the same user ID, so any process running as you 
    ```
 
 ::: {.callout-tip title="Checkpoint"}
-Claude prints a review URL of the form `http://127.0.0.1:<port>/s/<slug>` and tells you it is watching for comments. An empty diff means the work is already committed — reset it back into the working tree and start again (see [Nothing to review?](#nothing-to-review)).
+Claude prints a review URL of the form `http://127.0.0.1:<port>/s/<slug>` and tells you it is watching for comments. If `start` says `no changes to review`, see [Nothing to review?](#nothing-to-review).
 :::
 
 3. Open the URL in your browser. You get a familiar PR layout with a file tree on the left, syntax-highlighted diffs of the uncommitted working tree, and a header with the version, file count, review progress, and a Submit button.
@@ -84,8 +84,10 @@ A review idle for 24 hours expires on its own and unblocks edits; `cc-review clo
 
 ## Nothing to review?
 
-The diff is your uncommitted work, not your branch. In a git repo, `start` snapshots the working tree against `HEAD`, covering tracked, staged, and untracked files but skipping ignored ones. In a jj repo, it snapshots the working-copy change (`@`) against its parent. If Claude already committed the work, the diff is empty. Review before committing, or reset the work back into the working tree.
+In a git repo with uncommitted work, the diff is that work against `HEAD`, covering tracked, staged, and untracked files but skipping ignored ones. With a clean tree, it's the whole branch against its fork point from trunk, so work Claude already committed on a feature branch still shows up. `start --base <ref>` pins any other base. In a jj repo, it snapshots the working-copy change (`@`) against its parent.
+
+The diff comes up empty only when there's nothing on either side: a clean tree on trunk itself. Have Claude make its change on a branch, or leave it uncommitted, and start again.
 
 ## Next
 
-Read [How a review works](how-a-review-works.md) for the full lifecycle, from events and replies to the edit guard and resume semantics.
+Read [How a review works](how-a-review-works.md) for the full lifecycle, from events and replies to the edit guard and resume semantics. To review a GitHub pull request with comments synced both ways, see [Reviewing pull requests](pull-requests.md).
