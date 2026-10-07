@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each, delivered only when it lists open line comments from people.
   Comments that arrive later stream as before.
 - Bot noise no longer reaches Claude. Every `[bot]` login, Graphite's stack
-  and merge-activity comments, and pr-reviewer summary and companion posts
+  and merge-activity comments, pr-reviewer summary and companion posts, and
+  `<!-- ci-timing -->` reports
   are stored as `author: automation`, including the stack comment Graphite
   posts under the user's own token. Automated comments render collapsed,
   never reach Claude's channel, never count as open or unread, can't be

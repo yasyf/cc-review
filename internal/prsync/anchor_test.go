@@ -75,6 +75,7 @@ func TestAuthorOf(t *testing.T) {
 		{"graphite stack comment under the viewer", "octo", "<!-- Current dependencies on/for this PR: -->\n* **#2**", store.AuthorAutomation, ccevent.OriginAgent},
 		{"graphite stack footer under the viewer", "octo", "This stack of pull requests is managed by Graphite.", store.AuthorAutomation, ccevent.OriginAgent},
 		{"pr-reviewer companion under a human", "hubot", "<!-- pr-reviewer bot companion -->", store.AuthorAutomation, ccevent.OriginAgent},
+		{"ci-timing from a service account", "poetic-svc", "<!-- ci-timing -->\n🐌 sandsql-parity took 14m", store.AuthorAutomation, ccevent.OriginAgent},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

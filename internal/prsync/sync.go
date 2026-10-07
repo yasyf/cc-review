@@ -36,6 +36,7 @@ var (
 		"### Merge activity",
 		"<!-- pr-reviewer bot summary -->",
 		"<!-- pr-reviewer bot companion -->",
+		"<!-- ci-timing -->",
 	}
 )
 
