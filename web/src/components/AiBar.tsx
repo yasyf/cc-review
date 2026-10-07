@@ -259,8 +259,8 @@ export function AiBar({
 
   return (
     <footer className="ai-bar" ref={rootRef}>
-      {streamOpen && !menuOpen ? (
-        <div className="ai-pop" role="dialog" aria-label="Claude activity">
+      {stream.length > 0 || streamOpen ? (
+        <div className="ai-pop" role="dialog" aria-label="Claude activity" hidden={!streamOpen || menuOpen}>
           <div className="ai-pop-head">
             <span>Claude activity</span>
             <button type="button" className="ai-mini" onClick={() => setStreamOpen(false)} aria-label="Close">

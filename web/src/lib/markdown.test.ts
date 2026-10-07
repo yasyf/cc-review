@@ -90,6 +90,13 @@ describe('renderMarkdown GitHub extensions', () => {
     expect(root.textContent).not.toContain('trailing');
   });
 
+  it('keeps comment syntax inside code', () => {
+    const root = render('Use `<!--` to open one.\n\n```html\n<!-- kept -->\n```\n\nTail text.');
+    expect(root.querySelector('p code')?.textContent).toBe('<!--');
+    expect(root.querySelector('pre code')?.textContent).toContain('<!-- kept -->');
+    expect(root.textContent).toContain('Tail text.');
+  });
+
   it.each([
     ['img', '<img src="https://example.com/i.png" width="14">'],
     ['kbd', '<kbd>⌘K</kbd>'],

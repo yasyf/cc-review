@@ -62,9 +62,12 @@ export function isOpenHumanThread(comment: Comment): boolean {
 export function diffStats(patchText: string): DiffStats {
   let additions = 0;
   let deletions = 0;
+  let inHunk = false;
   for (const line of patchText.split('\n')) {
-    if (line.startsWith('+') && !line.startsWith('+++')) additions += 1;
-    else if (line.startsWith('-') && !line.startsWith('---')) deletions += 1;
+    if (line.startsWith('diff --git ')) inHunk = false;
+    else if (line.startsWith('@@')) inHunk = true;
+    else if (inHunk && line.startsWith('+')) additions += 1;
+    else if (inHunk && line.startsWith('-')) deletions += 1;
   }
   return { additions, deletions };
 }

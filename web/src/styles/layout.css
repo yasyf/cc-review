@@ -844,6 +844,9 @@
   box-shadow: var(--shadow-3);
   animation: fade-in var(--dur-1) var(--ease-out);
 }
+.ai-pop[hidden] {
+  display: none;
+}
 .ai-pop-head {
   display: flex;
   align-items: center;

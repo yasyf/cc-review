@@ -98,8 +98,14 @@ function withFilesTab(diffRef: RefObject<DiffViewHandle | null>, show: () => voi
       show();
       diffRef.current?.focusPrevFile();
     },
-    toggleViewedCurrent: () => diffRef.current?.toggleViewedCurrent(),
-    toggleCollapseCurrent: () => diffRef.current?.toggleCollapseCurrent(),
+    toggleViewedCurrent: () => {
+      show();
+      diffRef.current?.toggleViewedCurrent();
+    },
+    toggleCollapseCurrent: () => {
+      show();
+      diffRef.current?.toggleCollapseCurrent();
+    },
     focusNextComment: () => {
       show();
       diffRef.current?.focusNextComment();
@@ -230,7 +236,7 @@ function ReviewBody({ data, section: sectionParam }: { data: SessionResponse; se
                     {tab === 'overview' ? (
                       <div className="tab-panel tab-panel-scroll">
                         {pr && section ? (
-                          <OverviewPanel session={scoped} section={section} pr={pr} />
+                          <OverviewPanel key={section.sectionId} session={scoped} section={section} pr={pr} />
                         ) : (
                           <StackOverview session={data} onScope={setScope} />
                         )}

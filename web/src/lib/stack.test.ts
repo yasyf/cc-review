@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ciRollup, isOpenHumanThread, reviewRollup, scopeSession, stackRows, trunkBranch } from './stack';
+import { ciRollup, diffStats, isOpenHumanThread, reviewRollup, scopeSession, stackRows, trunkBranch } from './stack';
 import { comment, pullRequest, section, session } from '../test/fixtures';
 import type {
   Comment,
@@ -130,6 +130,13 @@ describe('stackRows', () => {
     expect(row.title).toBe('feature');
     expect(row.pr).toBeNull();
     expect(row.ci).toBe('none');
+  });
+});
+
+describe('diffStats', () => {
+  it('counts hunk lines that look like file headers', () => {
+    const patch = 'diff --git a/x.c b/x.c\n--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n---counter;\n+++counter;\n ctx';
+    expect(diffStats(patch)).toEqual({ additions: 1, deletions: 1 });
   });
 });
 

@@ -35,6 +35,9 @@ const markdown: Marked = new Marked({
     code({ text, lang }) {
       return lang === 'suggestion' ? suggestionBlock(text) : false;
     },
+    html({ text }) {
+      return text.replace(HTML_COMMENT, '');
+    },
     blockquote({ text }) {
       const match = ALERT.exec(text);
       if (!match) return false;
@@ -54,6 +57,5 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 });
 
 export function renderMarkdown(source: string): string {
-  const html = markdown.parse(source.replace(HTML_COMMENT, ''), { async: false });
-  return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
+  return DOMPurify.sanitize(markdown.parse(source, { async: false }), { ADD_ATTR: ['target'] });
 }

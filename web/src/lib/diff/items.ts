@@ -79,6 +79,16 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
   return parsePatchFiles(patchText).flatMap((patch) => patch.files);
 }
 
+const STRIP_WEIGHT = 1024;
+
+function stripAnchor(file: FileDiffMetadata): { side: Side; lineNumber: number } | null {
+  const hunk = file.hunks[0];
+  if (!hunk) return null;
+  return hunk.additionCount > 0
+    ? { side: 'additions', lineNumber: hunk.additionStart }
+    : { side: 'deletions', lineNumber: hunk.deletionStart };
+}
+
 // Interleave each section's file items in position order. Within a section,
 // files sort by the view-mode order map and comments/composer attach
 // as line annotations, mirroring the single-diff behaviour.
@@ -89,14 +99,6 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
 // (version' = base * 2 + (collapsed ? 1 : 0)). Ids and every key (order,
 // expandOverrides, autoCollapse) are itemIds so the same path in two sections
 // never collides.
-function stripAnchor(file: FileDiffMetadata): { side: Side; lineNumber: number } | null {
-  const hunk = file.hunks[0];
-  if (!hunk) return null;
-  return hunk.additionCount > 0
-    ? { side: 'additions', lineNumber: hunk.additionStart }
-    : { side: 'deletions', lineNumber: hunk.deletionStart };
-}
-
 export function buildItems(
   sections: readonly SectionFiles[],
   comments: readonly Comment[],
@@ -163,7 +165,7 @@ export function buildItems(
         !fileDraft &&
         ((section.fileStates[file.name]?.reviewed ?? false) || autoCollapse.has(id)) &&
         !expandOverrides.has(id);
-      const weight = threads.length + (stripIds?.length ?? 0);
+      const weight = (byItem.get(id)?.length ?? 0) + STRIP_WEIGHT * (stripIds?.length ?? 0);
       const base = fileDraft ? 2 * (weight + fileDraft.seq) + 1 : 2 * weight;
       items.push({
         id,

@@ -541,3 +541,14 @@
   color: var(--del-fg);
   font-size: var(--text-xs);
 }
+
+.file-comment-popover {
+  width: min(34rem, calc(100vw - var(--space-6)));
+  max-width: none;
+  max-height: 60vh;
+  overflow-y: auto;
+  gap: var(--space-2);
+}
+.file-comment-count {
+  gap: 4px;
+}
