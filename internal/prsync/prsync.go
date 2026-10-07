@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
@@ -46,7 +47,12 @@ type Syncer struct {
 	mu      sync.Mutex
 	viewer  string
 	pollers map[string]*poller
-	applyMu map[string]*sync.Mutex
+	applies map[string]*applyGate
+}
+
+type applyGate struct {
+	mu     sync.Mutex
+	writes atomic.Uint64
 }
 
 type poller struct {
@@ -59,22 +65,31 @@ type poller struct {
 
 // New builds a Syncer over cfg; no poller runs until Start.
 func New(cfg Config) *Syncer {
-	return &Syncer{cfg: cfg, pollers: make(map[string]*poller), applyMu: make(map[string]*sync.Mutex)}
+	return &Syncer{cfg: cfg, pollers: make(map[string]*poller), applies: make(map[string]*applyGate)}
 }
 
 // Exclusive holds off the review's poller from applying a snapshot until
 // release. An outbound write holds it from the GitHub call through storing the
-// returned remote id, so a poll can never insert that comment a second time.
+// result; release marks every snapshot fetched before it stale, so the poller
+// refetches instead of reverting the write.
 func (s *Syncer) Exclusive(reviewID string) (release func()) {
-	s.mu.Lock()
-	mu, ok := s.applyMu[reviewID]
-	if !ok {
-		mu = &sync.Mutex{}
-		s.applyMu[reviewID] = mu
+	g := s.gate(reviewID)
+	g.mu.Lock()
+	return func() {
+		g.writes.Add(1)
+		g.mu.Unlock()
 	}
-	s.mu.Unlock()
-	mu.Lock()
-	return mu.Unlock
+}
+
+func (s *Syncer) gate(reviewID string) *applyGate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, ok := s.applies[reviewID]
+	if !ok {
+		g = &applyGate{}
+		s.applies[reviewID] = g
+	}
+	return g
 }
 
 // Start runs the review's poller unless one is already running. It refuses with

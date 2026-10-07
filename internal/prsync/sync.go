@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,8 @@ const (
 	subjectFile = "file"
 
 	replyKindNote = "note"
+
+	prOpen = "OPEN"
 )
 
 type change struct{ touched, human bool }
@@ -84,47 +87,115 @@ func (s *Syncer) poll(ctx context.Context, p *poller) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	v, sections, err := latestSections(ctx, st, p.reviewID)
+	g := s.gate(p.reviewID)
+	recaptured := false
+	for {
+		writes := g.writes.Load()
+		v, sections, snaps, err := s.fetch(ctx, st, p.reviewID, repo)
+		if err != nil {
+			return true, err
+		}
+		moved, err := s.stackMoved(ctx, repo, meta.PRNumber, sections, snaps)
+		if err != nil {
+			return true, err
+		}
+		if moved {
+			if recaptured {
+				return true, errors.New("the pull request stack moved again during recapture")
+			}
+			if err := s.cfg.Recapture(ctx, p.reviewID); err != nil {
+				return true, fmt.Errorf("recapture: %w", err)
+			}
+			recaptured = true
+			continue
+		}
+		g.mu.Lock()
+		if g.writes.Load() != writes {
+			g.mu.Unlock()
+			continue
+		}
+		err = s.apply(ctx, st, p, v, sections, snaps)
+		g.mu.Unlock()
+		if err != nil {
+			return true, err
+		}
+		return true, s.publish(ctx, st, p.reviewID)
+	}
+}
+
+func (s *Syncer) fetch(ctx context.Context, st *store.Store, reviewID string, repo github.Repo) (store.Version, []store.Section, map[int]github.PRSnapshot, error) {
+	v, sections, err := latestSections(ctx, st, reviewID)
 	if err != nil {
-		return true, err
+		return store.Version{}, nil, nil, err
 	}
 	snaps, err := s.cfg.Client.Snapshot(ctx, repo, prNumbers(sections))
 	if err != nil {
-		return true, fmt.Errorf("snapshot %s: %w", repo, err)
+		return store.Version{}, nil, nil, fmt.Errorf("snapshot %s: %w", repo, err)
 	}
-	if headsMoved(sections, snaps) {
-		if err := s.cfg.Recapture(ctx, p.reviewID); err != nil {
-			return true, fmt.Errorf("recapture: %w", err)
-		}
-		if v, sections, err = latestSections(ctx, st, p.reviewID); err != nil {
-			return true, err
-		}
-	}
-	release := s.Exclusive(p.reviewID)
-	defer release()
-	sc := syncCtx{s: s, st: st, p: p, version: v}
-	if err := sc.pullRequests(ctx, snaps); err != nil {
-		return true, err
-	}
+	return v, sections, snaps, nil
+}
+
+func (s *Syncer) stackMoved(ctx context.Context, repo github.Repo, target int, sections []store.Section, snaps map[int]github.PRSnapshot) (bool, error) {
 	for _, sec := range sections {
-		snap := snaps[sec.PRNumber]
-		for _, th := range snap.Threads {
-			if err := sc.thread(ctx, sec, th); err != nil {
-				return true, err
-			}
-		}
-		for _, ic := range snap.IssueComments {
-			if err := sc.issueComment(ctx, sec, ic); err != nil {
-				return true, err
-			}
+		pr := snaps[sec.PRNumber].PR
+		if pr.HeadRefOid != sec.HeadRef || pr.BaseRefName != sec.ParentBranch || (pr.Number != target && pr.State != prOpen) {
+			return true, nil
 		}
 	}
-	return true, nil
+	top := sections[len(sections)-1].Branch
+	children, err := s.cfg.Client.OpenPRsWithBase(ctx, repo, top)
+	if err != nil {
+		return false, fmt.Errorf("pull requests on %s: %w", top, err)
+	}
+	return len(children) == 1 && !slices.ContainsFunc(sections, func(sec store.Section) bool {
+		return sec.PRNumber == children[0].Number
+	}), nil
+}
+
+func (s *Syncer) apply(ctx context.Context, st *store.Store, p *poller, v store.Version, sections []store.Section, snaps map[int]github.PRSnapshot) error {
+	return st.ApplyRemote(ctx, func(rt *store.RemoteTx) error {
+		sc := syncCtx{rt: rt, p: p, version: v}
+		if err := sc.pullRequests(ctx, snaps); err != nil {
+			return err
+		}
+		for _, sec := range sections {
+			snap := snaps[sec.PRNumber]
+			for _, th := range snap.Threads {
+				if err := sc.thread(ctx, sec, th); err != nil {
+					return err
+				}
+			}
+			for _, ic := range snap.IssueComments {
+				if err := sc.issueComment(ctx, sec, ic); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Syncer) publish(ctx context.Context, st *store.Store, reviewID string) error {
+	pending, err := st.PendingEvents(ctx, reviewID)
+	if err != nil {
+		return err
+	}
+	for _, pe := range pending {
+		seq, err := s.cfg.Append(ctx, &ccevent.Event{
+			SubjectID: pe.ReviewID, Origin: pe.Origin, Type: pe.Type, Payload: pe.Payload, DedupKey: pe.DedupKey(),
+		})
+		if err != nil {
+			return fmt.Errorf("append %s: %w", pe.Type, err)
+		}
+		if err := st.MarkEventAppended(ctx, pe.ID, seq); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type syncCtx struct {
-	s       *Syncer
-	st      *store.Store
+	rt      *store.RemoteTx
 	p       *poller
 	version store.Version
 }
@@ -158,15 +229,6 @@ func prNumbers(sections []store.Section) []int {
 		out[i] = sec.PRNumber
 	}
 	return out
-}
-
-func headsMoved(sections []store.Section, snaps map[int]github.PRSnapshot) bool {
-	for _, sec := range sections {
-		if snaps[sec.PRNumber].PR.HeadRefOid != sec.HeadRef {
-			return true
-		}
-	}
-	return false
 }
 
 // authorOf maps a GitHub login to the local author and the event origin its
@@ -233,14 +295,13 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 		AuthorLogin: root.AuthorLogin, AuthorAvatarURL: root.AuthorAvatarURL,
 		Outdated: outdated, Subject: subject, SyncState: store.SyncSynced,
 	}
-	prev, err := sc.st.CommentByRemoteID(ctx, sc.p.reviewID, c.RemoteID)
-	existed := err == nil
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	prev, existed, err := sc.existing(ctx, c)
+	if err != nil {
 		return err
 	}
 	prevReplies := map[string]store.Reply{}
 	if existed {
-		rs, err := sc.st.ListRepliesByComment(ctx, prev.ID)
+		rs, err := sc.rt.ListRepliesByComment(ctx, prev.ID)
 		if err != nil {
 			return err
 		}
@@ -248,7 +309,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 			prevReplies[r.RemoteID] = r
 		}
 	}
-	saved, created, err := sc.st.UpsertRemoteComment(ctx, c)
+	saved, created, err := sc.rt.UpsertComment(ctx, c)
 	if err != nil {
 		return fmt.Errorf("upsert thread %s: %w", th.NodeID, err)
 	}
@@ -279,7 +340,12 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 			AuthorLogin: rc.AuthorLogin, AuthorAvatarURL: rc.AuthorAvatarURL, SyncState: store.SyncSynced,
 		}
 		before, had := prevReplies[r.RemoteID]
-		after, _, err := sc.st.UpsertRemoteReply(ctx, r)
+		if !had && rAuthor != store.AuthorRemote {
+			if before, had, err = sc.adoptReply(ctx, sec, false, r); err != nil {
+				return err
+			}
+		}
+		after, _, err := sc.rt.UpsertReply(ctx, r)
 		if err != nil {
 			return fmt.Errorf("upsert reply %s: %w", r.RemoteID, err)
 		}
@@ -290,17 +356,21 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 	}
 	switch {
 	case created:
-		return sc.emitComment(ctx, ch.origin(), store.EventCommentCreated, saved.ID)
+		return sc.emitComment(ctx, ch.origin(), store.EventCommentCreated, saved)
 	case statusOnly && saved.Status == "resolved":
-		sc.emit(ctx, ccevent.OriginHuman, store.EventCommentResolved, map[string]any{"commentId": strconv.FormatInt(saved.ID, 10)})
-		return nil
+		return sc.emit(ctx, ccevent.OriginHuman, store.EventCommentResolved, map[string]any{"commentId": strconv.FormatInt(saved.ID, 10)})
 	case ch.any():
-		return sc.emitComment(ctx, ch.origin(), store.EventCommentUpdated, saved.ID)
+		return sc.emitComment(ctx, ch.origin(), store.EventCommentUpdated, saved)
 	}
 	return nil
 }
 
 func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github.RemoteComment) error {
+	if _, err := sc.rt.ReplyByRemoteID(ctx, sc.p.reviewID, ic.NodeID); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
 	author, origin := sc.p.authorOf(ic.AuthorLogin)
 	c := store.Comment{
 		VersionID: sc.version.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
@@ -309,33 +379,68 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 		AuthorLogin: ic.AuthorLogin, AuthorAvatarURL: ic.AuthorAvatarURL,
 		Subject: subjectFile, SyncState: store.SyncSynced,
 	}
-	prev, err := sc.st.CommentByRemoteID(ctx, sc.p.reviewID, c.RemoteID)
-	existed := err == nil
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	prev, existed, err := sc.existing(ctx, c)
+	if err != nil {
 		return err
 	}
-	saved, created, err := sc.st.UpsertRemoteComment(ctx, c)
+	if !existed && author != store.AuthorRemote {
+		reply := store.Reply{Origin: author, Body: ic.Body, RemoteID: ic.NodeID, RemoteURL: ic.URL}
+		if _, adopted, err := sc.adoptReply(ctx, sec, true, reply); err != nil || adopted {
+			return err
+		}
+	}
+	if existed {
+		c.Status = prev.Status
+	}
+	saved, created, err := sc.rt.UpsertComment(ctx, c)
 	if err != nil {
 		return fmt.Errorf("upsert issue comment %s: %w", ic.NodeID, err)
 	}
 	switch {
 	case created:
-		return sc.emitComment(ctx, origin, store.EventCommentCreated, saved.ID)
+		return sc.emitComment(ctx, origin, store.EventCommentCreated, saved)
 	case existed && diffComment(prev, saved).content:
-		return sc.emitComment(ctx, origin, store.EventCommentUpdated, saved.ID)
+		return sc.emitComment(ctx, origin, store.EventCommentUpdated, saved)
 	}
 	return nil
+}
+
+func (sc syncCtx) existing(ctx context.Context, c store.Comment) (store.Comment, bool, error) {
+	prev, err := sc.rt.CommentByRemoteID(ctx, sc.p.reviewID, c.RemoteID)
+	switch {
+	case err == nil:
+		return prev, true, nil
+	case !errors.Is(err, store.ErrNotFound):
+		return store.Comment{}, false, err
+	case c.Author == store.AuthorRemote:
+		return store.Comment{}, false, nil
+	}
+	adopted, ok, err := sc.rt.AdoptComment(ctx, sc.p.reviewID, c)
+	if err != nil || !ok {
+		return store.Comment{}, false, err
+	}
+	return adopted, true, sc.emit(ctx, ccevent.OriginAgent, store.EventCommentSynced, wire.CommentSyncedFields(adopted))
+}
+
+func (sc syncCtx) adoptReply(ctx context.Context, sec store.Section, conversation bool, r store.Reply) (store.Reply, bool, error) {
+	adopted, ok, err := sc.rt.AdoptReply(ctx, sc.p.reviewID, sec.Key(), conversation, r)
+	if err != nil || !ok {
+		return store.Reply{}, false, err
+	}
+	return adopted, true, sc.emit(ctx, ccevent.OriginAgent, store.EventCommentSynced, wire.ReplySyncedFields(adopted))
 }
 
 func (sc syncCtx) pullRequests(ctx context.Context, snaps map[int]github.PRSnapshot) error {
 	for n, snap := range snaps {
 		pr := PullRequestRow(sc.p.reviewID, snap.PR, sc.p.viewer)
-		changed, err := sc.st.UpsertPullRequest(ctx, pr)
+		changed, err := sc.rt.UpsertPullRequest(ctx, pr)
 		if err != nil {
 			return fmt.Errorf("upsert pull request #%d: %w", n, err)
 		}
 		if changed {
-			sc.emit(ctx, ccevent.OriginSystem, store.EventPRUpdated, wire.PRUpdatedFields(pr))
+			if err := sc.emit(ctx, ccevent.OriginSystem, store.EventPRUpdated, wire.PRUpdatedFields(pr)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -360,23 +465,16 @@ func PullRequestRow(reviewID string, pr github.PullRequest, viewer string) store
 	}
 }
 
-func (sc syncCtx) emitComment(ctx context.Context, origin, typ string, commentID int64) error {
-	c, err := sc.st.GetComment(ctx, commentID)
+func (sc syncCtx) emitComment(ctx context.Context, origin, typ string, c store.Comment) error {
+	replies, err := sc.rt.ListRepliesByComment(ctx, c.ID)
 	if err != nil {
 		return err
 	}
-	replies, err := sc.st.ListRepliesByComment(ctx, commentID)
-	if err != nil {
-		return err
-	}
-	sc.emit(ctx, origin, typ, map[string]any{
-		"commentId": strconv.FormatInt(commentID, 10), "comment": wire.ToComment(c, replies),
+	return sc.emit(ctx, origin, typ, map[string]any{
+		"commentId": strconv.FormatInt(c.ID, 10), "comment": wire.ToComment(c, replies),
 	})
-	return nil
 }
 
-func (sc syncCtx) emit(ctx context.Context, origin, typ string, fields map[string]any) {
-	_, _ = sc.s.cfg.Append(ctx, &ccevent.Event{
-		SubjectID: sc.p.reviewID, Origin: origin, Type: typ, Payload: wire.Event(typ, sc.version.VersionNumber, fields),
-	})
+func (sc syncCtx) emit(ctx context.Context, origin, typ string, fields map[string]any) error {
+	return sc.rt.QueueEvent(ctx, sc.p.reviewID, origin, typ, wire.Event(typ, sc.version.VersionNumber, fields))
 }
