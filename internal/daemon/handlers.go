@@ -18,8 +18,12 @@ import (
 
 	"github.com/yasyf/cc-review/internal/feedback"
 	"github.com/yasyf/cc-review/internal/generated"
+	"github.com/yasyf/cc-review/internal/ghapp"
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/prstack"
 	"github.com/yasyf/cc-review/internal/store"
+	"github.com/yasyf/cc-review/internal/thinstore"
 	"github.com/yasyf/cc-review/internal/wire"
 )
 
@@ -53,15 +57,18 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		if b.Base != "" {
 			return errReply(fmt.Sprintf("review %s is pinned; pass --new to start a fresh review with --base", peeked.Slug))
 		}
+		if err := samePR(peeked.Slug, meta, b.PR); err != nil {
+			return errReply(err.Error())
+		}
 		fromPin = true
-		if capture, err = captureForResume(hc, meta); err != nil {
+		if capture, err = rv.captureForResume(hc, meta); err != nil {
 			if !errors.Is(err, vcs.ErrNoChanges) {
 				return errReply(err.Error() + " (pass --new to start a fresh review)")
 			}
 			return errReply(err.Error())
 		}
 	} else {
-		if capture, err = captureForCreate(hc, b.Base); err != nil {
+		if capture, err = rv.captureForCreate(hc, b.Base, b.PR); err != nil {
 			return errReply(err.Error())
 		}
 	}
@@ -83,8 +90,11 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		if b.Base != "" {
 			return errReply(fmt.Sprintf("review %s is pinned; pass --new to start a fresh review with --base", sub.Slug))
 		}
-		if metaOK && (meta.Stack != capture.Stack || (!meta.Stack && meta.BaseRef != capture.BaseRef)) {
-			if capture, err = captureForResume(hc, meta); err != nil {
+		if err := samePR(sub.Slug, meta, b.PR); err != nil {
+			return errReply(err.Error())
+		}
+		if metaOK && (meta.Kind != capture.kind() || meta.Stack != capture.Stack || (!meta.Stack && meta.BaseRef != capture.BaseRef)) {
+			if capture, err = rv.captureForResume(hc, meta); err != nil {
 				return errReply(err.Error())
 			}
 		}
@@ -92,7 +102,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		if fromPin {
 			// The resolve said resume but Start created: recapture with create
 			// semantics and re-pin the just-created (still version-less) review.
-			if capture, err = captureForCreate(hc, ""); err != nil {
+			if capture, err = rv.captureForCreate(hc, "", capture.PR); err != nil {
 				// Leave nothing resumable behind: the empty review would otherwise be
 				// resumed against its stale pin on the next start.
 				if cerr := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, "closed"); cerr != nil {
@@ -107,6 +117,16 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		if err := st.SetReviewMeta(hc.Ctx, sub.ID, capture.BaseRef, capture.Branch, capture.Stack); err != nil {
 			return errReply(err.Error())
 		}
+		if capture.PR != nil {
+			if err := st.SetReviewKind(hc.Ctx, sub.ID, store.ReviewKindPR, capture.PR.Repo.String(), capture.PR.Number); err != nil {
+				return errReply(err.Error())
+			}
+		}
+	}
+	info := startInfo{Stack: stackInfoFor(capture)}
+	if capture.PR != nil {
+		info.PR = prInfoFor(capture)
+		info.GitHubSetup = githubSetup(hc.Ctx, capture.PR.Repo)
 	}
 	// An unchanged worktree on resume reuses the latest version. A section whose
 	// patch is unreadable (crash mid-rename) misses the dedup and gets a fresh one.
@@ -119,7 +139,11 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 				return errReply(err.Error())
 			}
 			if sectionsUnchanged(existing, capture) {
-				return rv.reuseVersion(hc, st, sub, latest, existing)
+				if err := rv.recordPullRequests(hc, st, sub.ID, latest.VersionNumber, capture); err != nil {
+					return errReply(err.Error())
+				}
+				info.Stack = nil
+				return rv.reuseVersion(hc, st, sub, latest, existing, info)
 			}
 		}
 	}
@@ -141,6 +165,9 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		sectionInputs[i] = store.SectionInput{
 			Position: i, Branch: sec.Branch, ParentBranch: sec.ParentBranch,
 			BaseRef: sec.BaseRef, HeadRef: sec.HeadRef, Pending: sec.Pending, FilesJSON: string(filesJSON),
+		}
+		if capture.PR != nil {
+			sectionInputs[i].PRNumber, sectionInputs[i].PRNodeID = capture.PRs[i].Number, capture.PRs[i].NodeID
 		}
 	}
 	// Patch each section to a temp before the version insert; a failed write then
@@ -212,6 +239,9 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		return errReply(err.Error())
 	}
 	emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventVersionCreated, v.VersionNumber, nil)
+	if err := rv.recordPullRequests(hc, st, sub.ID, v.VersionNumber, capture); err != nil {
+		return errReply(err.Error())
+	}
 	if len(unmarked) > 0 {
 		states := make([]map[string]any, 0, len(unmarked))
 		for _, fs := range unmarked {
@@ -250,13 +280,13 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	if err != nil {
 		return errReply(err.Error())
 	}
-	return rv.startReply(hc, sub, v.VersionNumber, resumed, cs, stackInfoFor(capture), reoffer)
+	return rv.startReply(hc, sub, v.VersionNumber, resumed, cs, info, reoffer)
 }
 
 // reuseVersion handles a resume whose capture matches the latest version
 // byte-for-byte: it reopens a submitted round and re-offers open requests
 // without minting a new version.
-func (rv *review) reuseVersion(hc ccd.HandlerCtx, st *store.Store, sub subject.Subject, latest store.Version, sections []store.Section) ccd.Reply {
+func (rv *review) reuseVersion(hc ccd.HandlerCtx, st *store.Store, sub subject.Subject, latest store.Version, sections []store.Section, info startInfo) ccd.Reply {
 	if sub.Status != statusOpen {
 		if err := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, statusOpen); err != nil {
 			return errReply(err.Error())
@@ -289,23 +319,39 @@ func (rv *review) reuseVersion(hc ccd.HandlerCtx, st *store.Store, sub subject.S
 	if err != nil {
 		return errReply(err.Error())
 	}
-	return rv.startReply(hc, sub, latest.VersionNumber, true, cs, nil, reoffer)
+	return rv.startReply(hc, sub, latest.VersionNumber, true, cs, info, reoffer)
+}
+
+// startInfo is the capture-derived part of the start reply: the Graphite stack
+// summary, or the pull-request summary and the GitHub app setup Claude's replies
+// still need.
+type startInfo struct {
+	Stack       *StackInfo
+	PR          *PRInfo
+	GitHubSetup string
 }
 
 // startReply builds the start op's reply: the review id and http port on the
-// envelope, the URL, version, resume flag, channel state, stack info, and
-// re-offered AI requests in the body.
-func (rv *review) startReply(hc ccd.HandlerCtx, sub subject.Subject, version int, resumed bool, channelState string, stack *StackInfo, aiRequests []json.RawMessage) ccd.Reply {
+// envelope, the URL, version, resume flag, channel state, stack or PR info, and
+// re-offered AI requests in the body. A pull-request review also hands its id
+// to the PR poller.
+func (rv *review) startReply(hc ccd.HandlerCtx, sub subject.Subject, version int, resumed bool, channelState string, info startInfo, aiRequests []json.RawMessage) ccd.Reply {
+	if info.PR != nil {
+		rv.prReviewOpened(hc.Ctx, sub.ID)
+	}
 	raw, _ := json.Marshal(result{
 		URL: reviewURL(hc.HTTPPort, sub.Slug), Version: version, Resumed: resumed,
-		ChannelState: channelState, Stack: stack, AIRequests: aiRequests,
+		ChannelState: channelState, Stack: info.Stack, PR: info.PR, GitHubSetup: info.GitHubSetup,
+		AIRequests: aiRequests,
 	})
 	return ccd.Reply{OK: true, SubjectID: sub.ID, HTTPPort: hc.HTTPPort, Body: raw}
 }
 
-// captured is one working-tree or stack snapshot normalized into ordered
-// sections. Stack marks a Graphite capture; a flat capture is one pending
-// section. BaseRef pins a flat review's base; a stack pins none.
+// captured is one working-tree, stack, or pull-request snapshot normalized
+// into ordered sections. Stack marks a Graphite or pull-request capture; a flat
+// capture is one pending section. BaseRef pins a flat review's base; a stack
+// pins none. PR is the pull request a PR capture was pointed at, and PRs holds
+// its stack's pull requests position-for-position with Sections.
 type captured struct {
 	RepoRoot string
 	Branch   string
@@ -313,11 +359,28 @@ type captured struct {
 	Trunk    string
 	Stack    bool
 	Sections []vcs.StackSection
+	PR       *github.PRRef
+	PRs      []github.PullRequest
 }
 
-// captureForResume re-captures a review from its pinned meta: a stack re-detects
-// its sections from current refs; a flat review diffs its pinned base verbatim.
-func captureForResume(hc ccd.HandlerCtx, meta store.ReviewMeta) (captured, error) {
+func (c captured) kind() string {
+	if c.PR != nil {
+		return store.ReviewKindPR
+	}
+	return store.ReviewKindLocal
+}
+
+// captureForResume re-captures a review from its pinned meta: a pull-request
+// review re-resolves its stack on GitHub; a stack re-detects its sections from
+// current refs; a flat review diffs its pinned base verbatim.
+func (rv *review) captureForResume(hc ccd.HandlerCtx, meta store.ReviewMeta) (captured, error) {
+	if meta.Kind == store.ReviewKindPR {
+		ref, err := github.ParsePRRef(fmt.Sprintf("%s#%d", meta.Repo, meta.PRNumber), nil)
+		if err != nil {
+			return captured{}, err
+		}
+		return rv.capturePR(hc.Ctx, ref)
+	}
 	if meta.Stack {
 		snap, err := vcs.CaptureStack(hc.Ctx, hc.Scope)
 		if err != nil {
@@ -332,10 +395,14 @@ func captureForResume(hc ccd.HandlerCtx, meta store.ReviewMeta) (captured, error
 	return flatToCaptured(snap), nil
 }
 
-// captureForCreate captures a fresh review: an explicit --base forces a flat
-// diff; otherwise a Graphite stack auto-detects and captures per-branch, falling
-// back to a flat session-scoped diff.
-func captureForCreate(hc ccd.HandlerCtx, base string) (captured, error) {
+// captureForCreate captures a fresh review: a pull request captures its stack
+// from GitHub; an explicit --base forces a flat diff; otherwise a Graphite stack
+// auto-detects and captures per-branch, falling back to a flat session-scoped
+// diff.
+func (rv *review) captureForCreate(hc ccd.HandlerCtx, base string, pr *github.PRRef) (captured, error) {
+	if pr != nil {
+		return rv.capturePR(hc.Ctx, *pr)
+	}
 	if base == "" {
 		if _, stacked, err := vcs.DetectStack(hc.Ctx, hc.Scope); err != nil {
 			return captured{}, err
@@ -372,10 +439,123 @@ func stackToCaptured(snap vcs.StackSnapshot) captured {
 	}
 }
 
+// capturePR resolves ref's stack on GitHub, fetches each PR head and its
+// merge-base into the repo's thin store, and diffs them into one section per
+// PR, trunk-most first. A PR capture has no pending section.
+func (rv *review) capturePR(ctx context.Context, ref github.PRRef) (captured, error) {
+	stack, err := prstack.Resolve(ctx, rv.gh, ref)
+	if err != nil {
+		return captured{}, fmt.Errorf("resolve the stack of %s: %w", ref, err)
+	}
+	ts, err := thinstore.Open(ctx, ref.Repo, rv.cloneURL(ref.Repo))
+	if err != nil {
+		return captured{}, err
+	}
+	capture := captured{RepoRoot: ts.Dir, Trunk: stack.Trunk, Stack: true, PR: &ref}
+	for _, sec := range stack.Sections {
+		if _, err := ts.FetchPR(ctx, sec.PR.Number); err != nil {
+			return captured{}, err
+		}
+		if err := ts.FetchCommit(ctx, sec.MergeBase); err != nil {
+			return captured{}, err
+		}
+		diff, err := vcs.DiffRange(ctx, ts.Dir, sec.MergeBase, sec.PR.HeadRefOid)
+		if err != nil {
+			return captured{}, fmt.Errorf("diff #%d: %w", sec.PR.Number, err)
+		}
+		diff.Branch, diff.ParentBranch = sec.PR.HeadRefName, sec.ParentBranch
+		capture.Sections = append(capture.Sections, diff)
+		capture.PRs = append(capture.PRs, sec.PR)
+		if sec.PR.Number == ref.Number {
+			capture.Branch = sec.PR.HeadRefName
+		}
+	}
+	return capture, nil
+}
+
+// samePR refuses a --pr start that would resume a review of anything other
+// than that pull request; a plain start (nil ref) resumes whatever the window
+// holds.
+func samePR(slug string, meta store.ReviewMeta, ref *github.PRRef) error {
+	if ref == nil || (meta.Kind == store.ReviewKindPR && meta.Repo == ref.Repo.String() && meta.PRNumber == ref.Number) {
+		return nil
+	}
+	return fmt.Errorf("review %s is not a review of %s; pass --new to start one", slug, ref)
+}
+
+// recordPullRequests upserts a PR capture's pull requests and emits pr.updated
+// for each; a local capture records nothing.
+func (rv *review) recordPullRequests(hc ccd.HandlerCtx, st *store.Store, reviewID string, version int, capture captured) error {
+	if capture.PR == nil {
+		return nil
+	}
+	viewer, err := rv.gh.Viewer(hc.Ctx)
+	if err != nil {
+		return err
+	}
+	for _, pr := range capture.PRs {
+		row := storePullRequest(reviewID, pr, viewer)
+		changed, err := st.UpsertPullRequest(hc.Ctx, row)
+		if err != nil {
+			return err
+		}
+		if changed {
+			emit(hc.Ctx, hc.Append, reviewID, ccevent.OriginSystem, store.EventPRUpdated, version,
+				map[string]any{"pullRequest": wire.ToPullRequest(row)})
+		}
+	}
+	return nil
+}
+
+func storePullRequest(reviewID string, pr github.PullRequest, viewer string) store.PullRequest {
+	checks := make([]store.PRCheck, len(pr.Checks))
+	for i, c := range pr.Checks {
+		checks[i] = store.PRCheck{Name: c.Name, State: c.State, URL: c.URL}
+	}
+	reviewers := make([]store.PRReviewer, len(pr.Reviewers))
+	for i, r := range pr.Reviewers {
+		reviewers[i] = store.PRReviewer{Login: r.Login, AvatarURL: r.AvatarURL, State: r.State}
+	}
+	return store.PullRequest{
+		ReviewID: reviewID, Number: pr.Number, NodeID: pr.NodeID, Title: pr.Title, Body: pr.Body, State: pr.State,
+		URL: pr.URL, AuthorLogin: pr.AuthorLogin, HeadRefName: pr.HeadRefName, HeadSHA: pr.HeadRefOid,
+		BaseRefName: pr.BaseRefName, Draft: pr.Draft, Mergeable: pr.Mergeable, Checks: checks, Reviewers: reviewers,
+		ViewerIsAuthor: pr.AuthorLogin == viewer, UpdatedAt: pr.UpdatedAt,
+	}
+}
+
+// githubSetup names what Claude's GitHub replies on repo still need: the app
+// setup command when no cc-review app exists, the app's install URL when it is
+// not installed on repo, and "" when the app can mint a token for repo.
+func githubSetup(ctx context.Context, repo github.Repo) string {
+	app, ok, err := ghapp.Load()
+	if err != nil {
+		return err.Error()
+	}
+	if !ok {
+		return "cc-review github setup"
+	}
+	if _, err := app.TokenSource(repo).Token(ctx); errors.Is(err, ghapp.ErrNotInstalled) {
+		return app.InstallURL()
+	} else if err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// prInfoFor is the start reply's pull-request summary.
+func prInfoFor(capture captured) *PRInfo {
+	stack := make([]int, len(capture.PRs))
+	for i, pr := range capture.PRs {
+		stack[i] = pr.Number
+	}
+	return &PRInfo{Repo: capture.PR.Repo.String(), Number: capture.PR.Number, Stack: stack}
+}
+
 // stackInfoFor is the start reply's stack summary: trunk plus committed branches
-// trunk-most→top, nil for a flat capture.
+// trunk-most→top, nil for a flat or pull-request capture.
 func stackInfoFor(capture captured) *StackInfo {
-	if !capture.Stack {
+	if !capture.Stack || capture.PR != nil {
 		return nil
 	}
 	branches := make([]string, 0, len(capture.Sections))

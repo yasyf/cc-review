@@ -17,6 +17,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/digest"
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/httpapi"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
@@ -78,12 +79,17 @@ var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 // review holds the cross-handler state the substrate's HandlerCtx does not carry:
 // the shared decision ledger, the daemon logger, the SSE inject hook
 // ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through,
-// and the ids of the turns this daemon opened on a fresh tree snapshot.
+// the GitHub client and clone URL a pull-request capture reads through, the
+// hook that hands an opened pull-request review to its poller, and the ids of
+// the turns this daemon opened on a fresh tree snapshot.
 type review struct {
-	decisions   *decisions.Log
-	log         *log.Logger
-	injectEvent func(subjectID, consumer string, pid int, payload string) int
-	sliceWarn   sync.Once
+	decisions      *decisions.Log
+	log            *log.Logger
+	injectEvent    func(subjectID, consumer string, pid int, payload string) int
+	gh             *github.Client
+	cloneURL       func(github.Repo) string
+	prReviewOpened func(ctx context.Context, reviewID string)
+	sliceWarn      sync.Once
 
 	snapshotMu  sync.Mutex
 	snapshotted map[int64]struct{}
@@ -103,7 +109,13 @@ func Serve(ctx context.Context, fixedPort int) error {
 		return err
 	}
 	defer func() { _ = ledger.Close() }()
-	rv := &review{decisions: ledger, log: log.New(os.Stderr, "[cc-review] ", log.LstdFlags)}
+	rv := &review{
+		decisions:      ledger,
+		log:            log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+		gh:             github.New(github.UserTokenSource()),
+		cloneURL:       githubCloneURL,
+		prReviewOpened: func(context.Context, string) {},
+	}
 	spec, err := runtimeconfig.Spec()
 	if err != nil {
 		return err
@@ -164,6 +176,10 @@ func decisionsPath() string {
 		return p
 	}
 	return decisions.DefaultPath()
+}
+
+func githubCloneURL(repo github.Repo) string {
+	return "https://github.com/" + repo.String() + ".git"
 }
 
 // repoScope canonicalizes a cwd to its repo root, falling back to the cwd as
