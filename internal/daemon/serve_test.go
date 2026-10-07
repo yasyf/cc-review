@@ -2,19 +2,55 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/yasyf/cc-review/internal/decisions"
+	"github.com/yasyf/cc-review/internal/ghapp"
+	"github.com/yasyf/cc-review/internal/ghapp/ghapptest"
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/testhome"
 )
+
+var setupState = regexp.MustCompile(`state=([0-9a-f]{64})`)
+
+func fakeManifestGitHub(t *testing.T) *github.Client {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"viewer":{"login":"octo"}}}`))
+	})
+	mux.HandleFunc("POST /app-manifests/good-code/conversions", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": 7, "slug": "cc-review-octo", "pem": ghapptest.PEM(key), "owner": map[string]any{"login": "octo"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return github.New(staticToken("user-token"), github.WithBaseURL(srv.URL, srv.URL+"/graphql"))
+}
+
+type staticToken string
+
+func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }
 
 func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 	home, err := os.MkdirTemp("/tmp", "cc-review-serve-")
@@ -24,6 +60,11 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	testhome.Pin(t, home)
 	t.Setenv("CC_DECISIONS_DB", filepath.Join(home, "decisions.db"))
+	keyring.MockInit()
+	prevGitHub := userGitHub
+	fake := fakeManifestGitHub(t)
+	userGitHub = func() *github.Client { return fake }
+	t.Cleanup(func() { userGitHub = prevGitHub })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -70,28 +111,59 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 	}
 
 	origin := "http://" + resp.Request.URL.Host
+	noRedirect := &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	get := func(path string, crossSite bool) (int, string, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, origin+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if crossSite {
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+		}
+		got, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer func() { _ = got.Body.Close() }()
+		body, _ := io.ReadAll(got.Body)
+		return got.StatusCode, got.Header.Get("Location"), string(body)
+	}
+
+	code, _, page := get("/github/setup", false)
+	state := setupState.FindStringSubmatch(page)
+	if code != http.StatusOK || state == nil {
+		t.Fatalf("GET /github/setup = %d with no state: %s", code, page)
+	}
+	callback := "/github/setup/callback?code=good-code&state=" + state[1]
+	if code, location, body := get(callback, true); code != http.StatusSeeOther || location != "https://github.com/apps/cc-review-octo/installations/new" {
+		t.Fatalf("cross-site callback with a valid state = %d Location %q: %s", code, location, body)
+	}
+	if app, ok, err := ghapp.Load(); err != nil || !ok || app.BotLogin != "cc-review-octo[bot]" {
+		t.Fatalf("Load() after callback = %+v, %v, %v", app, ok, err)
+	}
+
 	crossSite := []struct {
 		name, path string
 		want       int
 	}{
-		{"setup callback is public", "/github/setup/callback?state=unknown&code=c", http.StatusBadRequest},
+		{"replayed state is rejected by the handler", callback, http.StatusBadRequest},
+		{"unknown state is rejected by the handler", "/github/setup/callback?state=unknown&code=good-code", http.StatusBadRequest},
+		{"missing state is rejected by the handler", "/github/setup/callback?code=good-code", http.StatusBadRequest},
 		{"spa shell is public", "/s/some-review", http.StatusOK},
 		{"setup stays guarded", "/github/setup", http.StatusUnauthorized},
 		{"api stays guarded", "/api/session/nope", http.StatusUnauthorized},
 	}
 	for _, c := range crossSite {
-		req, err := http.NewRequest(http.MethodGet, origin+c.path, nil)
-		if err != nil {
-			t.Fatal(err)
+		code, _, body := get(c.path, true)
+		if code != c.want {
+			t.Errorf("%s: cross-site GET %s status = %d, want %d", c.name, c.path, code, c.want)
 		}
-		req.Header.Set("Sec-Fetch-Site", "cross-site")
-		got, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("%s: %v", c.name, err)
-		}
-		_ = got.Body.Close()
-		if got.StatusCode != c.want {
-			t.Errorf("%s: cross-site GET %s status = %d, want %d", c.name, c.path, got.StatusCode, c.want)
+		if c.want == http.StatusBadRequest && !strings.Contains(body, "setup state") {
+			t.Errorf("%s: body %q is not the callback's state rejection", c.name, body)
 		}
 	}
 
