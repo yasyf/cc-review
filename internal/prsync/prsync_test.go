@@ -554,7 +554,7 @@ func TestPollerIntervalFollowsWatched(t *testing.T) {
 	}
 
 	f.syncer.Stop(f.reviewID)
-	if f.syncer.Running(f.reviewID) {
+	if f.syncer.running(f.reviewID) {
 		t.Fatal("poller still registered after Stop")
 	}
 }
@@ -570,7 +570,7 @@ func TestPollerExitsWhenReviewCloses(t *testing.T) {
 	if err := ccstore.NewSubjectStore(f.cc.DB()).SetStatus(t.Context(), f.reviewID, "closed"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "poller exit", func() bool { return !f.syncer.Running(f.reviewID) })
+	waitFor(t, "poller exit", func() bool { return !f.syncer.running(f.reviewID) })
 }
 
 func TestStartRefusesWithoutApp(t *testing.T) {
@@ -578,7 +578,7 @@ func TestStartRefusesWithoutApp(t *testing.T) {
 	if err := f.syncer.Start(t.Context(), f.reviewID); !errors.Is(err, ErrAppMissing) {
 		t.Fatalf("start = %v, want ErrAppMissing", err)
 	}
-	if f.syncer.Running(f.reviewID) {
+	if f.syncer.running(f.reviewID) {
 		t.Fatal("poller running without an app")
 	}
 	if n := f.requests.Load(); n != 0 {

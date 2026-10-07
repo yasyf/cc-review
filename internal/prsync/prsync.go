@@ -57,6 +57,7 @@ type poller struct {
 	done     chan struct{}
 }
 
+// New builds a Syncer over cfg; no poller runs until Start.
 func New(cfg Config) *Syncer {
 	return &Syncer{cfg: cfg, pollers: make(map[string]*poller), applyMu: make(map[string]*sync.Mutex)}
 }
@@ -120,7 +121,7 @@ func (s *Syncer) Stop(reviewID string) {
 	<-p.done
 }
 
-func (s *Syncer) Running(reviewID string) bool {
+func (s *Syncer) running(reviewID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok := s.pollers[reviewID]
