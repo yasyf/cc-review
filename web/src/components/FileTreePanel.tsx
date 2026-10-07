@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { GitStatus } from '@pierre/trees';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { useSetFileStates } from '../lib/api';
-import type { FileRef } from '../lib/diff';
+import type { FileRef } from '../lib/diff/items';
 import { riskOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import type { FileMeta, FileState, Organization, Section, SessionResponse } from '../lib/types';
 import { HiddenFilesStrip } from './HiddenFilesStrip';
+import { iconSprite, iconSymbolId } from './ui/icons';
 
 // git name-status codes as the daemon emits them (gitdiff truncates scored
 // codes like R100 to their letter).
@@ -27,6 +28,8 @@ interface TreeStateSnapshot {
 // The virtualized tree needs a bounded host height; stacked sections size to
 // content (over-estimated from files + dir nodes) so the panel scrolls.
 const ITEM_HEIGHT_PX = 30;
+
+const TREE_ICONS = { set: 'complete', spriteSheet: iconSprite(['check', 'alert']) } as const;
 
 function estimateTreeHeight(paths: string[]): number {
   const dirs = new Set<string>();
@@ -92,6 +95,7 @@ function Tree({
     initialExpansion: 'open',
     flattenEmptyDirectories: true,
     gitStatus,
+    icons: TREE_ICONS,
     unsafeCSS: dimCSS,
     composition: { contextMenu: { enabled: true, triggerMode: 'both' } },
     // Decorations are non-interactive spans; interactive mark/hide lives in
@@ -99,9 +103,9 @@ function Tree({
     renderRowDecoration: ({ item }) => {
       if (item.kind !== 'file') return null;
       const snapshot = stateRef.current;
-      if (snapshot.fileStates[item.path]?.reviewed) return { text: '✓', title: 'Reviewed' };
+      if (snapshot.fileStates[item.path]?.reviewed) return { icon: iconSymbolId('check'), title: 'Reviewed' };
       if (riskOf(snapshot.organization, item.path) === 'high') {
-        return { text: '!', title: 'High risk' };
+        return { icon: iconSymbolId('alert'), title: 'High risk' };
       }
       return null;
     },

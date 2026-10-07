@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { FileDiffMetadata } from '@pierre/diffs';
 import { useCreateComment } from '../lib/api';
-import { lineContentAt } from '../lib/diff';
-import type { ComposerDraft } from '../lib/diff';
+import { lineContentAt } from '../lib/diff/items';
+import type { ComposerDraft } from '../lib/diff/items';
 import { composerDraftKey, readDraft, writeDraft } from '../lib/drafts';
 import { useReview } from '../lib/review-context';
 import type { LineRange, Side } from '../lib/types';
+import { Button } from './ui/Button';
 
 export function InlineComposer({
   draft,
@@ -74,12 +75,12 @@ export function InlineComposer({
         }}
       />
       <div className="composer-actions">
-        <button type="button" onClick={onClose}>
+        <Button variant="ghost" onClick={onClose}>
           Cancel
-        </button>
-        <button type="button" className="primary" disabled={!body.trim()} onClick={submit}>
+        </Button>
+        <Button variant="primary" disabled={!body.trim()} onClick={submit}>
           Add comment
-        </button>
+        </Button>
       </div>
     </div>
   );

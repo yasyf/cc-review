@@ -3,8 +3,8 @@ import { isOrganizing, userRequestInFlight } from '../lib/ai-requests';
 import { useSetFileStates } from '../lib/api';
 import { useFlip } from '@cc-interact/react';
 import { conversationByItem } from '../lib/conversation';
-import { fileItemId } from '../lib/diff';
-import type { FileRef } from '../lib/diff';
+import { fileItemId } from '../lib/diff/items';
+import type { FileRef } from '../lib/diff/items';
 import { sectionTodoGroups } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import type { SessionResponse } from '../lib/types';
@@ -12,6 +12,7 @@ import { useViewPrefs } from '../lib/view-prefs';
 import { FileRow } from './FileRow';
 import type { RowFile } from './FileRow';
 import { HiddenFilesStrip } from './HiddenFilesStrip';
+import { Icon } from './ui/Icon';
 
 // Every entry renders as a direct sibling of one container so FLIP can animate
 // rows across group boundaries.
@@ -167,7 +168,7 @@ export function TodoPanel({
                     aria-expanded={doneOpen}
                     onClick={() => setDoneOpen((open) => !open)}
                   >
-                    <span aria-hidden="true">{doneOpen ? '▾' : '▸'}</span>
+                    <Icon name={doneOpen ? 'chevron-down' : 'chevron-right'} size={14} />
                     Done ({entry.count})
                   </button>
                 );

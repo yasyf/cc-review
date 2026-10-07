@@ -1,6 +1,8 @@
+import type { RefObject } from 'react';
 import type { CodeViewItem, DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from '@pierre/diffs';
+import type { CodeViewHandle } from '@pierre/diffs/react';
 import { parsePatchFiles } from '@pierre/diffs';
-import type { Comment, Section, Side } from './types';
+import type { Comment, Section, Side } from '../types';
 
 // A line annotation is either a persisted comment thread (body and replies are
 // read live from the Query cache by CommentThread via the comment id) or the
@@ -60,6 +62,14 @@ export interface ComposerDraft {
 }
 
 export type ReviewItem = CodeViewItem<AnnotationMeta>;
+
+export type CodeViewRef = RefObject<CodeViewHandle<AnnotationMeta, undefined> | null>;
+
+export type CodeViewInstance = NonNullable<ReturnType<CodeViewHandle<AnnotationMeta, undefined>['getInstance']>>;
+
+export function isBanner(id: string): boolean {
+  return parseItemId(id).kind === 'banner';
+}
 
 // A section paired with its parsed diff; the input unit for buildItems.
 export interface SectionFiles {

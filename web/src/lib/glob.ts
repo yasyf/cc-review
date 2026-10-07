@@ -1,4 +1,4 @@
-import type { FileRef } from './diff';
+import type { FileRef } from './diff/items';
 
 // Heuristic glob matcher over the diff's own file refs (every section's files)
 // ONLY. Supports *, **, ? and a bare substring (a token with no glob char and no

@@ -1,8 +1,10 @@
 import { useSession, useSetFileStates } from '../lib/api';
-import { fileItemId } from '../lib/diff';
+import { fileItemId } from '../lib/diff/items';
 import { chapterFileOf } from '../lib/order';
 import { useReview } from '../lib/review-context';
 import { useViewPrefs } from '../lib/view-prefs';
+import { IconButton } from './ui/Button';
+import { Tooltip } from './ui/Tooltip';
 
 // Rendered through CodeView's renderHeaderMetadata portal; like CommentThread
 // it self-subscribes to the session cache instead of receiving it via props.
@@ -41,24 +43,26 @@ export function FileHeaderControls({ sectionKey, path }: { sectionKey: string; p
         <span className="gen-chip gen-chip-vendored">vendored</span>
       ) : null}
       {cf?.focus ? (
-        <span className="file-focus" title={cf.focus}>
-          Focus: {cf.focus}
-        </span>
+        <Tooltip label={cf.focus}>
+          <span className="file-focus" tabIndex={0}>
+            Focus: {cf.focus}
+          </span>
+        </Tooltip>
       ) : null}
       {cf?.rationale ? (
-        <span className="file-rationale" title={cf.rationale}>
-          {cf.rationale}
-        </span>
+        <Tooltip label={cf.rationale}>
+          <span className="file-rationale" tabIndex={0}>
+            {cf.rationale}
+          </span>
+        </Tooltip>
       ) : null}
       {collapsible ? (
-        <button
-          type="button"
-          className="file-expand"
-          title={expanded ? 'Collapse' : 'Expand'}
+        <IconButton
+          icon={expanded ? 'chevron-down' : 'chevron-right'}
+          label={expanded ? 'Collapse' : 'Expand'}
+          shortcut="c"
           onClick={() => toggleExpandOverride(itemId)}
-        >
-          {expanded ? '▾' : '▸'}
-        </button>
+        />
       ) : null}
       <label className="viewed-toggle">
         <input

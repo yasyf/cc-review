@@ -35,4 +35,5 @@
 **Testing.** Go tests live next to the code as `*_test.go`; run `go test -race ./...` from
 the repo root. The frontend lives in `web/`; run `cd web && bunx vite build` to refresh the
 embedded `internal/web/dist` before `go build`, since `//go:embed` reads at compile time.
-CI runs the web build first, then `go vet ./...` and `go test -race ./...`.
+Web tests are vitest files beside the code (`*.test.ts(x)`); run `cd web && bun run test`.
+CI runs the web typecheck, tests and build first, then `go vet ./...` and `go test -race ./...`.

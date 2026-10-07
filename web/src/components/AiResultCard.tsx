@@ -6,7 +6,11 @@ import { useReview } from '../lib/review-context';
 import type { LocalRequest } from '../lib/local-requests';
 import type { Ask, AiRequest } from '../lib/types';
 import { AskOptionPicker } from './AskOptionPicker';
-import type { DiffViewHandle } from './DiffView';
+import type { DiffViewHandle } from '../lib/diff/useDiffHandle';
+import { Button } from './ui/Button';
+import { Icon } from './ui/Icon';
+import { Markdown } from './ui/Markdown';
+import { Tooltip } from './ui/Tooltip';
 
 const STATUS_LABEL: Record<AiRequest['status'], string> = {
   pending: 'queued…',
@@ -32,7 +36,7 @@ function AnswerText({ request }: { request: AiRequest }) {
 
   return (
     <div className="question-card">
-      <div className="reply-body">{request.question?.body}</div>
+      <Markdown className="reply-body" source={request.question?.body ?? ''} />
       <input
         type="text"
         value={text}
@@ -46,9 +50,9 @@ function AnswerText({ request }: { request: AiRequest }) {
         }}
       />
       <div className="qc-actions">
-        <button type="button" className="primary" disabled={!canSubmit || answerRequest.isPending} onClick={submit}>
+        <Button variant="primary" disabled={!canSubmit || answerRequest.isPending} onClick={submit}>
           {answerRequest.isPending ? 'Sending…' : 'Answer'}
-        </button>
+        </Button>
         {answerRequest.isError ? <div className="qc-error">{answerRequest.error.message}</div> : null}
       </div>
     </div>
@@ -71,7 +75,7 @@ function AnswerAsk({ request, ask }: { request: AiRequest; ask: Ask }) {
   return (
     <div className="question-card">
       {ask.header ? <div className="qc-chip">{ask.header}</div> : null}
-      <div className="reply-body">{request.question?.body}</div>
+      <Markdown className="reply-body" source={request.question?.body ?? ''} />
       <AskOptionPicker
         options={ask.options}
         selected={form.selected}
@@ -85,9 +89,9 @@ function AnswerAsk({ request, ask }: { request: AiRequest; ask: Ask }) {
         onFocusLabel={form.setFocusedLabel}
       />
       <div className="qc-actions">
-        <button type="button" className="primary" disabled={!form.canSubmit || answerRequest.isPending} onClick={submit}>
+        <Button variant="primary" disabled={!form.canSubmit || answerRequest.isPending} onClick={submit}>
           {answerRequest.isPending ? 'Sending…' : 'Answer'}
-        </button>
+        </Button>
         {answerRequest.isError ? <div className="qc-error">{answerRequest.error.message}</div> : null}
       </div>
     </div>
@@ -113,9 +117,9 @@ export function AiResultCard({
     <div className={`ai-request ai-request-${request.status}`}>
       <div className="ai-request-line">
         <span className={`ai-status${inFlight ? ' ai-pulse' : ''}`}>{STATUS_LABEL[request.status]}</span>
-        <span className="ai-prompt" title={request.prompt}>
-          {request.prompt}
-        </span>
+        <Tooltip label={request.prompt}>
+          <span className="ai-prompt">{request.prompt}</span>
+        </Tooltip>
         {request.status === 'done' && request.changes.length > 0 ? (
           <>
             <button type="button" className="ai-mini" onClick={() => setDetailsOpen(!detailsOpen)}>
@@ -161,7 +165,8 @@ export function AiResultCard({
             <li key={entry.pattern}>
               <strong>{entry.pattern}</strong> — {entry.why}
               <button type="button" className="ai-mini" onClick={() => onHideMatching(entry.pattern)}>
-                hide matching ⚡
+                <Icon name="bolt" size={12} />
+                hide matching
               </button>
             </li>
           ))}
@@ -178,15 +183,17 @@ export function AiResultCard({
   );
 }
 
-// A ⚡ instant edit: applied client-side, undoable from its captured prior.
 export function LocalResultCard({ request, onUndo }: { request: LocalRequest; onUndo(): void }) {
   return (
     <div className="ai-request ai-request-local">
       <div className="ai-request-line">
-        <span className="ai-status ai-status-instant">⚡ done</span>
-        <span className="ai-prompt" title={request.label}>
-          {request.label}
+        <span className="ai-status ai-status-instant">
+          <Icon name="bolt" size={10} />
+          done
         </span>
+        <Tooltip label={request.label}>
+          <span className="ai-prompt">{request.label}</span>
+        </Tooltip>
         <button type="button" className="ai-mini" onClick={onUndo}>
           Undo
         </button>

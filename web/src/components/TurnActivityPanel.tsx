@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useTurnProvenance } from '../lib/api';
 import { TURN_PALETTE_SIZE } from '../lib/attribution';
 import type { SessionResponse, Turn, TurnDecision } from '../lib/types';
+import { Skeleton } from './ui/Skeleton';
+import { Tooltip } from './ui/Tooltip';
 
 function excerpt(text: string, max = 80): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -13,9 +15,11 @@ function DecisionRow({ decision }: { decision: TurnDecision }) {
     <div className="activity-row">
       <span className={`action-chip action-${decision.action}`}>{decision.action}</span>
       {decision.toolName ? <span className="activity-tool">{decision.toolName}</span> : null}
-      <span className="activity-detail" title={decision.message}>
-        {decision.message || `${decision.source} · ${decision.kind}`}
-      </span>
+      <Tooltip label={decision.message || `${decision.source} · ${decision.kind}`}>
+        <span className="activity-detail" tabIndex={0}>
+          {decision.message || `${decision.source} · ${decision.kind}`}
+        </span>
+      </Tooltip>
     </div>
   );
 }
@@ -24,7 +28,7 @@ function TurnProvenance({ turnId, open }: { turnId: string; open: boolean }) {
   const { data, isPending } = useTurnProvenance(turnId, open);
 
   if (!open) return null;
-  if (isPending) return <div className="activity-note">loading tool calls…</div>;
+  if (isPending) return <Skeleton lines={3} label="Loading tool calls" />;
   if (!data || data.provenance_unavailable) {
     return <div className="activity-note">transcript unavailable — no tool-call provenance</div>;
   }
@@ -36,9 +40,11 @@ function TurnProvenance({ turnId, open }: { turnId: string; open: boolean }) {
       {data.provenance.map((item) => (
         <div key={item.event_uuid} className="activity-row">
           <span className="activity-tool">{item.tool_name}</span>
-          <span className="activity-detail" title={item.summary}>
-            {excerpt(item.summary)}
-          </span>
+          <Tooltip label={item.summary}>
+            <span className="activity-detail" tabIndex={0}>
+              {excerpt(item.summary)}
+            </span>
+          </Tooltip>
         </div>
       ))}
     </>
@@ -67,9 +73,9 @@ function TurnActivity({
           style={{ background: `var(--turn-${seq % TURN_PALETTE_SIZE})` }}
         />
         <span className="turn-activity-label">T{seq}</span>
-        <span className="turn-activity-prompt" title={turn.prompt}>
-          {excerpt(turn.prompt)}
-        </span>
+        <Tooltip label={turn.prompt}>
+          <span className="turn-activity-prompt">{excerpt(turn.prompt)}</span>
+        </Tooltip>
         {decisions.length > 0 ? (
           <span className="activity-count">{decisions.length}</span>
         ) : null}

@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useSetFileStates } from '../lib/api';
 import { conversationByItem } from '../lib/conversation';
-import { fileItemId } from '../lib/diff';
-import type { FileRef } from '../lib/diff';
+import { fileItemId } from '../lib/diff/items';
+import type { FileRef } from '../lib/diff/items';
 import { useReview } from '../lib/review-context';
 import type { Section, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';

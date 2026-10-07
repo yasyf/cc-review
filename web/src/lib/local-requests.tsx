@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { FileRef } from './diff';
+import type { FileRef } from './diff/items';
 
 // A ⚡ instant-lane edit: file-state changes the reviewer applied client-side,
 // bypassing the agent. `prior` is snapshotted at click time (keyed by itemId) so

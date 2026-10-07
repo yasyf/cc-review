@@ -1,5 +1,7 @@
 import { useSession } from '../lib/api';
 import { useReview } from '../lib/review-context';
+import { Icon } from './ui/Icon';
+import { Tooltip } from './ui/Tooltip';
 
 // Rendered through CodeView's renderHeaderMetadata portal for a section banner
 // item; like FileHeaderControls it self-subscribes to the session cache rather
@@ -19,9 +21,12 @@ export function SectionHeader({ sectionKey }: { sectionKey: string }) {
     <span className="section-controls">
       {section.pending ? <span className="section-pending">pending</span> : null}
       {section.parentBranch ? (
-        <span className="section-parent" title={`parent: ${section.parentBranch}`}>
-          ↑ {section.parentBranch}
-        </span>
+        <Tooltip label="Parent branch">
+          <span className="section-parent" tabIndex={0}>
+            <Icon name="arrow-up" size={12} />
+            {section.parentBranch}
+          </span>
+        </Tooltip>
       ) : null}
       {!section.pending && section.baseRef && section.headRef ? (
         <span className="section-range">

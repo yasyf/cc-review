@@ -6,8 +6,15 @@ import { WorkerPoolContextProvider } from '@pierre/diffs/react';
 import '@cc-interact/react/base.css';
 import { queryClient } from './lib/api';
 import { router } from './router';
+import { applyThemeMode, readThemeMode } from './lib/theme';
 import { highlighterOptions, poolOptions } from './worker';
-import './domain.css';
+import './styles/tokens.css';
+import './styles/layout.css';
+import './styles/controls.css';
+import './styles/diff.css';
+import './styles/threads.css';
+
+applyThemeMode(readThemeMode());
 
 const root = document.getElementById('root');
 if (!root) throw new Error('missing #root');

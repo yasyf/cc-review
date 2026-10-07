@@ -1,60 +1,26 @@
-import { useState } from 'react';
-import type { FileRef } from '../lib/diff';
+import { getRouteApi } from '@tanstack/react-router';
+import type { FileRef } from '../lib/diff/items';
+import { useSidebarLayout } from '../lib/sidebar-layout';
+import type { SidebarTab } from '../lib/sidebar-layout';
 import { unreadCount, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import { ChapterPanel } from './ChapterPanel';
 import { CommentsPanel } from './CommentsPanel';
 import { FileTreePanel } from './FileTreePanel';
+import { SidebarResizer } from './SidebarResizer';
 import { TodoPanel } from './TodoPanel';
 import { TurnActivityPanel } from './TurnActivityPanel';
+import { Icon } from './ui/Icon';
+import type { IconName } from './ui/icons';
 
-function TreeIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M2 3.5h5M2 8h3M7 8h7M7 12.5h7M2 3.5v9M2 8h.01"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
+const routeApi = getRouteApi('/s/$slug');
 
-function ActivityIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M1.5 8h3l2-5 3 10 2-5h3"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function CommentIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M14 8a6 6 0 1 1-2.2-4.65L14 2.5l-.4 2.6A5.97 5.97 0 0 1 14 8z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-        transform="rotate(180 8 8) scale(1 -1) translate(0 -16)"
-      />
-      <path
-        d="M13.5 8a5.5 5.5 0 1 1-2-4.24L13.5 2l-.35 2.4c.55.9.85 1.95.85 3.1z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+const TABS: { id: SidebarTab; label: string; icon: IconName }[] = [
+  { id: 'files', label: 'Files', icon: 'tree' },
+  { id: 'comments', label: 'Comments', icon: 'comment' },
+  { id: 'activity', label: 'Activity', icon: 'activity' },
+];
 
 export function Sidebar({
   session,
@@ -65,62 +31,66 @@ export function Sidebar({
   onSelectFile(ref: FileRef): void;
   onSelectComment(comment: Comment): void;
 }) {
-  const [tab, setTab] = useState<'files' | 'comments' | 'activity'>('files');
+  const search = routeApi.useSearch();
+  const tab = search.tab === 'conversation' && session.review.kind !== 'pr' ? 'files' : (search.tab ?? 'files');
+  const navigate = routeApi.useNavigate();
+  const { mode, dismissOverlay } = useSidebarLayout();
   const { seen } = useUnread();
   const { viewMode } = useViewPrefs();
   const unread = unreadCount(session.comments, seen);
   const organized = viewMode !== 'default' && session.sections.some((s) => s.organization !== null);
 
+  function setTab(next: SidebarTab) {
+    void navigate({
+      search: ({ tab: _previous, ...rest }) => (next === 'files' ? rest : { ...rest, tab: next }),
+      replace: true,
+    });
+  }
+
+  function selectFile(ref: FileRef) {
+    onSelectFile(ref);
+    dismissOverlay();
+  }
+
+  function selectComment(comment: Comment) {
+    onSelectComment(comment);
+    dismissOverlay();
+  }
+
   return (
     <>
-      <div className="sidebar-tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          className="tab-btn"
-          aria-selected={tab === 'files'}
-          title="Files"
-          onClick={() => setTab('files')}
-        >
-          <TreeIcon />
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className="tab-btn"
-          aria-selected={tab === 'comments'}
-          title="Comments"
-          onClick={() => setTab('comments')}
-        >
-          <CommentIcon />
-          {unread > 0 ? <span className="tab-badge">{unread}</span> : null}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className="tab-btn"
-          aria-selected={tab === 'activity'}
-          title="Turn activity"
-          onClick={() => setTab('activity')}
-        >
-          <ActivityIcon />
-        </button>
+      <div className="sidebar-tabs" role="tablist" aria-label="Sidebar">
+        {TABS.map(({ id, label, icon }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            className="tab-btn"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+          >
+            <Icon name={icon} size={14} />
+            {label}
+            {id === 'comments' && unread > 0 ? <span className="tab-badge">{unread}</span> : null}
+          </button>
+        ))}
       </div>
       {tab === 'activity' ? (
         <TurnActivityPanel session={session} />
       ) : tab === 'files' ? (
         organized ? (
           viewMode === 'todo' ? (
-            <TodoPanel session={session} onSelectFile={onSelectFile} />
+            <TodoPanel session={session} onSelectFile={selectFile} />
           ) : (
-            <ChapterPanel session={session} onSelectFile={onSelectFile} />
+            <ChapterPanel session={session} onSelectFile={selectFile} />
           )
         ) : (
-          <FileTreePanel session={session} onSelectFile={onSelectFile} />
+          <FileTreePanel session={session} onSelectFile={selectFile} />
         )
       ) : (
-        <CommentsPanel session={session} onSelectComment={onSelectComment} />
+        <CommentsPanel session={session} onSelectComment={selectComment} />
       )}
+      {mode === 'docked' ? <SidebarResizer /> : null}
     </>
   );
 }

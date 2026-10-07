@@ -1,5 +1,7 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
 import { ReviewView } from './routes/review';
+import { parseSidebarTab } from './lib/sidebar-layout';
+import type { SidebarTab } from './lib/sidebar-layout';
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> });
 
@@ -13,6 +15,7 @@ const indexRoute = createRoute({
 
 export interface ReviewSearch {
   version?: number;
+  tab?: SidebarTab;
 }
 
 const reviewRoute = createRoute({
@@ -22,7 +25,11 @@ const reviewRoute = createRoute({
     const raw = search.version;
     const version =
       typeof raw === 'number' ? raw : typeof raw === 'string' && raw !== '' ? Number(raw) : undefined;
-    return version === undefined || Number.isNaN(version) ? {} : { version };
+    const tab = parseSidebarTab(search.tab);
+    return {
+      ...(version === undefined || Number.isNaN(version) ? {} : { version }),
+      ...(tab ? { tab } : {}),
+    };
   },
   component: ReviewView,
 });

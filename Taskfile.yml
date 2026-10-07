@@ -74,6 +74,12 @@ tasks:
     cmds:
       - bun run typecheck
 
+  test-web:
+    desc: Run the web SPA's vitest suite
+    dir: web
+    cmds:
+      - bun run test
+
   clean:
     desc: Remove build outputs
     cmds:

@@ -1,4 +1,4 @@
-import { fileItemId } from './diff';
+import { fileItemId } from './diff/items';
 import type { LineNote, Section } from './types';
 
 // Injected into each diff's shadow root via the CodeView `unsafeCSS` option.
@@ -19,7 +19,7 @@ export const IMPORTANCE_UNSAFE_CSS = `
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--cc-focus-dot, #e0a000);
+  background: var(--focus-mark);
 }
 `;
 

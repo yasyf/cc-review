@@ -3,8 +3,8 @@ import type { KeyboardEvent, RefObject } from 'react';
 import { recentUserCommands, isActive, resultStream } from '../lib/ai-requests';
 import { useCreateAiRequest, useSetFileStates } from '../lib/api';
 import type { FileStatePatch } from '../lib/api';
-import { fileItemId } from '../lib/diff';
-import type { FileRef } from '../lib/diff';
+import { fileItemId } from '../lib/diff/items';
+import type { FileRef } from '../lib/diff/items';
 import { useEventStream } from '../lib/events';
 import { matchFiles } from '../lib/glob';
 import { useLocalRequests } from '../lib/local-requests';
@@ -16,14 +16,12 @@ import type { SessionResponse } from '../lib/types';
 import { AiResultCard, LocalResultCard } from './AiResultCard';
 import { CommandMenu } from './CommandMenu';
 import type { MenuRow } from './CommandMenu';
-import type { DiffViewHandle } from './DiffView';
+import type { DiffViewHandle } from '../lib/diff/useDiffHandle';
+import { Icon } from './ui/Icon';
+import { Tooltip } from './ui/Tooltip';
 
 const REORGANIZE_PROMPT = 'Re-organize this review into chapters and rate per-file risk.';
 
-// The Command Deck: a resident footer that reads this diff and offers ranked
-// one-tap chips in two lanes — ⚡ instant (client-side file-state ops, work
-// offline) and ✦ Claude (semantic asks). ⌘K / focusing the composer opens an
-// anchored menu upward. Hidden once the review is submitted.
 export function AiBar({
   session,
   diffRef,
@@ -269,7 +267,8 @@ export function AiBar({
           ) : (
             suggestions.slice(0, 3).map((s) => (
               <button key={s.id} type="button" className="deck-chip" onClick={() => runSuggestion(s)}>
-                <span className="deck-bolt">⚡</span> {s.label}
+                <Icon name="bolt" size={12} className="deck-bolt" />
+                {s.label}
               </button>
             ))
           )}
@@ -284,15 +283,21 @@ export function AiBar({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onComposerKey}
           />
-          <span
-            className={`deck-presence${connected ? ' deck-presence-on' : ''}`}
-            title={connected ? 'Claude connected' : 'Claude not connected'}
-          />
+          <Tooltip label={connected ? 'Claude connected' : 'Claude not connected'}>
+            <span
+              className={`deck-presence${connected ? ' deck-presence-on' : ''}`}
+              role="img"
+              aria-label={connected ? 'Claude connected' : 'Claude not connected'}
+            />
+          </Tooltip>
         </div>
       </div>
 
       {!connected ? (
-        <div className="ai-hint">⚡ actions work offline · run /cc-review:start to enable ✦ Claude actions.</div>
+        <div className="ai-hint">
+          <Icon name="bolt" size={12} /> actions work offline · run <code>/cc-review:start</code> to enable
+          <Icon name="sparkle" size={12} /> Claude actions.
+        </div>
       ) : null}
     </footer>
   );

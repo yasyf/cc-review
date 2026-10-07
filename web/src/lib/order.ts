@@ -1,7 +1,7 @@
 // File ordering across the diff and the sidebar panels, section-major:
 // per-section mode-orders concatenated in position order, keyed by itemId.
 
-import { fileItemId } from './diff';
+import { fileItemId } from './diff/items';
 import type { ChapterFile, Organization, Risk, Section, SessionResponse } from './types';
 import type { ViewMode } from './view-prefs';
 
