@@ -24,6 +24,7 @@ import (
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/prstack"
+	"github.com/yasyf/cc-review/internal/prsync"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/thinstore"
 	"github.com/yasyf/cc-review/internal/wire"
@@ -548,7 +549,7 @@ func (rv *review) recordPullRequests(ctx context.Context, st *store.Store, ap cc
 		return err
 	}
 	for _, pr := range capture.PRs {
-		row := storePullRequest(reviewID, pr, viewer)
+		row := prsync.PullRequestRow(reviewID, pr, viewer)
 		changed, err := st.UpsertPullRequest(ctx, row)
 		if err != nil {
 			return err
@@ -559,23 +560,6 @@ func (rv *review) recordPullRequests(ctx context.Context, st *store.Store, ap cc
 		}
 	}
 	return nil
-}
-
-func storePullRequest(reviewID string, pr github.PullRequest, viewer string) store.PullRequest {
-	checks := make([]store.PRCheck, len(pr.Checks))
-	for i, c := range pr.Checks {
-		checks[i] = store.PRCheck{Name: c.Name, State: c.State, URL: c.URL}
-	}
-	reviewers := make([]store.PRReviewer, len(pr.Reviewers))
-	for i, r := range pr.Reviewers {
-		reviewers[i] = store.PRReviewer{Login: r.Login, AvatarURL: r.AvatarURL, State: r.State}
-	}
-	return store.PullRequest{
-		ReviewID: reviewID, Number: pr.Number, NodeID: pr.NodeID, Title: pr.Title, Body: pr.Body, State: pr.State,
-		URL: pr.URL, AuthorLogin: pr.AuthorLogin, HeadRefName: pr.HeadRefName, HeadSHA: pr.HeadRefOid,
-		BaseRefName: pr.BaseRefName, Draft: pr.Draft, Mergeable: pr.Mergeable, Checks: checks, Reviewers: reviewers,
-		ViewerIsAuthor: pr.AuthorLogin == viewer, UpdatedAt: pr.UpdatedAt,
-	}
 }
 
 func githubSetup(ctx context.Context, repo github.Repo) string {
