@@ -19,9 +19,6 @@ export const ICON_PATHS = {
   sidebar: ['M2 3h12v10H2z', 'M6 3v10'],
   split: ['M2 3h12v10H2z', 'M8 3v10'],
   unified: ['M2 3h12v10H2z', 'M2 8h12'],
-  keyboard: ['M1.5 4h13v8h-13z', 'M4 6.5h.01M6.5 6.5h.01M9 6.5h.01M11.5 6.5h.01M4.5 9.5h7'],
-  refresh: ['M13.5 8a5.5 5.5 0 1 1-1.6-3.9', 'M13.5 2.5v3h-3'],
-  external: ['M9 2.5h4.5V7', 'M13.5 2.5L7 9', 'M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof ICON_PATHS;
