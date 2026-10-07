@@ -17,6 +17,7 @@ import (
 	"github.com/yasyf/cc-review/internal/wire"
 )
 
+// Verdicts a submit posts as each PR's review event.
 const (
 	VerdictComment        = "COMMENT"
 	VerdictApprove        = "APPROVE"
@@ -60,8 +61,8 @@ type Syncer struct {
 }
 
 // New builds a Syncer over the daemon's lazy DB accessor and Append chokepoint.
-func New(db func() *sql.DB, append AppendFunc, user *github.Client, app AppClient) *Syncer {
-	return &Syncer{db: db, append: append, user: user, app: app, queues: make(map[string]*queue)}
+func New(db func() *sql.DB, appendEvent AppendFunc, user *github.Client, app AppClient) *Syncer {
+	return &Syncer{db: db, append: appendEvent, user: user, app: app, queues: make(map[string]*queue)}
 }
 
 // Serialize runs fn in reviewID's queue after every write queued before it and
@@ -379,7 +380,7 @@ func ParseRepo(s string) (github.Repo, error) {
 func newReviewComment(c store.Comment, headSHA string) github.NewReviewComment {
 	nc := github.NewReviewComment{CommitID: headSHA, Path: c.FilePath, Body: c.Body}
 	if c.Subject == "file" {
-		nc.SubjectType = "file"
+		nc.SubjectType = "FILE"
 		return nc
 	}
 	endSide := c.Side

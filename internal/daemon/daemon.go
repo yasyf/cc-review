@@ -168,7 +168,8 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	rv.prsync = rv.newPRSync(s)
 	rv.prReviewOpened = rv.startPRSync
 	rv.db, rv.append = s.DB, s.Append
-	rv.outbound = outbound.New(s.DB, s.Append, github.New(github.UserTokenSource()), outbound.GitHubApp())
+	user := userGitHub()
+	rv.outbound = outbound.New(s.DB, s.Append, user, outbound.GitHubApp())
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)
@@ -191,7 +192,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		ConsumerConnected: s.ConsumerConnected,
 		Outbound:          rv.outbound,
 		Dist:              web.Dist(),
-		GitHub:            userGitHub(),
+		GitHub:            user,
 	})
 	return s, rv, nil
 }

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -18,16 +17,26 @@ import (
 
 const (
 	appToken   = "app-token"
+	botLogin   = "cc-review-alice[bot]"
 	commentsAt = "/repos/o/r/pulls/7/comments"
-	installURL = "https://github.com/apps/cc-review-test/installations/new"
+	replyOp    = "graphql:AddThreadReply"
+	installURL = "https://github.com/apps/cc-review-alice/installations/new"
 )
 
-// seedPRComment seeds a PR review whose one comment already lives on GitHub as
-// review comment 501 in thread T_1, and wires an outbound Syncer whose app
-// client is app.
-func seedPRComment(t *testing.T, s *Server, gh *githubtest.Server, app outbound.AppClient) (req Request, reviewID string, commentID int64) {
+var prRepo = github.Repo{Owner: "o", Name: "r"}
+
+// seedPRComment seeds a PR review whose one comment is a coworker's thread
+// already on GitHub, and wires an outbound Syncer whose app client is app.
+func seedPRComment(t *testing.T, s *Server, gh *githubtest.Server, app outbound.AppClient) (req Request, reviewID, threadID string, commentID int64) {
 	t.Helper()
 	ctx := context.Background()
+	gh.Login("user-token", "alice")
+	gh.Login(appToken, botLogin)
+	gh.AddPR(prRepo, github.PullRequest{Number: 7, AuthorLogin: "bob", HeadRefOid: "head7sha"})
+	th := gh.AddThread(prRepo, 7, github.Thread{
+		Path: "a.go", SubjectType: "LINE", Line: 2, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: "carol", Body: "why?"}},
+	})
 	s.rv.outbound = outbound.New(s.cc.DB, s.appendEvent, gh.Client("user-token"), app)
 	root := t.TempDir()
 	r, err := s.createReview(ctx, "s1", 0, root, "feature", "")
@@ -50,14 +59,24 @@ func seedPRComment(t *testing.T, s *Server, gh *githubtest.Server, app outbound.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.store.SetCommentSync(ctx, cid, store.SyncSynced, "501", "T_1", "https://github.com/o/r/pull/7#discussion_r501", ""); err != nil {
+	if err := s.store.SetCommentSync(ctx, cid, store.SyncSynced, th.Comments[0].NodeID, th.NodeID, th.Comments[0].URL, ""); err != nil {
 		t.Fatal(err)
 	}
-	return Request{Session: "s1", Cwd: root}, r.ID, cid
+	return Request{Session: "s1", Cwd: root}, r.ID, th.NodeID, cid
 }
 
 func appClient(gh *githubtest.Server) outbound.AppClient {
 	return func(context.Context, github.Repo) (*github.Client, error) { return gh.Client(appToken), nil }
+}
+
+func writesTo(gh *githubtest.Server, path string) []githubtest.Write {
+	var out []githubtest.Write
+	for _, w := range gh.Writes() {
+		if w.Path == path {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 func notInstalled(context.Context, github.Repo) (*github.Client, error) {
@@ -86,27 +105,21 @@ func TestClaudeReplyPostsAsTheApp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := testServer(t)
 			gh := githubtest.New(t)
-			_, reviewID, cid := seedPRComment(t, s, gh, appClient(gh))
+			_, reviewID, threadID, cid := seedPRComment(t, s, gh, appClient(gh))
 			tc.in.CommentID = cid
 			res := s.handleReply(t.Context(), Request{Replies: []ReplyInput{tc.in}})
 			if !res.OK {
 				t.Fatalf("reply failed: %s", res.Error)
 			}
-			reqs := gh.Requests(http.MethodPost, commentsAt+"/501/replies")
+			reqs := writesTo(gh, replyOp)
 			if len(reqs) != 1 {
 				t.Fatalf("GitHub saw %d replies, want 1", len(reqs))
 			}
-			if reqs[0].Authorization != "Bearer "+appToken {
-				t.Fatalf("authorization = %q, want the app token", reqs[0].Authorization)
+			if reqs[0].Token != appToken || reqs[0].Login != botLogin {
+				t.Fatalf("reply written by %s with %q, want the app", reqs[0].Login, reqs[0].Token)
 			}
-			var posted struct {
-				Body string `json:"body"`
-			}
-			if err := json.Unmarshal(reqs[0].Body, &posted); err != nil {
-				t.Fatal(err)
-			}
-			if posted.Body != tc.body {
-				t.Fatalf("posted body = %q, want %q", posted.Body, tc.body)
+			if reqs[0].Body["thread"] != threadID || reqs[0].Body["body"] != tc.body {
+				t.Fatalf("reply = %v, want %q on %s", reqs[0].Body, tc.body, threadID)
 			}
 			replies, err := s.store.ListRepliesByComment(t.Context(), cid)
 			if err != nil {
@@ -134,7 +147,7 @@ func TestClaudeReplyFailsCleanlyWithoutTheApp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := testServer(t)
 			gh := githubtest.New(t)
-			_, _, cid := seedPRComment(t, s, gh, tc.app)
+			_, _, _, cid := seedPRComment(t, s, gh, tc.app)
 			res := s.handleReply(t.Context(), Request{Replies: []ReplyInput{{CommentID: cid, Kind: "clarification", Body: "hi"}}})
 			if res.OK || !strings.Contains(res.Error, tc.want) {
 				t.Fatalf("reply = ok %v, error %q; want an error naming %q", res.OK, res.Error, tc.want)
@@ -146,7 +159,7 @@ func TestClaudeReplyFailsCleanlyWithoutTheApp(t *testing.T) {
 			if len(replies) != 0 {
 				t.Fatalf("replies = %+v, want none written", replies)
 			}
-			if reqs := gh.Requests(http.MethodPost, commentsAt+"/501/replies"); len(reqs) != 0 {
+			if reqs := writesTo(gh, replyOp); len(reqs) != 0 {
 				t.Fatalf("GitHub saw %d replies, want 0", len(reqs))
 			}
 		})
@@ -156,8 +169,8 @@ func TestClaudeReplyFailsCleanlyWithoutTheApp(t *testing.T) {
 func TestClaudeReplyGitHubFailureIsReported(t *testing.T) {
 	s, _ := testServer(t)
 	gh := githubtest.New(t)
-	_, _, cid := seedPRComment(t, s, gh, appClient(gh))
-	gh.FailNext(http.MethodPost, commentsAt+"/501/replies", http.StatusUnprocessableEntity)
+	_, _, _, cid := seedPRComment(t, s, gh, appClient(gh))
+	gh.FailNext(replyOp, http.StatusUnprocessableEntity, "Unprocessable")
 	res := s.handleReply(t.Context(), Request{Replies: []ReplyInput{{CommentID: cid, Kind: "clarification", Body: "hi"}}})
 	if res.OK || !strings.Contains(res.Error, "422") {
 		t.Fatalf("reply = ok %v, error %q; want the 422", res.OK, res.Error)
@@ -174,7 +187,7 @@ func TestClaudeReplyGitHubFailureIsReported(t *testing.T) {
 func TestClaudeAnnotateCommentPostsAsTheApp(t *testing.T) {
 	s, _ := testServer(t)
 	gh := githubtest.New(t)
-	req, reviewID, _ := seedPRComment(t, s, gh, appClient(gh))
+	req, reviewID, _, _ := seedPRComment(t, s, gh, appClient(gh))
 	req.Annotations = []AnnotateInput{
 		{Kind: "highlight", SectionKey: "feature", FilePath: "a.go", Side: "additions", StartLine: 1, EndLine: 1, Body: "new"},
 		{Kind: "comment", SectionKey: "feature", FilePath: "a.go", Side: "additions", StartLine: 4, EndLine: 6, Body: "is this intended?"},
@@ -182,17 +195,13 @@ func TestClaudeAnnotateCommentPostsAsTheApp(t *testing.T) {
 	if res := s.handleAnnotate(t.Context(), req); !res.OK {
 		t.Fatalf("annotate failed: %s", res.Error)
 	}
-	reqs := gh.Requests(http.MethodPost, commentsAt)
-	if len(reqs) != 1 || reqs[0].Authorization != "Bearer "+appToken {
-		t.Fatalf("comment posts = %+v, want one app-token post", reqs)
-	}
-	var posted map[string]any
-	if err := json.Unmarshal(reqs[0].Body, &posted); err != nil {
-		t.Fatal(err)
+	reqs := writesTo(gh, commentsAt)
+	if len(reqs) != 1 || reqs[0].Token != appToken || reqs[0].Login != botLogin {
+		t.Fatalf("comment posts = %+v, want one post as the app", reqs)
 	}
 	want := map[string]any{"commit_id": "head7sha", "path": "a.go", "body": "is this intended?", "line": float64(6), "side": "RIGHT", "start_line": float64(4), "start_side": "RIGHT"}
-	if !reflect.DeepEqual(posted, want) {
-		t.Fatalf("posted = %v, want %v", posted, want)
+	if !reflect.DeepEqual(reqs[0].Body, want) {
+		t.Fatalf("posted = %v, want %v", reqs[0].Body, want)
 	}
 	v, _, err := s.store.LatestVersion(t.Context(), reviewID)
 	if err != nil {
@@ -210,7 +219,7 @@ func TestClaudeAnnotateCommentPostsAsTheApp(t *testing.T) {
 func TestClaudeAnnotateCommentFailsCleanlyWhenNotInstalled(t *testing.T) {
 	s, _ := testServer(t)
 	gh := githubtest.New(t)
-	req, reviewID, _ := seedPRComment(t, s, gh, notInstalled)
+	req, reviewID, _, _ := seedPRComment(t, s, gh, notInstalled)
 	req.Annotations = []AnnotateInput{
 		{Kind: "comment", SectionKey: "feature", FilePath: "a.go", Side: "additions", StartLine: 4, EndLine: 4, Body: "hm"},
 	}

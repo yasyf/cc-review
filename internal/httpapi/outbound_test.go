@@ -31,7 +31,10 @@ const (
 	prNumber   = 7
 	prHeadSHA  = "head7sha"
 	userToken  = "user-token"
+	viewer     = "alice"
 	commentsAt = "/repos/o/r/pulls/7/comments"
+	issuesAt   = "/repos/o/r/issues/7/comments"
+	replyOp    = "graphql:AddThreadReply"
 )
 
 type prServer struct {
@@ -58,12 +61,18 @@ func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
 	}
 	t.Cleanup(func() { _ = ledger.Close() })
 	gh := githubtest.New(t)
+	gh.Login(userToken, viewer)
+	author := "bob"
+	if viewerIsAuthor {
+		author = viewer
+	}
+	gh.AddPR(github.Repo{Owner: "o", Name: "r"}, github.PullRequest{Number: prNumber, AuthorLogin: author, HeadRefOid: prHeadSHA})
 	syncer := outbound.New(cc.DB, cc.AppendEvent, gh.Client(userToken),
 		func(context.Context, github.Repo) (*github.Client, error) {
 			return nil, errors.New("no app in rest tests")
 		})
 	mux := http.NewServeMux()
-	RESTMount(mux, Deps{
+	RESTMount(mux, http.NewServeMux(), Deps{
 		DB: cc.DB, Decisions: ledger, Log: log.New(io.Discard, "", 0),
 		Append: cc.AppendEvent, ConsumerConnected: func(string) bool { return false },
 		Outbound: syncer, Dist: web.Dist(),
@@ -105,8 +114,10 @@ func (p *prServer) settle(t *testing.T) {
 
 func (p *prServer) comment(t *testing.T, body map[string]any) int64 {
 	t.Helper()
-	req := map[string]any{"sectionId": strconv.FormatInt(p.sec.ID, 10), "filePath": "a.go", "side": "additions",
-		"range": map[string]any{"start": 3, "end": 5}, "body": "nit"}
+	req := map[string]any{
+		"sectionId": strconv.FormatInt(p.sec.ID, 10), "filePath": "a.go", "side": "additions",
+		"range": map[string]any{"start": 3, "end": 5}, "body": "nit",
+	}
 	for k, v := range body {
 		req[k] = v
 	}
@@ -177,11 +188,12 @@ func putJSON(t *testing.T, url string, body any) *http.Response {
 	return resp
 }
 
-func decodeBody(t *testing.T, raw json.RawMessage) map[string]any {
-	t.Helper()
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatal(err)
+func writesTo(gh *githubtest.Server, path string) []githubtest.Write {
+	var out []githubtest.Write
+	for _, w := range gh.Writes() {
+		if w.Path == path {
+			out = append(out, w)
+		}
 	}
 	return out
 }
@@ -213,15 +225,15 @@ func TestPRCommentPostsAsUserAndStoresRemoteID(t *testing.T) {
 			id := p.comment(t, tc.req)
 			p.settle(t)
 
-			reqs := p.gh.Requests(http.MethodPost, commentsAt)
+			reqs := writesTo(p.gh, commentsAt)
 			if len(reqs) != 1 {
 				t.Fatalf("GitHub saw %d comment posts, want 1", len(reqs))
 			}
-			if reqs[0].Authorization != "Bearer "+userToken {
-				t.Fatalf("authorization = %q, want the user token", reqs[0].Authorization)
+			if reqs[0].Token != userToken {
+				t.Fatalf("token = %q, want the user token", reqs[0].Token)
 			}
-			if got := decodeBody(t, reqs[0].Body); !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("posted body = %v, want %v", got, tc.want)
+			if !reflect.DeepEqual(reqs[0].Body, tc.want) {
+				t.Fatalf("posted body = %v, want %v", reqs[0].Body, tc.want)
 			}
 			c := p.getComment(t, id)
 			if c.SyncState != store.SyncSynced || c.SyncError != "" || c.RemoteID == "" || c.RemoteThreadID == "" || c.RemoteURL == "" {
@@ -264,7 +276,7 @@ func TestPRCommentCreatedEventCarriesPosting(t *testing.T) {
 
 func TestPRCommentFailureThenRetry(t *testing.T) {
 	p := newPRServer(t, false)
-	p.gh.FailNext(http.MethodPost, commentsAt, http.StatusUnprocessableEntity)
+	p.gh.FailNext(commentsAt, http.StatusUnprocessableEntity, "Validation Failed")
 	id := p.comment(t, nil)
 	p.settle(t)
 
@@ -296,10 +308,9 @@ func TestPRReplyFailureThenRetry(t *testing.T) {
 	p := newPRServer(t, false)
 	id := p.comment(t, nil)
 	p.settle(t)
-	remoteID := p.getComment(t, id).RemoteID
-	repliesAt := commentsAt + "/" + remoteID + "/replies"
+	thread := p.getComment(t, id).RemoteThreadID
 
-	p.gh.FailNext(http.MethodPost, repliesAt, http.StatusBadGateway)
+	p.gh.FailNext(replyOp, http.StatusBadGateway, "Bad Gateway")
 	resp := postJSON(t, p.srv.URL+"/api/replies/"+strconv.FormatInt(id, 10), map[string]any{"body": "fixed"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reply status = %d", resp.StatusCode)
@@ -331,9 +342,9 @@ func TestPRReplyFailureThenRetry(t *testing.T) {
 	if r.SyncState != store.SyncSynced || r.RemoteID == "" || r.RemoteURL == "" {
 		t.Fatalf("reply after retry = %+v, want synced", r)
 	}
-	reqs := p.gh.Requests(http.MethodPost, repliesAt)
-	if len(reqs) != 2 || reqs[1].Authorization != "Bearer "+userToken || decodeBody(t, reqs[1].Body)["body"] != "fixed" {
-		t.Fatalf("reply posts = %+v, want two user-token posts of the reply body", reqs)
+	reqs := writesTo(p.gh, replyOp)
+	if len(reqs) != 1 || reqs[0].Token != userToken || reqs[0].Body["body"] != "fixed" || reqs[0].Body["thread"] != thread {
+		t.Fatalf("reply writes = %+v, want one user-token reply on %s", reqs, thread)
 	}
 }
 
@@ -353,8 +364,60 @@ func TestPRResolveAndReopenMirrorTheThread(t *testing.T) {
 			t.Fatalf("comment after %s = %+v, want synced", status, c)
 		}
 	}
-	if got, want := p.gh.ResolvedThreads(), []githubtest.Resolve{{ThreadID: thread, Resolved: true}, {ThreadID: thread, Resolved: false}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("thread resolves = %+v, want %+v", got, want)
+	var got []string
+	for _, w := range p.gh.Writes() {
+		if strings.HasPrefix(w.Path, "graphql:") && w.Body["id"] == thread && w.Token == userToken {
+			got = append(got, w.Path)
+		}
+	}
+	if want := []string{"graphql:ResolveThread", "graphql:UnresolveThread"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("thread writes = %v, want %v", got, want)
+	}
+}
+
+func TestPRConversationCommentPostsAsIssueComments(t *testing.T) {
+	p := newPRServer(t, false)
+	id := p.comment(t, map[string]any{"subject": "file", "filePath": "", "range": map[string]any{"start": 0, "end": 0}, "body": "overall: nice"})
+	p.settle(t)
+	c := p.getComment(t, id)
+	if c.SyncState != store.SyncSynced || c.RemoteID == "" || c.RemoteThreadID != "" {
+		t.Fatalf("conversation comment = %+v, want synced with no thread", c)
+	}
+
+	resp := postJSON(t, p.srv.URL+"/api/replies/"+strconv.FormatInt(id, 10), map[string]any{"body": "agreed"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reply status = %d", resp.StatusCode)
+	}
+	resp = putJSON(t, p.srv.URL+"/api/comments/"+strconv.FormatInt(id, 10), map[string]any{"status": "resolved"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve status = %d", resp.StatusCode)
+	}
+	p.settle(t)
+
+	issues := writesTo(p.gh, issuesAt)
+	bodies := make([]any, 0, len(issues))
+	for _, w := range issues {
+		bodies = append(bodies, w.Body["body"])
+	}
+	if want := []any{"overall: nice", "agreed"}; !reflect.DeepEqual(bodies, want) {
+		t.Fatalf("issue comments = %v, want %v", bodies, want)
+	}
+	if n := len(p.gh.Writes()); n != 2 {
+		t.Fatalf("GitHub writes = %d, want only the two issue comments", n)
+	}
+	if c := p.getComment(t, id); c.Status != "resolved" || c.SyncState != store.SyncSynced {
+		t.Fatalf("conversation comment after resolve = %+v, want resolved locally and still synced", c)
+	}
+}
+
+func TestPRLineCommentNeedsAPath(t *testing.T) {
+	p := newPRServer(t, false)
+	resp := postJSON(t, p.srv.URL+"/api/comments", map[string]any{
+		"sectionId": strconv.FormatInt(p.sec.ID, 10), "filePath": "",
+		"side": "additions", "range": map[string]any{"start": 1, "end": 1}, "body": "x",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
 
@@ -380,23 +443,33 @@ func TestPRSubmitVerdicts(t *testing.T) {
 		status         int
 		posted         []map[string]any
 	}{
-		{name: "approve", req: map[string]any{"verdict": "APPROVE", "summary": "lgtm"}, status: http.StatusOK,
-			posted: []map[string]any{{"event": "APPROVE", "body": "lgtm"}}},
-		{name: "request changes", req: map[string]any{"verdict": "REQUEST_CHANGES", "summary": "see threads"}, status: http.StatusOK,
-			posted: []map[string]any{{"event": "REQUEST_CHANGES", "body": "see threads"}}},
-		{name: "comment with summary", req: map[string]any{"summary": "thoughts"}, status: http.StatusOK,
-			posted: []map[string]any{{"event": "COMMENT", "body": "thoughts"}}},
+		{
+			name: "approve", req: map[string]any{"verdict": "APPROVE", "summary": "lgtm"}, status: http.StatusOK,
+			posted: []map[string]any{{"event": "APPROVE", "body": "lgtm"}},
+		},
+		{
+			name: "request changes", req: map[string]any{"verdict": "REQUEST_CHANGES", "summary": "see threads"}, status: http.StatusOK,
+			posted: []map[string]any{{"event": "REQUEST_CHANGES", "body": "see threads"}},
+		},
+		{
+			name: "comment with summary", req: map[string]any{"summary": "thoughts"}, status: http.StatusOK,
+			posted: []map[string]any{{"event": "COMMENT", "body": "thoughts"}},
+		},
 		{name: "bare comment posts nothing", req: map[string]any{"verdict": "COMMENT"}, status: http.StatusOK},
 		{name: "own PR approve", viewerIsAuthor: true, req: map[string]any{"verdict": "APPROVE"}, status: http.StatusBadRequest},
 		{name: "own PR request changes", viewerIsAuthor: true, req: map[string]any{"verdict": "REQUEST_CHANGES", "summary": "x"}, status: http.StatusBadRequest},
-		{name: "own PR comment", viewerIsAuthor: true, req: map[string]any{"verdict": "COMMENT", "summary": "notes"}, status: http.StatusOK,
-			posted: []map[string]any{{"event": "COMMENT", "body": "notes"}}},
+		{
+			name: "own PR comment", viewerIsAuthor: true, req: map[string]any{"verdict": "COMMENT", "summary": "notes"}, status: http.StatusOK,
+			posted: []map[string]any{{"event": "COMMENT", "body": "notes"}},
+		},
 		{name: "unknown verdict", req: map[string]any{"verdict": "MERGE"}, status: http.StatusBadRequest},
+		{name: "unknown version", req: map[string]any{"verdict": "APPROVE", "versionNumber": 9}, status: http.StatusBadRequest},
+		{name: "no version", req: map[string]any{"verdict": "APPROVE", "versionNumber": nil}, status: http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testhome.Temp(t)
 			p := newPRServer(t, tc.viewerIsAuthor)
-			req := map[string]any{"reviewId": p.review.ID}
+			req := map[string]any{"reviewId": p.review.ID, "versionNumber": 1}
 			for k, v := range tc.req {
 				req[k] = v
 			}
@@ -404,14 +477,14 @@ func TestPRSubmitVerdicts(t *testing.T) {
 			if resp.StatusCode != tc.status {
 				t.Fatalf("submit status = %d, want %d", resp.StatusCode, tc.status)
 			}
-			reqs := p.gh.Requests(http.MethodPost, reviewsAt)
+			reqs := writesTo(p.gh, reviewsAt)
 			if len(reqs) != len(tc.posted) {
 				t.Fatalf("GitHub saw %d reviews, want %d", len(reqs), len(tc.posted))
 			}
 			for i, want := range tc.posted {
-				got := decodeBody(t, reqs[i].Body)
-				if got["event"] != want["event"] || got["body"] != want["body"] || reqs[i].Authorization != "Bearer "+userToken {
-					t.Fatalf("review %d = %v (auth %q), want %v as the user", i, got, reqs[i].Authorization, want)
+				got := reqs[i].Body
+				if got["event"] != want["event"] || got["body"] != want["body"] || got["commit_id"] != prHeadSHA || reqs[i].Token != userToken {
+					t.Fatalf("review %d = %v (token %q), want %v as the user", i, got, reqs[i].Token, want)
 				}
 			}
 			sub, err := p.st.GetReview(context.Background(), p.review.ID)
@@ -422,6 +495,23 @@ func TestPRSubmitVerdicts(t *testing.T) {
 				t.Fatalf("review status = %s, want %s", sub.Status, wantStatus)
 			}
 		})
+	}
+}
+
+func TestPRSubmitPinsTheDisplayedHead(t *testing.T) {
+	testhome.Temp(t)
+	p := newPRServer(t, false)
+	if _, _, err := p.st.CreateVersion(t.Context(), p.review.ID, "feature", "pushedsha", "",
+		[]store.SectionInput{{Position: 0, Branch: "feature", ParentBranch: "main", BaseRef: "base7sha", HeadRef: "pushedsha", FilesJSON: "[]", PRNumber: prNumber}}); err != nil {
+		t.Fatal(err)
+	}
+	resp := postJSON(t, p.srv.URL+"/api/submit", map[string]any{"reviewId": p.review.ID, "versionNumber": 1, "verdict": "APPROVE", "summary": "lgtm"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("submit status = %d, want 200", resp.StatusCode)
+	}
+	reqs := writesTo(p.gh, "/repos/o/r/pulls/7/reviews")
+	if len(reqs) != 1 || reqs[0].Body["commit_id"] != prHeadSHA {
+		t.Fatalf("reviews = %+v, want one pinned to the displayed head %s", reqs, prHeadSHA)
 	}
 }
 
