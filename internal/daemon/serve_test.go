@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/yasyf/cc-review/internal/decisions"
+	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/testhome"
 )
 
@@ -66,6 +69,72 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 		t.Fatalf("GET /api/session/nope status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 
+	cancel()
+	select {
+	case serveErr := <-served:
+		if serveErr != nil {
+			t.Fatalf("Serve: %v", serveErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return after cancellation")
+	}
+}
+
+func TestRecapturePRReadsTheDBServeActivates(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "cc-review-serve-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	testhome.Pin(t, home)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := paths.EnsureStateDir(); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := decisions.Open(ctx, filepath.Join(home, "decisions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ledger.Close() })
+	s, rv, err := newDaemon(ledger, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- s.Serve(ctx) }()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for s.DB() == nil {
+		select {
+		case serveErr := <-served:
+			t.Fatalf("Serve returned before activating its store: %v", serveErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Serve did not activate its store")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := rv.recapturePR(ctx, "missing"); err == nil || !strings.Contains(err.Error(), "review missing is not a pull-request review") {
+		t.Fatalf("recapturePR = %v, want a refusal read from the activated store", err)
+	}
+
+	httpInfoPath := filepath.Join(home, ".cc-review", "v1", "http.json")
+	for {
+		if _, err := os.Stat(httpInfoPath); err == nil {
+			break
+		}
+		select {
+		case serveErr := <-served:
+			t.Fatalf("Serve returned before it started serving: %v", serveErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Serve did not start serving")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 	select {
 	case serveErr := <-served:

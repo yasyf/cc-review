@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 )
 
 // mustCwd returns cwd, defaulting to the process working directory.
@@ -36,4 +40,15 @@ func readHookInput(r io.Reader) hookInput {
 	var in hookInput
 	_ = json.Unmarshal(b, &in)
 	return in
+}
+
+func openURL(ctx context.Context, url string) error {
+	name := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		name = "open"
+	}
+	if out, err := exec.CommandContext(ctx, name, url).CombinedOutput(); err != nil { //nolint:gosec // G204: the platform opener with the review URL the daemon printed.
+		return fmt.Errorf("open %s: %w: %s", url, err, out)
+	}
+	return nil
 }

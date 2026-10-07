@@ -17,6 +17,7 @@ import (
 	"github.com/yasyf/cc-interact/vcs"
 
 	"github.com/yasyf/cc-review/internal/decisions"
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/testhome"
 )
@@ -40,6 +41,9 @@ type Server struct {
 
 	injectMu sync.Mutex
 	injected []injectCall
+
+	openedMu sync.Mutex
+	opened   []string
 }
 
 // injectCall records one solicited-frame injection the review handlers asked
@@ -60,6 +64,7 @@ type Request struct {
 	Consumer      string
 	New           bool
 	Base          string
+	PR            *github.PRRef
 	Replies       []ReplyInput
 	Files         []FileStateInput
 	Annotations   []AnnotateInput
@@ -99,6 +104,8 @@ type Response struct {
 	Resumed      bool
 	ChannelState string
 	Stack        *StackInfo
+	PR           *PRInfo
+	GitHubSetup  string
 	AIRequests   []json.RawMessage
 	FeedbackPath string
 	Feedback     json.RawMessage
@@ -120,7 +127,7 @@ type reviewRow struct {
 
 func (req Request) body() json.RawMessage {
 	raw, _ := json.Marshal(body{
-		New: req.New, Base: req.Base, Replies: req.Replies, Files: req.Files,
+		New: req.New, Base: req.Base, PR: req.PR, Replies: req.Replies, Files: req.Files,
 		Annotations: req.Annotations, Risk: req.Risk, Reason: req.Reason,
 		Reviewed: req.Reviewed, Hidden: req.Hidden,
 		AIRequestID: req.AIRequestID, AIStatus: req.AIStatus, Summary: req.Summary,
@@ -184,7 +191,19 @@ func newServer(cc *ccstore.Store, ledger *decisions.Log) *Server {
 		s.injected = append(s.injected, injectCall{subjectID, consumer, pid, payload})
 		return 1
 	}
+	s.rv.db, s.rv.append = cc.DB, s.appendEvent
+	s.rv.prReviewOpened = func(_ context.Context, reviewID string) {
+		s.openedMu.Lock()
+		defer s.openedMu.Unlock()
+		s.opened = append(s.opened, reviewID)
+	}
 	return s
+}
+
+func (s *Server) openedPRReviews() []string {
+	s.openedMu.Lock()
+	defer s.openedMu.Unlock()
+	return append([]string(nil), s.opened...)
 }
 
 func (s *Server) injectCalls() []injectCall {
@@ -241,7 +260,7 @@ func toResponse(reply ccd.Reply) Response {
 		OK: reply.OK, Error: reply.Error, ReviewID: reply.SubjectID, Status: reply.Status,
 		HTTPPort: reply.HTTPPort, Allow: reply.Allow, Reason: reply.Reason,
 		URL: res.URL, Version: res.Version, Resumed: res.Resumed, ChannelState: res.ChannelState,
-		Stack: res.Stack, AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
+		Stack: res.Stack, PR: res.PR, GitHubSetup: res.GitHubSetup, AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
 		ReviewFiles: res.ReviewFiles, Paths: res.Paths, Closed: res.Closed, Reviews: res.Reviews,
 	}
 }

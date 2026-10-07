@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -39,6 +41,23 @@ const (
 type StackInfo struct {
 	Trunk    string   `json:"trunk"`
 	Branches []string `json:"branches"`
+}
+
+// PRInfo is the start op's summary of a pull-request review: the repo, the PR
+// the user pointed at, and every PR of its stack trunk-most first.
+type PRInfo struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Stack  []int  `json:"stack"`
+}
+
+// String renders the start output's pr: line, e.g. "o/n#2 (stack: #1 #2)".
+func (p PRInfo) String() string {
+	stack := make([]string, len(p.Stack))
+	for i, n := range p.Stack {
+		stack[i] = fmt.Sprintf("#%d", n)
+	}
+	return fmt.Sprintf("%s#%d (stack: %s)", p.Repo, p.Number, strings.Join(stack, " "))
 }
 
 // ReviewInfo is one review row the close and list ops report.
@@ -106,6 +125,7 @@ type ReviewFilesFilter struct {
 type body struct {
 	New           bool                `json:"new,omitempty"`            // start
 	Base          string              `json:"base,omitempty"`           // start
+	PR            *github.PRRef       `json:"pr,omitempty"`             // start
 	Replies       []ReplyInput        `json:"replies,omitempty"`        // reply
 	Files         []FileStateInput    `json:"files,omitempty"`          // file-states
 	Annotations   []AnnotateInput     `json:"annotations,omitempty"`    // annotate
@@ -138,6 +158,8 @@ type result struct {
 	Resumed      bool              `json:"resumed,omitempty"`       // start
 	ChannelState string            `json:"channel_state,omitempty"` // start
 	Stack        *StackInfo        `json:"stack,omitempty"`         // start
+	PR           *PRInfo           `json:"pr,omitempty"`            // start
+	GitHubSetup  string            `json:"github_setup,omitempty"`  // start
 	AIRequests   []json.RawMessage `json:"ai_requests,omitempty"`   // start
 	FeedbackPath string            `json:"feedback_path,omitempty"` // feedback
 	Feedback     json.RawMessage   `json:"feedback,omitempty"`      // feedback

@@ -8,6 +8,7 @@ import (
 	ccd "github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/procs"
 
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/store"
 )
@@ -66,19 +67,23 @@ type Started struct {
 	Resumed      bool
 	ChannelState string
 	Stack        *StackInfo
+	PR           *PRInfo
+	GitHubSetup  string
 	AIRequests   []json.RawMessage
 	HTTPPort     int
 }
 
-// Start snapshots the working tree and resolves/creates the review.
-func (rc *ReviewClient) Start(ctx context.Context, session, cwd string, fresh bool, base string) (Started, error) {
-	reply, res, err := rc.do(ctx, OpStart, session, cwd, body{New: fresh, Base: base})
+// Start snapshots the working tree, or the stack of a non-nil pr, and
+// resolves/creates the review.
+func (rc *ReviewClient) Start(ctx context.Context, session, cwd string, fresh bool, base string, pr *github.PRRef) (Started, error) {
+	reply, res, err := rc.do(ctx, OpStart, session, cwd, body{New: fresh, Base: base, PR: pr})
 	if err != nil {
 		return Started{}, err
 	}
 	return Started{
 		URL: res.URL, ReviewID: reply.SubjectID, Version: res.Version, Resumed: res.Resumed,
-		ChannelState: res.ChannelState, Stack: res.Stack, AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort,
+		ChannelState: res.ChannelState, Stack: res.Stack, PR: res.PR, GitHubSetup: res.GitHubSetup,
+		AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort,
 	}, nil
 }
 
