@@ -14,6 +14,7 @@ import (
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 	ccevent "github.com/yasyf/cc-interact/event"
+	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
 
@@ -295,7 +296,8 @@ func (rv *review) createVersion(ctx context.Context, st *store.Store, subjects s
 }
 
 func (rv *review) recapturePR(ctx context.Context, reviewID string) error {
-	st := store.New(rv.db)
+	db := rv.db()
+	st := store.New(db)
 	meta, ok, err := st.GetReviewMeta(ctx, reviewID)
 	if err != nil {
 		return err
@@ -326,11 +328,12 @@ func (rv *review) recapturePR(ctx context.Context, reviewID string) error {
 			return nil
 		}
 	}
-	sub, err := rv.subjects.Get(ctx, reviewID)
+	subjects := ccstore.NewSubjectStore(db)
+	sub, err := subjects.Get(ctx, reviewID)
 	if err != nil {
 		return err
 	}
-	_, err = rv.createVersion(ctx, st, rv.subjects, rv.append, sub, capture)
+	_, err = rv.createVersion(ctx, st, subjects, rv.append, sub, capture)
 	return err
 }
 
