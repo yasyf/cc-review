@@ -37,14 +37,18 @@ When the user names a pull request (a URL, `owner/name#N`, `#N`, or a bare numbe
 "${CLAUDE_PLUGIN_ROOT}/bin/cc-review" start --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD" --pr <url|owner/name#N|#N> --open
 ```
 
-`--open` opens the review URL in the browser; it works for local reviews too. A bare `#N` resolves the repo from the cwd's `origin`. PR mode loads the PR's whole stack from GitHub, so the cwd doesn't need the branches checked out. The output gains a `pr:` line and, when the GitHub App needs attention, a second `setup:` line:
+`--open` opens the review URL in the browser after printing it; it works for local reviews too. `--pr` and `--base` are mutually exclusive. A bare `#N` or `N` resolves the repo from the cwd's `origin`. PR mode loads the PR's whole stack from GitHub, so the cwd doesn't need the branches checked out. The output prints no `stack:` line; it gains a `pr:` line after `setup:`, and the `setup:` JSON may carry a `github` key:
 
 ```
+setup: {"offer":<bool>,"reason":"<string>","github":"<what Claude's GitHub replies still need>"}
 pr: <owner>/<name>#<N> (stack: #<a> #<b> #<c>)
-setup: <command or install URL>
 ```
 
-`pr:` names the PR you pointed at and every PR in its stack, trunk-most first. The review has one section per PR, each diffed against its parent PR (the bottom one against trunk), and no pending section; a comment's `branch` is its PR's head branch. This second `setup:` line carries a plain string, not the channel offer's JSON, and prints only when the user's cc-review GitHub App is missing or not installed on the repo. Show it to the user verbatim: until they run the command or open the URL, your replies in this review fail. An org repo's install waits on an org owner's approval. If `start --pr` fails asking for `--new`, this window already has a different review open; rerun with `--new`.
+`pr:` names the PR you pointed at and every PR in its stack, trunk-most first. The review has one section per PR, each diffed against its parent PR (the bottom one against trunk), and no pending section; a comment's `branch` is its PR's head branch.
+
+Parse the `setup:` JSON and read `github`. Absent means the user's cc-review GitHub App is ready and your replies post. Otherwise, it holds what's missing: the command `cc-review github setup` (no App yet), the App's install URL (not installed on this repo), or an error message from the check. Show it to the user verbatim: until they act on it, your replies in this review fail. An org repo's install waits on an org owner's approval. The channel offer's `offer` and `reason` keys in the same line work exactly as in a local review.
+
+If `start --pr` fails with `review <slug> is not a review of <owner>/<name>#<N>; pass --new to start one`, this window already has a different review open; rerun with `--new`.
 
 ## 2. For each `organize:` line, dispatch the organize agent
 
@@ -129,7 +133,7 @@ In a PR review, `threads` mixes the human's comments with coworkers' (`author: "
 - **Graphite repo:** `gt checkout <branch>`, edit, `gt modify`, and push the stack with `ccx vcs stack submit` (or `gt submit --stack` without ccx).
 - **Plain git:** commit on the branch, rebase each child PR's branch onto it, and push them all.
 
-Once the pushes land, run `start --pr <same PR>` again: the moved heads become a new version of the same review.
+Once the pushes land, run `start --pr <same PR>` again to open the next round on the moved heads. While a PR review is open, the daemon also captures a new version on its own when a head moves; after Submit it never reopens the review, so the rerun is what starts round two.
 
 ## 6. Later rounds
 

@@ -57,7 +57,7 @@ cc-review start --pr '#123' --open
 pr: acme/api#123 (stack: #121 #122 #123 #124)
 ```
 
-If the App needs attention, it also prints a second `setup:` line holding the command to run or the install URL to open.
+If the App needs attention, the `setup:` line's JSON carries a `github` key holding what to do: the command `cc-review github setup`, or the install URL to open.
 
 The stack comes from GitHub, not from your local branches. cc-review walks down from the PR through each base branch's open PR until it reaches the default branch, then up through open PRs based on this PR's head. Going up, it stops at a fork: when two PRs build on the same branch, the review keeps the PR you named and everything below it. Each PR becomes one section, diffed against the merge base with its parent PR, trunk-most first. You don't need any of those branches checked out.
 
@@ -67,7 +67,7 @@ You can comment on any line GitHub accepts a comment on: a changed line, a conte
 
 ### Your comments post immediately
 
-A comment or reply you write in cc-review posts to GitHub right away, as you, through the GitHub CLI's token. It anchors to the head commit of the version you're reading. Resolving or reopening a thread does the same on GitHub. Nothing waits for Submit; Submit only sets your verdict.
+A comment or reply you write in cc-review posts to GitHub right away, as you, through the GitHub CLI's token. It anchors to the head commit of the version you're reading. Editing a synced comment's text edits it on GitHub, and resolving or reopening a thread does the same there. Nothing waits for Submit; Submit only sets your verdict.
 
 ### Sync states and retry
 
@@ -87,7 +87,7 @@ New GitHub comments land in the review as threads, matched by their GitHub id so
 
 Claude reads a coworker's comment like one of yours and can reply under it, and the reply posts to GitHub as the App. Claude never receives its own App's comments back, so a thread can't turn into Claude answering itself.
 
-When a PR's head moves, cc-review captures a new version of the review, the same way a second `/cc-review:start` does for local work. A change to a PR's title, state, checks, or reviewers updates the PR header in place.
+When a PR's head moves while the review is open, cc-review captures a new version of the review on its own, the same way a second `/cc-review:start` does for local work. A submitted review stays submitted: a head that moves after Submit waits for the next `start --pr`, which opens the next round. A change to a PR's title, state, checks, or reviewers updates the PR header in place.
 
 ### Outdated threads
 
