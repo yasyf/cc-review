@@ -30,15 +30,21 @@ The **HTTP plane** (`internal/httpapi`) binds 127.0.0.1 only, and that bind is t
 ```
 GET  /api/session/{reviewId}
 GET  /api/session/{reviewId}/versions
+GET  /api/reviews
 POST /api/comments
 PUT  /api/comments/{id}
+POST /api/comments/{id}/retry
 POST /api/replies/{commentId}
 POST /api/file-states
 POST /api/ai-requests
 POST /api/ai-requests/{id}/undo
 POST /api/submit
 GET  /events
+GET  /github/setup
+GET  /github/setup/callback
 ```
+
+`/github/setup` serves the GitHub App manifest form behind `cc-review github setup`. Its callback sits outside the daemon's auth guard so GitHub's redirect can reach it; a single-use state nonce with a 10-minute lifetime protects it instead.
 
 ## The event log
 
@@ -46,7 +52,7 @@ All realtime behavior rides on one append-only `events` table, keyed `(review_id
 
 Delivery is at-least-once. `GET /events?session=<ref>` streams a review's log; consumers resume from their last sequence number via `Last-Event-ID`, or via the `?last_event_id=` query fallback since native `EventSource` cannot set headers on the initial request. The Claude-side consumers, `watch` and the MCP channel server, persist their cursor on disk per consumer, so a restart resumes without re-delivering.
 
-Each event carries an `origin` of `user`, `claude`, or `system`. The browser subscribes with no filter and sees everything; Claude-side consumers pass `exclude_origin=claude` so they never receive an echo of their own replies. Duplicate suppression on the write side uses an optional `dedup_key` with a unique partial index, so a redelivered reply inserts once and re-emits nothing.
+Each event carries an `origin` of `human`, `agent`, or `system`. The browser subscribes with no filter and sees everything; Claude-side consumers pass `exclude_origin=agent` so they never receive an echo of their own replies. The origin is separate from a comment's `author` (`user`, `claude`, or `remote`). In a PR review, the poller maps GitHub authors onto both. The viewer is `user` with origin `human`, and a coworker is `remote` with origin `human`. The user's cc-review App bot is `claude` with origin `agent`, which is what keeps Claude's own GitHub comments from looping back to it. Duplicate suppression on the write side uses an optional `dedup_key` with a unique partial index, so a redelivered reply inserts once and re-emits nothing.
 
 Named consumers also register presence: their attach and detach transitions drive `channel.changed` events, which is how the UI knows whether a live Claude session is wired to the review. `channel.changed` is delivered to the browser only — named consumer streams (`channel`, `watch`) filter it out, since a consumer learning about its own attachment is noise.
 
@@ -68,6 +74,8 @@ The database carries an exact v1 schema marker and fingerprint. There are no mig
 ├── daemon.log              # spawned daemons append stdout/stderr here
 ├── http.json               # HTTP port handshake, kept across restarts for port reuse
 ├── channels-setup.json     # marker: the one-time channels offer was made
+├── github-app.json         # the cc-review GitHub App's id, slug, and bot login (key in the Keychain)
+├── repos/<owner>/<name>.git  # blobless thin store per PR-review repo
 ├── locks/
 │   └── start.lock          # flock serializing lazy daemon starts
 ├── cc-interact-v1/
@@ -82,7 +90,9 @@ The database carries an exact v1 schema marker and fingerprint. There are no mig
 
 ## Working-tree snapshots
 
-`internal/vcs` turns a working copy's pending changes into a git-format patch. Detection walks upward from the cwd without spawning a subprocess. A `.jj` directory means jj; a `.git` entry means git, and the check accepts both a directory and a file since git worktrees use a file. In a colocated repo jj wins. Git diffs against `HEAD`, or against the empty tree in a fresh repo; jj diffs against the working-copy parent.
+cc-interact's `vcs` package turns a working copy's pending changes into a git-format patch. Detection walks upward from the cwd without spawning a subprocess. A `.jj` directory means jj; a `.git` entry means git, and the check accepts both a directory and a file since git worktrees use a file. In a colocated repo jj wins. Git diffs a dirty tree against `HEAD`, a clean tree against the fork point from trunk, and a fresh repo against the empty tree; jj diffs against the working-copy parent.
+
+A PR review never reads the working copy. `internal/prstack` resolves the stack from GitHub, and `internal/thinstore` keeps one blobless bare clone per repo under `repos/`, fetching each PR's `refs/pull/<N>/head` and its merge-base commit at depth 1. cc-interact's `vcs.DiffRange` then diffs each section, and git lazily fetches only the blobs of changed files.
 
 Each `start` captures a new snapshot and inserts a new version row, writing the patch to a temp file first and renaming it into place so a write failure can never leave a committed-but-unreadable version. Per-file fingerprints let reviewed marks survive across versions: a file stays marked reviewed exactly while its diff content is unchanged.
 

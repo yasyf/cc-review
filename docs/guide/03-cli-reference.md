@@ -10,10 +10,10 @@ The plugin's SessionStart hook provisions the `cc-review` binary pinned by the p
 ## start
 
 ```
-cc-review start [--session <id>] [--cwd <dir>] [--new] [--base <ref>]
+cc-review start [--session <id>] [--cwd <dir>] [--new] [--base <ref>] [--pr <ref>] [--open]
 ```
 
-Start or resume a review of the working tree. Prints, in order: the review URL; `channel: active|pending|inactive` — `active` when this window's channel is proven (its first delivered tag was acknowledged via `channel-ack`) and the channel consumer is attached, `pending` when the channel server is attached but the window is unproven — the normal state before any tag has been acked; that start also injects a one-shot `channel.probe` tag to solicit the proof — `inactive` when no channel consumer exists; `setup: {"offer":…,"reason":…}` — the first-run channel-approval offer (always printed; an offer-check error degrades to `offer: false` with the error as the reason); and `organize: <AI request JSON>` — the daemon's eager organize request, printed when a new version was created and re-offered (same id) when an unchanged resume finds the latest version still unorganized. In a Graphite-tracked repo a `stack: {"trunk":…,"branches":[…]}` line also prints: the review is a stack review — one section per stacked branch diffed against its parent, plus a pending working-tree section — re-resolved on every snapshot with nothing pinned.
+Start or resume a review of the working tree. Prints, in order: the review URL; `channel: active|pending|inactive` — `active` when this window's channel is proven (its first delivered tag was acknowledged via `channel-ack`) and the channel consumer is attached, `pending` when the channel server is attached but the window is unproven — the normal state before any tag has been acked; that start also injects a one-shot `channel.probe` tag to solicit the proof — `inactive` when no channel consumer exists; `setup: {"offer":…,"reason":…}` — the first-run channel-approval offer (always printed; an offer-check error degrades to `offer: false` with the error as the reason); and `organize: <AI request JSON>` — the daemon's eager organize request, printed when a new version was created and re-offered (same id) when an unchanged resume finds the latest version still unorganized. In a Graphite-tracked repo a `stack: {"trunk":…,"branches":[…]}` line also prints: the review is a stack review — one section per stacked branch diffed against its parent, plus a pending working-tree section — re-resolved on every snapshot with nothing pinned. With `--pr`, the review is a PR review instead: one section per pull request in the stack, loaded from GitHub. It prints a `pr: <owner>/<name>#<N> (stack: #<a> #<b> …)` line and, when the cc-review GitHub App is missing or not installed on the repo, a second `setup:` line carrying the command or install URL that fixes it. See [Reviewing pull requests](pull-requests.md).
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -21,9 +21,17 @@ Start or resume a review of the working tree. Prints, in order: the review URL; 
 | `--cwd` | string | `""` | working directory (defaults to the current directory) |
 | `--new` | bool | `false` | force a fresh review, detaching any existing one for this session |
 | `--base` | string | `""` | pin a new review's diff base: the fork point of this ref and the working copy (default: HEAD, falling back to trunk when the working tree is clean); in a Graphite-tracked repo, forces a flat single-diff review instead of the auto-detected stack review |
+| `--pr` | string | `""` | review a GitHub pull request and its stack: a URL, `owner/name#N`, `#N`, or `N` (the last two resolve the repo from the cwd's `origin`) |
+| `--open` | bool | `false` | open the review URL in the browser |
 
 ```sh
 cc-review start --session "$CLAUDE_SESSION_ID"
+```
+
+Review pull request 123 of the cwd's repo and open it in the browser:
+
+```sh
+cc-review start --session "$CLAUDE_SESSION_ID" --pr '#123' --open
 ```
 
 ## watch
@@ -176,6 +184,24 @@ Make cc-review an approved Claude channel, silencing the dev-channels warning. H
 
 ```sh
 cc-review setup-channels --check
+```
+
+## github
+
+```
+cc-review github setup [--org <org>]
+cc-review github status
+```
+
+Manage the cc-review GitHub App that Claude's PR-review replies post as. `setup` opens the daemon's setup page, which hands GitHub an app manifest; after you confirm on GitHub, it stores the App and opens the App's install page. `status` prints the App's slug and bot login and whether it's installed on the cwd's repo.
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--org` | string | `""` | create the App under this organization instead of your account (`setup` only) |
+
+```sh
+cc-review github setup
+cc-review github status
 ```
 
 ## Hidden internal commands
