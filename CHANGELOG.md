@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes the PNG to `~/.cc-review/v1/github-app-logo.png` and prints its path
   on a new `logo:` line.
 
+### Fixed
+
+- The edit guard only blocks edits inside the repo under review. It looked up
+  the review by the session's working directory, so a session whose working
+  directory sat in a reviewed repo had every edit blocked, even in other repos
+  and outside any repo. It now looks the review up by the repo that holds the
+  edited file. This needs cc-interact v0.36.1.
+
 ## [0.39.0] - 2026-10-07
 
 ### Added

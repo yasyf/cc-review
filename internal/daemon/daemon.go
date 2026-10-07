@@ -249,7 +249,7 @@ func (rv *review) gateObserve(_ context.Context, sub subject.Subject, tool ccd.T
 		rv.log.Printf("gate decision: digest: %v", err)
 	}
 	detail := map[string]any{"review_id": sub.ID}
-	if fp := toolInputFilePath(tool.Input); fp != "" {
+	if fp := ccd.ToolFilePath(tool.Input); fp != "" {
 		detail["file_path"] = fp
 	}
 	detailJSON, _ := json.Marshal(detail)
@@ -260,20 +260,6 @@ func (rv *review) gateObserve(_ context.Context, sub subject.Subject, tool ccd.T
 	}); err != nil {
 		rv.log.Printf("gate decision: append: %v", err)
 	}
-}
-
-// toolInputFilePath pulls the guarded file out of a raw tool input: file_path
-// for Edit/Write, notebook_path for NotebookEdit.
-func toolInputFilePath(input json.RawMessage) string {
-	var in struct {
-		FilePath     string `json:"file_path"`
-		NotebookPath string `json:"notebook_path"`
-	}
-	_ = json.Unmarshal(input, &in)
-	if in.FilePath != "" {
-		return in.FilePath
-	}
-	return in.NotebookPath
 }
 
 // onPresenceChange emits a version-stamped channel.changed event when a named

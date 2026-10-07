@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -526,6 +527,35 @@ func TestGuardEditOutsideRepoAllows(t *testing.T) {
 	}
 	if guard := s.handleGuardEdit(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repo}); guard.Allow {
 		t.Fatal("guard-edit inside the repo must still block the open review")
+	}
+}
+
+func TestGuardEditScopesToEditedFile(t *testing.T) {
+	ctx := context.Background()
+	s, repoA := testServer(t)
+	writeFile(t, repoA, "pending.go", "package p\nvar Pending int\n")
+	repoB := t.TempDir()
+	gitRun(t, repoB, "init", "-q", "-b", "main")
+
+	if started := s.handleStart(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repoA}); !started.OK {
+		t.Fatalf("start: %s", started.Error)
+	}
+
+	write := func(path string) Response {
+		input, _ := json.Marshal(map[string]string{"file_path": path, "content": "x"})
+		return s.handleGuardEdit(ctx, Request{Session: "sA", ClaudePID: 100, Cwd: repoA, ToolName: "Write", ToolInput: input})
+	}
+	if guard := write(filepath.Join(repoB, "other.go")); !guard.OK || !guard.Allow {
+		t.Fatalf("write into another repo = %+v, want allow", guard)
+	}
+	if guard := write(filepath.Join(repoA, "pending.go")); guard.Allow {
+		t.Fatal("write into the reviewed repo must block")
+	}
+	if guard := write(filepath.Join(repoA, "new", "dir", "file.go")); guard.Allow {
+		t.Fatal("write into a new directory of the reviewed repo must block")
+	}
+	if guard := write(filepath.Join(t.TempDir(), "notes.md")); !guard.OK || !guard.Allow {
+		t.Fatalf("write outside any repo = %+v, want allow", guard)
 	}
 }
 
