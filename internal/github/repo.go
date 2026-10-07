@@ -50,7 +50,7 @@ func ParsePRRef(s string, defaultRepo *Repo) (PRRef, error) {
 		}
 		return PRRef{Repo: *defaultRepo, Number: number}, nil
 	}
-	repo, err := parseRepoPath(repoPart)
+	repo, err := ParseRepo(repoPart)
 	if err != nil {
 		return PRRef{}, fmt.Errorf("parse pull request %q: %w", s, err)
 	}
@@ -84,7 +84,9 @@ func parseNumber(s string) (int, error) {
 	return n, nil
 }
 
-func parseRepoPath(p string) (Repo, error) {
+// ParseRepo reads an owner/name repository path, tolerating surrounding slashes
+// and a trailing .git.
+func ParseRepo(p string) (Repo, error) {
 	owner, name, ok := strings.Cut(strings.TrimSuffix(strings.Trim(p, "/"), ".git"), "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
 		return Repo{}, fmt.Errorf("%q is not <owner>/<name>", p)
@@ -126,5 +128,5 @@ func parseRemote(raw string) (Repo, error) {
 	if !strings.EqualFold(hostname, host) {
 		return Repo{}, fmt.Errorf("remote %q is not on %s", raw, host)
 	}
-	return parseRepoPath(p)
+	return ParseRepo(p)
 }

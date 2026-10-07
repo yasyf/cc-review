@@ -63,6 +63,19 @@ func TestParsePRRef(t *testing.T) {
 	}
 }
 
+func TestParseRepo(t *testing.T) {
+	for _, in := range []string{"acme/widgets", "/acme/widgets/", "acme/widgets.git"} {
+		if got, err := github.ParseRepo(in); err != nil || got != repo {
+			t.Fatalf("ParseRepo(%q) = %+v, %v; want %+v", in, got, err, repo)
+		}
+	}
+	for _, in := range []string{"", "acme", "acme/", "/widgets", "acme/widgets/extra"} {
+		if got, err := github.ParseRepo(in); err == nil {
+			t.Fatalf("ParseRepo(%q) = %+v, want an error", in, got)
+		}
+	}
+}
+
 func TestRepoFromRemote(t *testing.T) {
 	cases := []struct {
 		name    string
