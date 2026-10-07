@@ -193,18 +193,6 @@ func sideOf(diffSide string) string {
 	return "additions"
 }
 
-// reviewCommentID keys a review comment or reply by its database id, the id
-// GitHub's reply endpoint takes.
-func reviewCommentID(c github.RemoteComment) string {
-	return strconv.FormatInt(c.DatabaseID, 10)
-}
-
-// issueCommentID keys an issue comment by its node id, which can never collide
-// with a review comment's decimal database id.
-func issueCommentID(c github.RemoteComment) string {
-	return c.NodeID
-}
-
 // threadAnchor places a thread on the diff: a live line thread on its lines,
 // an outdated or file-subject thread on the file header keeping its original
 // lines for display.
@@ -247,7 +235,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 		VersionID: sc.version.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
 		FilePath: th.Path, Side: endSide, StartLine: start, EndLine: end, StartSide: startSide, EndSide: endSide,
 		Body: root.Body, Author: author, Status: status,
-		RemoteID: reviewCommentID(root), RemoteThreadID: th.NodeID, RemoteURL: root.URL,
+		RemoteID: root.NodeID, RemoteThreadID: th.NodeID, RemoteURL: root.URL,
 		AuthorLogin: root.AuthorLogin, AuthorAvatarURL: root.AuthorAvatarURL,
 		Outdated: outdated, Subject: subject, SyncState: store.SyncSynced,
 	}
@@ -293,7 +281,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 		rAuthor, rOrigin := sc.p.authorOf(rc.AuthorLogin)
 		r := store.Reply{
 			CommentID: saved.ID, Origin: rAuthor, Kind: replyKindNote, Body: rc.Body,
-			RemoteID: reviewCommentID(rc), RemoteURL: rc.URL,
+			RemoteID: rc.NodeID, RemoteURL: rc.URL,
 			AuthorLogin: rc.AuthorLogin, AuthorAvatarURL: rc.AuthorAvatarURL, SyncState: store.SyncSynced,
 		}
 		before, had := prevReplies[r.RemoteID]
@@ -323,7 +311,7 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 	c := store.Comment{
 		VersionID: sc.version.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
 		Side: "additions", Body: ic.Body, Author: author, Status: "open",
-		RemoteID: issueCommentID(ic), RemoteURL: ic.URL,
+		RemoteID: ic.NodeID, RemoteURL: ic.URL,
 		AuthorLogin: ic.AuthorLogin, AuthorAvatarURL: ic.AuthorAvatarURL,
 		Subject: subjectFile, SyncState: store.SyncSynced,
 	}
