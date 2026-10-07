@@ -1,6 +1,7 @@
 package ghapp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -10,9 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -23,14 +26,16 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/yasyf/cc-review/internal/github"
+	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/testhome"
 )
 
 var (
-	t0            = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	tokenLifetime = time.Hour
-	manifestValue = regexp.MustCompile(`name="manifest" value="([^"]*)"`)
-	formAction    = regexp.MustCompile(`action="([^"]*)"`)
+	t0              = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	tokenLifetime   = time.Hour
+	manifestValue   = regexp.MustCompile(`name="manifest" value="([^"]*)"`)
+	formAction      = regexp.MustCompile(`action="([^"]*)"`)
+	pictureLocation = regexp.MustCompile(`^/github/setup/picture\?state=[0-9a-f]{64}$`)
 )
 
 type fakeGitHub struct {
@@ -65,12 +70,18 @@ func newFakeGitHub(t *testing.T, key *rsa.PrivateKey) *fakeGitHub {
 	})
 	mux.HandleFunc("POST /app-manifests/{code}/conversions", func(w http.ResponseWriter, r *http.Request) {
 		f.conversions.Add(1)
-		if r.PathValue("code") != "good-code" {
+		var slug, owner, ownerType string
+		switch r.PathValue("code") {
+		case "good-code":
+			slug, owner, ownerType = "cc-review-octo", "octo", "User"
+		case "org-code":
+			slug, owner, ownerType = "cc-review-acme", "acme", "Organization"
+		default:
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": 7, "slug": "cc-review-octo", "pem": pemOf(key), "owner": map[string]any{"login": "octo"},
+			"id": 7, "slug": slug, "pem": pemOf(key), "owner": map[string]any{"login": owner, "type": ownerType},
 		})
 	})
 	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
@@ -283,7 +294,7 @@ func TestCallbackHandler(t *testing.T) {
 
 	state := issue()
 	rec := callback(state, "good-code")
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "https://github.com/apps/cc-review-octo/installations/new" {
+	if rec.Code != http.StatusSeeOther || !pictureLocation.MatchString(rec.Header().Get("Location")) {
 		t.Fatalf("callback = %d Location %q: %s", rec.Code, rec.Header().Get("Location"), rec.Body)
 	}
 	want := App{ID: 7, Slug: "cc-review-octo", BotLogin: "cc-review-octo[bot]", Owner: "octo"}
@@ -316,6 +327,118 @@ func TestCallbackHandler(t *testing.T) {
 
 	if rec := callback(issue(), "bad-code"); rec.Code != http.StatusBadGateway {
 		t.Errorf("bad code: status = %d, want 502", rec.Code)
+	}
+}
+
+func createApp(t *testing.T, f *fakeGitHub, code string) (pictureURL, state string) {
+	t.Helper()
+	action, _ := renderSetup(t, f, "http://127.0.0.1:4321/github/setup")
+	u, _ := url.Parse(action)
+	rec := httptest.NewRecorder()
+	CallbackHandler(f.client(), func(App) {}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/github/setup/callback?"+url.Values{"state": {u.Query().Get("state")}, "code": {code}}.Encode(), nil))
+	location := rec.Header().Get("Location")
+	if rec.Code != http.StatusSeeOther || !pictureLocation.MatchString(location) {
+		t.Fatalf("callback = %d Location %q: %s", rec.Code, location, rec.Body)
+	}
+	loc, _ := url.Parse(location)
+	return location, loc.Query().Get("state")
+}
+
+func serve(h http.Handler, target string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	return rec
+}
+
+func TestPictureHandler(t *testing.T) {
+	cases := []struct {
+		name, code, wantSettings, wantInstall string
+	}{
+		{"personal account", "good-code", "https://github.com/settings/apps/cc-review-octo", "https://github.com/apps/cc-review-octo/installations/new"},
+		{"organization", "org-code", "https://github.com/organizations/acme/settings/apps/cc-review-acme", "https://github.com/apps/cc-review-acme/installations/new"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, _, clock := setup(t)
+			pictureURL, state := createApp(t, f, c.code)
+			logoURL := "/github/setup/logo.png?state=" + state
+
+			rec := serve(PictureHandler(), pictureURL)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("picture page = %d: %s", rec.Code, rec.Body)
+			}
+			page := rec.Body.String()
+			for _, want := range []string{
+				`href="` + c.wantSettings + `"`,
+				`href="` + c.wantInstall + `"`,
+				`src="` + logoURL + `"`,
+				`href="` + logoURL + `" download=`,
+				"<code>" + BadgeColor + "</code>",
+			} {
+				if !strings.Contains(page, want) {
+					t.Errorf("picture page lacks %s:\n%s", want, page)
+				}
+			}
+
+			rec = serve(LogoHandler(), logoURL)
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" || !bytes.Equal(rec.Body.Bytes(), logo) {
+				t.Errorf("logo = %d %q with %d bytes, want 200 image/png with the embedded %d bytes",
+					rec.Code, rec.Header().Get("Content-Type"), rec.Body.Len(), len(logo))
+			}
+			if rec := serve(LogoHandler(), logoURL); rec.Code != http.StatusOK {
+				t.Errorf("second logo fetch = %d, want 200: the state is not single-use", rec.Code)
+			}
+
+			*clock = clock.Add(pictureTTL + time.Second)
+			expired := []struct {
+				h      http.Handler
+				target string
+			}{{PictureHandler(), pictureURL}, {LogoHandler(), logoURL}}
+			for _, e := range expired {
+				if rec := serve(e.h, e.target); rec.Code != http.StatusBadRequest {
+					t.Errorf("expired %s = %d, want 400", e.target, rec.Code)
+				}
+			}
+		})
+	}
+
+	setup(t)
+	for _, target := range []string{"/github/setup/picture?state=" + strings.Repeat("0", 64), "/github/setup/picture"} {
+		if rec := serve(PictureHandler(), target); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", target, rec.Code)
+		}
+	}
+	if rec := serve(LogoHandler(), "/github/setup/logo.png?state="+strings.Repeat("0", 64)); rec.Code != http.StatusBadRequest {
+		t.Errorf("logo with an unknown state = %d, want 400", rec.Code)
+	}
+}
+
+func TestLogoFitsGitHub(t *testing.T) {
+	cfg, err := png.DecodeConfig(bytes.NewReader(logo))
+	if err != nil {
+		t.Fatalf("decode embedded logo: %v", err)
+	}
+	if cfg.Width != cfg.Height || cfg.Width < 512 {
+		t.Errorf("logo is %dx%d, want a square of at least 512px", cfg.Width, cfg.Height)
+	}
+	if len(logo) >= 1<<20 {
+		t.Errorf("logo is %d bytes, want under GitHub's 1 MB limit", len(logo))
+	}
+}
+
+func TestWriteLogo(t *testing.T) {
+	testhome.Temp(t)
+	path, err := WriteLogo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != paths.GitHubAppLogo() {
+		t.Errorf("WriteLogo path = %q, want %q", path, paths.GitHubAppLogo())
+	}
+	got, err := os.ReadFile(path) //nolint:gosec // G304: path is under the test's own temp HOME.
+	if err != nil || !bytes.Equal(got, logo) {
+		t.Errorf("written logo = %d bytes, %v; want the embedded %d bytes", len(got), err, len(logo))
 	}
 }
 

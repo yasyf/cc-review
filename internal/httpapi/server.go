@@ -93,6 +93,8 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 	public.Handle("GET /github/setup/callback", ghapp.CallbackHandler(d.GitHub, func(a ghapp.App) {
 		d.Log.Printf("github app %s created; install it at %s", a.Slug, a.InstallURL())
 	}))
+	public.Handle("GET /github/setup/picture", ghapp.PictureHandler())
+	public.Handle("GET /github/setup/logo.png", ghapp.LogoHandler())
 	// The "s" prefix keeps /s/<slug> deep links on the SPA even when a legacy
 	// slug contains a dot.
 	public.Handle("/", sse.StaticHandler(d.Dist, "s"))

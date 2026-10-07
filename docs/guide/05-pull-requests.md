@@ -21,7 +21,9 @@ Claude's replies use a GitHub App that belongs to you. Create it:
 cc-review github setup
 ```
 
-This opens a daemon page that hands GitHub an app manifest: an App named `cc-review-<your login>` with no webhook, permission to read contents, checks, and metadata, and permission to write pull requests. Confirm on GitHub and you're sent back to the daemon, which stores the App's id, slug, and bot login in `~/.cc-review/v1/github-app.json` and its private key in your Keychain. It then opens the App's install page: install it on the repos you review. Pass `--org <org>` to create the App under an organization instead of your account.
+This opens a daemon page that hands GitHub an app manifest: an App named `cc-review-<your login>` with no webhook, permission to read contents, checks, and metadata, and permission to write pull requests. Confirm on GitHub and you're sent back to the daemon, which stores the App's id, slug, and bot login in `~/.cc-review/v1/github-app.json` and its private key in your Keychain. Pass `--org <org>` to create the App under an organization instead of your account.
+
+The daemon then shows a two-step page. GitHub has no API for an App's picture, so step 1 gives you the cc-review owl to upload by hand. Download it, open the App's settings page, drop it on **Upload a logo**, and set **Badge background color** to the hex the page shows, `#DD9040`. Without a logo, GitHub draws a random identicon next to every reply Claude posts. `setup` also writes the same PNG to `~/.cc-review/v1/github-app-logo.png` and prints its path on a `logo:` line. Step 2 is the App's install page: install it on the repos you review.
 
 When the daemon serves its tailnet addresses, `setup` also prints a `tailnet:` URL for the same page. Open it from your desktop when cc-review runs on a remote machine: the manifest's callback points at the address you opened, so GitHub returns you to that machine's daemon.
 

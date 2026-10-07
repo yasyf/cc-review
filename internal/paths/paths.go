@@ -46,6 +46,9 @@ func Repos() string { return filepath.Join(StateDir(), "repos") }
 // GitHubApp is the cc-review GitHub App's JSON record.
 func GitHubApp() string { return filepath.Join(StateDir(), "github-app.json") }
 
+// GitHubAppLogo is the avatar PNG `cc-review github setup` writes for the app.
+func GitHubAppLogo() string { return filepath.Join(StateDir(), "github-app-logo.png") }
+
 // EnsureReviewDir creates a review's artifact dir (0700) if missing. It also
 // creates the per-subject cursor dir cc-interact's stream consumers write into.
 func EnsureReviewDir(reviewID string) error { return App().EnsureSubjectDir(reviewID) }

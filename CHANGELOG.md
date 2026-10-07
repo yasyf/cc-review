@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A default picture for the GitHub App. GitHub has no API or manifest field for
+  an App's logo, so after `cc-review github setup` creates the App, the browser
+  lands on a daemon page before the install page. The page offers the
+  cc-review owl, cropped for GitHub's circular avatar on an amber background,
+  as a download, links to the App's settings page to upload it, and gives the
+  matching badge background color, `#DD9040`. The page and the PNG are served
+  on the tailnet too, guarded by a one-hour state from the callback. `setup`
+  writes the PNG to `~/.cc-review/v1/github-app-logo.png` and prints its path
+  on a new `logo:` line.
+
 ## [0.39.0] - 2026-10-07
 
 ### Added
