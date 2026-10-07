@@ -67,3 +67,42 @@ describe('renderMarkdown suggestion fences', () => {
     expect(root.querySelector('pre code')?.textContent).toBe('const a = 1;\n');
   });
 });
+
+describe('renderMarkdown GitHub extensions', () => {
+  it('renders an alert as a callout', () => {
+    const root = render('> [!WARNING]\n> This pull request is not mergeable.');
+    const alert = root.querySelector('.md-alert-warning');
+    expect(alert?.querySelector('.md-alert-title')?.textContent).toBe('Warning');
+    expect(alert?.textContent).toContain('This pull request is not mergeable.');
+    expect(alert?.textContent).not.toContain('[!WARNING]');
+    expect(root.querySelector('blockquote')).toBeNull();
+  });
+
+  it('keeps a plain blockquote', () => {
+    expect(render('> just a quote').querySelector('blockquote')?.textContent).toContain('just a quote');
+  });
+
+  it('drops HTML comments, including unterminated ones', () => {
+    const root = render('before <!-- eyJibG9iIjoxfQ== --> after\n\n<!-- trailing');
+    expect(root.innerHTML).not.toContain('eyJibG9i');
+    expect(root.textContent).toContain('before');
+    expect(root.textContent).toContain('after');
+    expect(root.textContent).not.toContain('trailing');
+  });
+
+  it('keeps comment syntax inside code', () => {
+    const root = render('Use `<!--` to open one.\n\n```html\n<!-- kept -->\n```\n\nTail text.');
+    expect(root.querySelector('p code')?.textContent).toBe('<!--');
+    expect(root.querySelector('pre code')?.textContent).toContain('<!-- kept -->');
+    expect(root.textContent).toContain('Tail text.');
+  });
+
+  it.each([
+    ['img', '<img src="https://example.com/i.png" width="14">'],
+    ['kbd', '<kbd>⌘K</kbd>'],
+    ['sub', 'H<sub>2</sub>O'],
+    ['details', '<details><summary>More</summary>hidden</details>'],
+  ])('keeps sanitized %s', (selector, source) => {
+    expect(render(source).querySelector(selector)).not.toBeNull();
+  });
+});

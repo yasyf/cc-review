@@ -54,3 +54,24 @@ export function resultStream(ai: AiRequest[], local: LocalRequest[]): ResultItem
   items.sort((a, b) => b.request.createdAt.localeCompare(a.request.createdAt));
   return items;
 }
+
+export interface AiStatus {
+  label: string;
+  detail: string;
+  tone: 'offline' | 'busy' | 'ask' | 'idle';
+}
+
+export function aiStatus(requests: AiRequest[], connected: boolean): AiStatus {
+  if (!connected) return { label: 'Claude offline', detail: '', tone: 'offline' };
+  const asking = requests.find((r) => r.status === 'awaiting_input');
+  if (asking) return { label: 'Claude has a question', detail: '', tone: 'ask' };
+  const working = requests.find(inFlight);
+  if (working) {
+    return {
+      label: working.source === 'system' ? 'Claude is organizing' : 'Claude is working',
+      detail: working.phase?.trim().replace(/…$/, '') ?? '',
+      tone: 'busy',
+    };
+  }
+  return { label: 'Claude', detail: '', tone: 'idle' };
+}

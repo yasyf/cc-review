@@ -4,7 +4,7 @@ import { firstOccurrence } from '../attribution';
 import { useReview } from '../review-context';
 import type { AttributionRange, Comment, Section } from '../types';
 import { useViewPrefs } from '../view-prefs';
-import { isLineThread } from '../threads';
+import { isInlineThread } from '../threads';
 import { commentItemId, fileItemId, parseItemId } from './items';
 import type { CodeViewInstance, CodeViewRef, FileRef, ReviewItem } from './items';
 
@@ -136,7 +136,7 @@ export function useScrollSync({
       if (++pendingScrollMisses.current >= MAX_PENDING_SCROLL_MISSES) setPendingScroll(null);
       return;
     }
-    if (pendingScroll.kind === 'file' || !isLineThread(pendingScroll.comment)) {
+    if (pendingScroll.kind === 'file' || !isInlineThread(pendingScroll.comment)) {
       codeView.current?.scrollTo({ type: 'item', id, align: 'start', behavior: 'smooth' });
     } else {
       const { range } = pendingScroll.comment;

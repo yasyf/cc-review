@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ciRollup, reviewRollup, scopeSession, stackCards } from './stack';
+import { ciRollup, diffStats, isOpenHumanThread, reviewRollup, scopeSession, stackRows, trunkBranch } from './stack';
 import { comment, pullRequest, section, session } from '../test/fixtures';
 import type {
   Comment,
@@ -18,8 +18,16 @@ function reviewer(state: PullRequestReviewer['state']): PullRequestReviewer {
   return { login: `r-${state}`, avatarUrl: '', state };
 }
 
-function stackSection(position: number, branch: string, prNumber: number, reviewed: string[], files: string[]): Section {
+function stackSection(
+  position: number,
+  branch: string,
+  prNumber: number,
+  reviewed: string[],
+  files: string[],
+  patchText = '',
+): Section {
   return section({
+    patchText,
     sectionId: String(position + 1),
     position,
     sectionKey: branch,
@@ -66,8 +74,11 @@ describe('reviewRollup', () => {
   });
 });
 
-describe('stackCards', () => {
-  const sections = [stackSection(0, 'b1', 1, ['a.go'], ['a.go', 'b.go']), stackSection(1, 'b2', 2, [], ['c.go'])];
+describe('stackRows', () => {
+  const sections = [
+    stackSection(0, 'b1', 1, ['a.go'], ['a.go', 'b.go']),
+    stackSection(1, 'b2', 2, [], ['c.go'], 'diff --git a/c.go b/c.go\n--- a/c.go\n+++ b/c.go\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n ctx'),
+  ];
   const pulls = [
     pullRequest({ number: 1, title: 'PR 1', checks: [check('SUCCESS')], reviewers: [reviewer('APPROVED')] }),
     pullRequest({ number: 2, title: 'Top', checks: [check('FAILURE')] }),
@@ -76,23 +87,13 @@ describe('stackCards', () => {
     stackComment('c1', 'b1', { author: 'remote', authorLogin: 'coworker' }),
     stackComment('c2', 'b1', { status: 'resolved' }),
     stackComment('c3', 'b2', { author: 'claude', origin: 'claude' }),
-    stackComment('c4', 'b1', { author: 'automation', authorLogin: 'graphite-app[bot]' }),
+    stackComment('c4', 'b2', { author: 'automation', authorLogin: 'graphite-app[bot]', body: 'Merge activity' }),
+    stackComment('c5', 'b2', { author: 'automation', authorLogin: 'yasyf', body: '[(View in Graphite)](https://app.graphite.dev/x)' }),
   ];
 
-  it('derives one card per section in stack order', () => {
-    expect(stackCards(stackSession(sections, comments, pulls), { c3: 'c3' })).toEqual([
-      {
-        sectionKey: 'b1',
-        title: 'PR 1',
-        branch: 'b1',
-        pr: pulls[0],
-        ci: 'success',
-        review: 'approved',
-        unread: 1,
-        open: 1,
-        reviewed: 1,
-        total: 2,
-      },
+  it('lists the top of the stack first and trunk-most last', () => {
+    const rows = stackRows(stackSession(sections, comments, pulls), { c3: 'c3' });
+    expect(rows).toEqual([
       {
         sectionKey: 'b2',
         title: 'Top',
@@ -100,28 +101,69 @@ describe('stackCards', () => {
         pr: pulls[1],
         ci: 'failure',
         review: 'none',
+        threads: 0,
         unread: 0,
-        open: 1,
         reviewed: 0,
         total: 1,
+        additions: 2,
+        deletions: 1,
+      },
+      {
+        sectionKey: 'b1',
+        title: 'PR 1',
+        branch: 'b1',
+        pr: pulls[0],
+        ci: 'success',
+        review: 'approved',
+        threads: 1,
+        unread: 1,
+        reviewed: 1,
+        total: 2,
+        additions: 0,
+        deletions: 0,
       },
     ]);
   });
 
   it('falls back to the branch for a local stack section', () => {
-    const [card] = stackCards(stackSession([stackSection(0, 'feature', 0, [], ['a.go'])], [], []), {});
-    expect(card).toEqual({
-      sectionKey: 'feature',
-      title: 'feature',
-      branch: 'feature',
-      pr: null,
-      ci: 'none',
-      review: 'none',
-      unread: 0,
-      open: 0,
-      reviewed: 0,
-      total: 1,
-    });
+    const [row] = stackRows(stackSession([stackSection(0, 'feature', 0, [], ['a.go'])], [], []), {});
+    expect(row.title).toBe('feature');
+    expect(row.pr).toBeNull();
+    expect(row.ci).toBe('none');
+  });
+});
+
+describe('diffStats', () => {
+  it('counts hunk lines that look like file headers', () => {
+    const patch = 'diff --git a/x.c b/x.c\n--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n---counter;\n+++counter;\n ctx';
+    expect(diffStats(patch)).toEqual({ additions: 1, deletions: 1 });
+  });
+});
+
+describe('isOpenHumanThread', () => {
+  it.each([
+    { name: 'an open coworker thread', overrides: { author: 'remote' as const, authorLogin: 'sikanhe' }, want: true },
+    { name: 'the viewer', overrides: {}, want: true },
+    { name: 'resolved', overrides: { status: 'resolved' as const }, want: false },
+    { name: 'claude', overrides: { author: 'claude' as const, origin: 'claude' as const }, want: false },
+    { name: 'automation', overrides: { author: 'automation' as const, authorLogin: 'forge-pr-reviewer[bot]' }, want: false },
+  ])('$name', ({ overrides, want }) => {
+    expect(isOpenHumanThread(comment(overrides))).toBe(want);
+  });
+});
+
+describe('trunkBranch', () => {
+  it("names the bottom PR's base", () => {
+    const full = stackSession(
+      [stackSection(0, 'b1', 1, [], [])],
+      [],
+      [pullRequest({ number: 1, baseRefName: 'dev' })],
+    );
+    expect(trunkBranch(full)).toBe('dev');
+  });
+
+  it("falls back to the bottom section's parent", () => {
+    expect(trunkBranch(stackSession([stackSection(0, 'b1', 0, [], [])], [], []))).toBe('main');
   });
 });
 

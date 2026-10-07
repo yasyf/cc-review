@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import type { Comment, Section, SessionResponse } from '../types';
 import { fileOrder } from '../order';
-import { isLineThread } from '../threads';
+import { isInlineThread, isStripThread } from '../threads';
 import { useViewPrefs } from '../view-prefs';
 import { buildItems, commentItemId, fileItemId, parseFiles } from './items';
 import type { ReviewItem, SectionFiles } from './items';
@@ -35,19 +35,21 @@ export function useDiffItems(session: SessionResponse, composer: ComposerState):
       ),
     [session.sections],
   );
-  const lineComments = useMemo(() => session.comments.filter(isLineThread), [session.comments]);
+  const lineComments = useMemo(() => session.comments.filter(isInlineThread), [session.comments]);
+  const stripComments = useMemo(() => session.comments.filter(isStripThread), [session.comments]);
   const items = useMemo(
     () =>
       buildItems(
         sectionFiles,
         lineComments,
+        stripComments,
         draft,
         order,
         hideReviewed,
         expandOverrides,
         autoCollapse,
       ),
-    [sectionFiles, lineComments, draft, order, hideReviewed, expandOverrides, autoCollapse],
+    [sectionFiles, lineComments, stripComments, draft, order, hideReviewed, expandOverrides, autoCollapse],
   );
 
   const orderedComments = useMemo(

@@ -39,6 +39,7 @@ export function SubjectComposer({
   return (
     <div className="composer">
       <textarea
+        autoFocus
         value={body}
         placeholder={placeholder}
         onChange={(e) => setBody(e.target.value)}

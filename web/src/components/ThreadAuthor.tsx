@@ -17,7 +17,7 @@ export function authorName(entry: Authored, kind: ReviewKind): string {
 
 export function AuthorAvatar({ entry }: { entry: Authored }) {
   if (entry.authorAvatarUrl) {
-    return <img className="avatar avatar-img" src={entry.authorAvatarUrl} alt="" width={24} height={24} />;
+    return <img className="avatar avatar-img" src={entry.authorAvatarUrl} alt="" width={20} height={20} />;
   }
   return (
     <div className={`avatar avatar-${entry.author}`}>

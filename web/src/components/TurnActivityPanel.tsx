@@ -92,7 +92,7 @@ function TurnActivity({
 
 export function TurnActivityPanel({ session }: { session: SessionResponse }) {
   if (session.turns.length === 0) {
-    return <div className="sidebar-empty">No turns recorded for this review yet.</div>;
+    return <div className="pane-empty">No turns recorded for this review yet.</div>;
   }
   return (
     <div className="turn-activity-panel">
