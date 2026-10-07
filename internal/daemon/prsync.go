@@ -36,6 +36,10 @@ func (rv *review) resumePRSync(ctx context.Context, st *store.Store) {
 		return
 	}
 	for _, id := range ids {
+		if err := rv.outbound.Serialize(ctx, id, func(context.Context) error { return nil }); err != nil {
+			rv.log.Printf("prsync resume %s: %v", id, err)
+			return
+		}
 		rv.startPRSync(ctx, id)
 	}
 }

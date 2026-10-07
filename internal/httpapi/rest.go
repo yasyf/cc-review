@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/yasyf/cc-review/internal/corrections"
 	"github.com/yasyf/cc-review/internal/feedback"
+	"github.com/yasyf/cc-review/internal/github"
+	"github.com/yasyf/cc-review/internal/outbound"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/wire"
@@ -69,6 +72,7 @@ type createCommentReq struct {
 	} `json:"range"`
 	LineContent string `json:"lineContent"`
 	Body        string `json:"body"`
+	Subject     string `json:"subject"`
 }
 
 type updateCommentReq struct {
@@ -83,7 +87,14 @@ type createReplyReq struct {
 }
 
 type submitReq struct {
-	ReviewID string `json:"reviewId"`
+	ReviewID      string `json:"reviewId"`
+	VersionNumber int    `json:"versionNumber"`
+	Verdict       string `json:"verdict"`
+	Summary       string `json:"summary"`
+}
+
+type retryReq struct {
+	ReplyID string `json:"replyId"`
 }
 
 type closeReq struct {
@@ -363,12 +374,27 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		notFoundOr500(w, err)
 		return
 	}
+	subject := cmp.Or(req.Subject, "line")
+	if subject != "line" && subject != "file" {
+		http.Error(w, fmt.Sprintf("subject %q (want line | file)", req.Subject), http.StatusBadRequest)
+		return
+	}
+	if subject == "line" && req.FilePath == "" {
+		http.Error(w, "a line comment needs a filePath", http.StatusBadRequest)
+		return
+	}
+	pr, err := s.isPRReview(ctx, version.ReviewID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	c := store.Comment{
 		VersionID: section.VersionID, SectionID: section.ID, Branch: section.Key(), Pending: section.Pending,
 		FilePath: req.FilePath, Side: req.Side,
 		StartLine: req.Range.Start, EndLine: req.Range.End,
 		StartSide: req.Range.StartSide, EndSide: req.Range.EndSide,
 		LineContent: req.LineContent, Body: req.Body, Author: store.OriginUser, Status: "open",
+		Subject: subject, SyncState: syncState(pr),
 	}
 	// The currency check lives inside CreateComment's tx so a version minted
 	// between here and the insert (httpapi never holds the daemon RepoLock)
@@ -386,6 +412,9 @@ func (s *Server) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	c.CreatedAt = time.Now()
 	s.emit(ctx, version.ReviewID, ccevent.OriginHuman, store.EventCommentCreated, version.VersionNumber,
 		map[string]any{"commentId": strconv.FormatInt(id, 10), "comment": wire.ToComment(c, nil)})
+	if pr {
+		s.outbound.PostComment(version.ReviewID, id)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": strconv.FormatInt(id, 10)})
 }
 
@@ -400,6 +429,22 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		notFoundOr500(w, err)
 		return
+	}
+	pr, err := s.isPRReview(ctx, reviewID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if pr && req.Body != nil {
+		c, err := s.st().GetComment(ctx, id)
+		if err != nil {
+			notFoundOr500(w, err)
+			return
+		}
+		if c.Author == store.AuthorRemote {
+			http.Error(w, "only your own and Claude's comments can be edited", http.StatusConflict)
+			return
+		}
 	}
 	if req.Body != nil {
 		if err := s.st().UpdateCommentBody(ctx, id, *req.Body); err != nil {
@@ -420,6 +465,12 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"commentId": strconv.FormatInt(id, 10)})
 	} else {
 		s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, id)
+	}
+	if pr {
+		if err := s.outbound.SyncEdit(ctx, reviewID, id, req.Body != nil, req.Status != ""); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -461,8 +512,13 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	pr, err := s.isPRReview(ctx, reviewID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	id, _, err := s.st().CreateReply(ctx, store.Reply{
-		CommentID: commentID, Origin: store.OriginUser, Kind: "note", Body: req.Body,
+		CommentID: commentID, Origin: store.OriginUser, Kind: "note", Body: req.Body, SyncState: syncState(pr),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -472,7 +528,46 @@ func (s *Server) handleCreateReply(w http.ResponseWriter, r *http.Request) {
 	// thread (the SPA has no separate user.reply event), and origin=user lets the
 	// Claude-side stream see it.
 	s.emitComment(ctx, reviewID, store.EventCommentUpdated, versionNumber, commentID)
+	if pr {
+		s.outbound.PostReply(reviewID, id)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": strconv.FormatInt(id, 10)})
+}
+
+// handleRetryComment re-drives a failed GitHub write: the reply named in the
+// body, else the comment itself. Anything not failed is 409.
+func (s *Server) handleRetryComment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	commentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad comment id", http.StatusBadRequest)
+		return
+	}
+	var req retryReq
+	if !readJSON(w, r, &req) {
+		return
+	}
+	var replyID int64
+	if req.ReplyID != "" {
+		if replyID, err = strconv.ParseInt(req.ReplyID, 10, 64); err != nil {
+			http.Error(w, "bad replyId", http.StatusBadRequest)
+			return
+		}
+	}
+	reviewID, _, err := s.st().ResolveCommentContext(ctx, commentID)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	if err := s.outbound.Retry(ctx, reviewID, commentID, replyID); err != nil {
+		if errors.Is(err, outbound.ErrNotFailed) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		notFoundOr500(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleSetFileStates applies the human's checkbox/hide clicks: the same
@@ -767,6 +862,10 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "review has no versions", http.StatusBadRequest)
 		return
 	}
+	if status, err := s.submitVerdict(ctx, review.ID, req); err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
 	submittedAt := time.Now()
 	fb, err := feedback.Build(ctx, s.st(), review.ID, version, submittedAt)
 	if err != nil {
@@ -792,8 +891,11 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.emit(ctx, review.ID, ccevent.OriginSystem, store.EventSubmit, version.VersionNumber,
-		map[string]any{"feedbackPath": fbPath})
+	fields := map[string]any{"feedbackPath": fbPath}
+	if req.Summary != "" {
+		fields["summary"] = req.Summary
+	}
+	s.emit(ctx, review.ID, ccevent.OriginSystem, store.EventSubmit, version.VersionNumber, fields)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "feedbackPath": fbPath})
 }
 
@@ -828,7 +930,78 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// submitVerdict posts one GitHub review per PR, pinned to the head the
+// reviewer saw in req's version, returning the refusal's HTTP status. A bare
+// COMMENT posts nothing: the comments are already on GitHub.
+func (s *Server) submitVerdict(ctx context.Context, reviewID string, req submitReq) (int, error) {
+	meta, _, err := s.st().GetReviewMeta(ctx, reviewID)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if meta.Kind != store.ReviewKindPR {
+		if req.Verdict != "" {
+			return http.StatusBadRequest, errors.New("a verdict applies only to pull request reviews")
+		}
+		return 0, nil
+	}
+	shown, err := s.st().GetVersion(ctx, reviewID, req.VersionNumber)
+	if errors.Is(err, store.ErrNotFound) {
+		return http.StatusBadRequest, fmt.Errorf("version %d is not a version of this review: reload it", req.VersionNumber)
+	}
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	verdict := cmp.Or(req.Verdict, outbound.VerdictComment)
+	switch verdict {
+	case outbound.VerdictComment, outbound.VerdictApprove, outbound.VerdictRequestChanges:
+	default:
+		return http.StatusBadRequest, fmt.Errorf("verdict %q (want COMMENT | APPROVE | REQUEST_CHANGES)", req.Verdict)
+	}
+	if verdict == outbound.VerdictComment && req.Summary == "" {
+		return 0, nil
+	}
+	repo, err := github.ParseRepo(meta.Repo)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	sections, err := s.st().ListSections(ctx, shown.ID)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	prs, err := s.st().PullRequests(ctx, reviewID)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	viewerIsAuthor := make(map[int]bool, len(prs))
+	for _, pr := range prs {
+		viewerIsAuthor[pr.Number] = pr.ViewerIsAuthor
+	}
+	reviews := make([]outbound.Review, 0, len(sections))
+	for _, sec := range sections {
+		if verdict != outbound.VerdictComment && viewerIsAuthor[sec.PRNumber] {
+			return http.StatusBadRequest, fmt.Errorf("you authored #%d: GitHub allows only a comment review on your own pull request", sec.PRNumber)
+		}
+		reviews = append(reviews, outbound.Review{PRNumber: sec.PRNumber, CommitID: sec.HeadRef, Event: verdict, Body: req.Summary})
+	}
+	if err := s.outbound.SubmitReviews(ctx, reviewID, repo, reviews); err != nil {
+		return http.StatusBadGateway, err
+	}
+	return 0, nil
+}
+
 // --- helpers ---------------------------------------------------------------
+
+func (s *Server) isPRReview(ctx context.Context, reviewID string) (bool, error) {
+	meta, _, err := s.st().GetReviewMeta(ctx, reviewID)
+	return meta.Kind == store.ReviewKindPR, err
+}
+
+func syncState(pr bool) string {
+	if pr {
+		return store.SyncPosting
+	}
+	return store.SyncLocal
+}
 
 func (s *Server) emit(ctx context.Context, reviewID, origin, typ string, version int, fields map[string]any) {
 	_, _ = s.append(ctx, &ccevent.Event{

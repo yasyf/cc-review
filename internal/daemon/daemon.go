@@ -21,6 +21,7 @@ import (
 	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/httpapi"
+	"github.com/yasyf/cc-review/internal/outbound"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/prsync"
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
@@ -97,6 +98,7 @@ type review struct {
 	cloneURL       func(github.Repo) string
 	prReviewOpened func(ctx context.Context, reviewID string)
 	prsync         *prsync.Syncer
+	outbound       *outbound.Syncer
 	db             func() *sql.DB
 	append         ccd.AppendFunc
 	reviewLocks    sync.Map
@@ -132,7 +134,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	rv := &review{
 		decisions: ledger,
 		log:       log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
-		gh:        github.New(github.UserTokenSource()),
+		gh:        userGitHub(),
 		cloneURL:  githubCloneURL,
 	}
 	spec, err := runtimeconfig.Spec()
@@ -166,6 +168,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	rv.prsync = rv.newPRSync(s)
 	rv.prReviewOpened = rv.startPRSync
 	rv.db, rv.append = s.DB, s.Append
+	rv.outbound = outbound.New(s.DB, s.Append, rv.gh, outbound.GitHubApp(), rv.prsync.Exclusive)
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)
@@ -186,8 +189,9 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		Log:               rv.log,
 		Append:            s.Append,
 		ConsumerConnected: s.ConsumerConnected,
+		Outbound:          rv.outbound,
 		Dist:              web.Dist(),
-		GitHub:            userGitHub(),
+		GitHub:            rv.gh,
 	})
 	return s, rv, nil
 }
@@ -309,6 +313,13 @@ func (rv *review) bootReconcile(ctx context.Context, s *ccd.Server) error {
 	if _, err := rv.sweepStaleOpen(ctx, st, s.Append, time.Now().Add(-reviewIdleTTL)); err != nil {
 		return fmt.Errorf("expire stale reviews: %w", err)
 	}
+	if err := rv.outbound.Start(ctx); err != nil {
+		return fmt.Errorf("resume GitHub writes: %w", err)
+	}
+	s.Background(func(ctx context.Context) {
+		<-ctx.Done()
+		rv.outbound.Stop()
+	})
 	s.Background(func(ctx context.Context) { rv.resumePRSync(ctx, st) })
 	return nil
 }

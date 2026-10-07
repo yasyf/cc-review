@@ -655,6 +655,10 @@ func (rv *review) handleReply(hc ccd.HandlerCtx) ccd.Reply {
 		if err != nil {
 			return errReply(err.Error())
 		}
+		pr, err := rv.checkClaudeWrite(hc.Ctx, st, reviewID)
+		if err != nil {
+			return errReply(err.Error())
+		}
 		// Hash the daemon's own re-marshal of Ask, never the client's raw JSON, so
 		// semantically identical asks dedup regardless of key order.
 		askJSON := ""
@@ -671,7 +675,7 @@ func (rv *review) handleReply(hc ccd.HandlerCtx) ccd.Reply {
 		}
 		rid, inserted, err := st.CreateReply(hc.Ctx, store.Reply{
 			CommentID: in.CommentID, Origin: store.OriginClaude, Kind: in.Kind, Body: in.Body,
-			Ask: in.Ask, DedupKey: dedup,
+			Ask: in.Ask, DedupKey: dedup, SyncState: syncState(pr),
 		})
 		if err != nil {
 			return errReply(err.Error())
@@ -686,8 +690,35 @@ func (rv *review) handleReply(hc ccd.HandlerCtx) ccd.Reply {
 			return errReply(err.Error())
 		}
 		emitReply(hc.Ctx, hc.Append, reviewID, claudeEventType(in.Kind), versionNumber, in.CommentID, r)
+		if pr {
+			if err := rv.outbound.PostReplyNow(hc.Ctx, reviewID, rid); err != nil {
+				return errReply(fmt.Sprintf("post reply %d to GitHub: %v", rid, err))
+			}
+		}
 	}
 	return ccd.Reply{OK: true}
+}
+
+func (rv *review) checkClaudeWrite(ctx context.Context, st *store.Store, reviewID string) (bool, error) {
+	meta, _, err := st.GetReviewMeta(ctx, reviewID)
+	if err != nil {
+		return false, err
+	}
+	if meta.Kind != store.ReviewKindPR {
+		return false, nil
+	}
+	repo, err := github.ParseRepo(meta.Repo)
+	if err != nil {
+		return false, err
+	}
+	return true, rv.outbound.CheckApp(ctx, repo)
+}
+
+func syncState(pr bool) string {
+	if pr {
+		return store.SyncPosting
+	}
+	return store.SyncLocal
 }
 
 // handleAnswer records a post-submit drain answer against a question or ask
