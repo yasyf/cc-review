@@ -24,7 +24,7 @@ export function conversationByItem(comments: Comment[]): Map<string, FileConvers
   const byItem = new Map<string, FileConversation>();
   for (const comment of comments) {
     // Claude-authored comments are informational annotations, not reviewer TODOs.
-    if (comment.status !== 'open' || comment.origin === 'claude') continue;
+    if (comment.status !== 'open' || comment.origin === 'claude' || comment.author === 'automation') continue;
     const id = commentItemId(comment);
     const entry = byItem.get(id) ?? { openCount: 0, needsReply: false };
     entry.openCount += 1;

@@ -79,6 +79,8 @@ export function CommentThread({ commentId }: { commentId: string }) {
   if (!data || !comment) return null;
 
   const resolved = comment.status === 'resolved';
+  const automation = comment.author === 'automation';
+  const collapsible = resolved || automation;
   const status = data.review.status;
   const kind = data.review.kind;
 
@@ -95,11 +97,11 @@ export function CommentThread({ commentId }: { commentId: string }) {
     setAnswer('');
   }
 
-  if (resolved && !expanded) {
+  if (collapsible && !expanded) {
     return (
-      <div ref={rootRef} className="thread thread-resolved thread-collapsed">
+      <div ref={rootRef} className={`thread thread-collapsed${resolved ? ' thread-resolved' : ''}`}>
         <span className="thread-collapsed-summary">
-          Resolved · {authorName(comment, kind)}
+          {resolved ? 'Resolved' : 'Automation'} · {authorName(comment, kind)}
           {comment.replies.length > 0 ? ` · ${comment.replies.length} replies` : ''}
         </span>
         <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
@@ -127,20 +129,22 @@ export function CommentThread({ commentId }: { commentId: string }) {
               GitHub
             </a>
           ) : null}
-          {resolved ? (
+          {collapsible ? (
             <Button size="sm" variant="ghost" onClick={() => setExpanded(false)}>
               Hide
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            disabled={resolveComment.isPending}
-            onClick={() =>
-              resolveComment.mutate({ id: comment.id, status: resolved ? 'open' : 'resolved' })
-            }
-          >
-            {resolved ? 'Reopen' : 'Resolve'}
-          </Button>
+          {automation ? null : (
+            <Button
+              size="sm"
+              disabled={resolveComment.isPending}
+              onClick={() =>
+                resolveComment.mutate({ id: comment.id, status: resolved ? 'open' : 'resolved' })
+              }
+            >
+              {resolved ? 'Reopen' : 'Resolve'}
+            </Button>
+          )}
         </span>
       </div>
 

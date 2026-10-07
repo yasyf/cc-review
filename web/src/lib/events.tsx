@@ -114,6 +114,7 @@ export function reduceSession(session: SessionResponse, ev: ReviewEvent): Sessio
     case 'channel.changed':
     case 'version.created':
     case 'notification':
+    case 'pr.imported':
       return session;
   }
 }

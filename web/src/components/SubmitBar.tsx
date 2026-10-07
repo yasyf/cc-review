@@ -21,7 +21,7 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   const status = session.review.status;
   // Claude-authored comments are informational annotations, not reviewer TODOs.
   const openCount = session.comments.filter(
-    (c) => c.status === 'open' && c.origin !== 'claude',
+    (c) => c.status === 'open' && c.origin !== 'claude' && c.author !== 'automation',
   ).length;
   const frozenPath = session.feedbackPath ?? submit.data?.feedbackPath ?? null;
   const total = session.sections.reduce((n, s) => n + s.files.length, 0);

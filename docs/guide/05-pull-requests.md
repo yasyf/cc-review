@@ -87,11 +87,16 @@ New GitHub comments land in the review as threads, matched by their GitHub id so
 | --- | --- | --- |
 | You | your comment | yes, as your feedback |
 | Your cc-review App (`cc-review-<login>[bot]`) | Claude's comment | no |
+| Any other bot (`<name>[bot]`), and Graphite or pr-reviewer comments whoever posted them | a collapsed automation comment | no |
 | Anyone else | the coworker, by name and avatar | yes, as coworker feedback |
 
 Claude reads a coworker's comment like one of yours and can reply under it, and the reply posts to GitHub as the App. Claude never receives its own App's comments back, so a thread can't turn into Claude answering itself.
 
-When a PR's head moves while the review is open, cc-review captures a new version of the review on its own, the same way a second `/cc-review:start` does for local work. A submitted review stays submitted: a head that moves after Submit waits for the next `start --pr`, which opens the next round. A change to a PR's title, state, checks, or reviewers updates the PR header in place.
+Automation covers every `[bot]` login (graphite-app, forge-pr-reviewer, github-actions, and the rest) and three kinds of comment recognized by their body: Graphite's stack comment, Graphite's merge activity, pr-reviewer's summary and companion posts, and `<!-- ci-timing -->` reports from service accounts. Graphite posts its stack comment with your token, so GitHub reports you as its author; the body check files it as automation anyway. Automated comments stay in the review, collapsed, and never reach Claude, count as open or unread, or appear in the frozen feedback. They can't be edited or resolved from cc-review. A bot's reply inside a thread a person started stays in that thread, marked as automation.
+
+The first poll of a PR is an import, not new activity. It stores every comment already on GitHub, and the review UI shows all of them. Claude gets one summary for the import, and only when it holds open line comments from people, you or a coworker. Comments that land after the import reach Claude one by one as above.
+
+When a PR's head moves while the review is open, cc-review captures a new version of the review on its own, the same way a second `/cc-review:start` does for local work. A submitted review stays submitted: a head that moves after Submit waits for the next `start --pr`, which opens the next round. A change to a PR's title, state, checks, or reviewers updates the PR header in place; that metadata goes to the browser only, never to Claude.
 
 ### Outdated threads
 

@@ -483,13 +483,17 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if pr && req.Body != nil {
+	if pr {
 		c, err := s.st().GetComment(ctx, id)
 		if err != nil {
 			notFoundOr500(w, err)
 			return
 		}
-		if c.Author == store.AuthorRemote {
+		switch {
+		case c.Author == store.AuthorAutomation:
+			http.Error(w, "automated comments can't be edited or resolved", http.StatusConflict)
+			return
+		case req.Body != nil && c.Author == store.AuthorRemote:
 			http.Error(w, "only your own and Claude's comments can be edited", http.StatusConflict)
 			return
 		}

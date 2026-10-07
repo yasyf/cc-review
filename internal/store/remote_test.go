@@ -490,6 +490,13 @@ func TestUpsertPullRequest(t *testing.T) {
 	if changed, err = s.UpsertPullRequest(ctx, pr); err != nil || changed {
 		t.Fatalf("repeat UpsertPullRequest = %v %v, want unchanged", changed, err)
 	}
+	pr.UpdatedAt = updated.Add(time.Hour)
+	if changed, err = s.UpsertPullRequest(ctx, pr); err != nil || changed {
+		t.Fatalf("UpsertPullRequest bumping only updatedAt = %v %v, want unchanged", changed, err)
+	}
+	if got, err := s.PullRequests(ctx, reviewID); err != nil || !got[0].UpdatedAt.Equal(pr.UpdatedAt) {
+		t.Fatalf("stored updatedAt = %+v %v, want the bump stored", got, err)
+	}
 	pr.Draft, pr.Checks[0].State = true, "FAILURE"
 	if changed, err = s.UpsertPullRequest(ctx, pr); err != nil || !changed {
 		t.Fatalf("edited UpsertPullRequest = %v %v, want changed", changed, err)

@@ -83,6 +83,9 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 	}
 	threads := make([]Thread, 0, len(comments))
 	for _, c := range comments {
+		if c.Author == store.AuthorAutomation {
+			continue
+		}
 		replies, err := st.ListRepliesByComment(ctx, c.ID)
 		if err != nil {
 			return Feedback{}, fmt.Errorf("list replies: %w", err)
@@ -104,6 +107,9 @@ func Build(ctx context.Context, st *store.Store, reviewID string, version store.
 		return Feedback{}, fmt.Errorf("list stranded comments: %w", err)
 	}
 	for _, sc := range stranded {
+		if sc.Comment.Author == store.AuthorAutomation {
+			continue
+		}
 		replies, err := st.ListRepliesByComment(ctx, sc.Comment.ID)
 		if err != nil {
 			return Feedback{}, fmt.Errorf("list replies: %w", err)
@@ -160,6 +166,9 @@ func Load(path string) (Feedback, error) {
 func toReplies(in []store.Reply) []Reply {
 	out := make([]Reply, 0, len(in))
 	for _, r := range in {
+		if r.Origin == store.AuthorAutomation {
+			continue
+		}
 		out = append(out, Reply{
 			ID: r.ID, Origin: r.Origin, AuthorLogin: r.AuthorLogin, Kind: r.Kind, Body: r.Body, Ask: r.Ask,
 			Answered: r.Answered, Answer: r.Answer, AskAnswer: r.AskAnswer, AnsweredVia: r.AnsweredVia,

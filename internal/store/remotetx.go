@@ -135,6 +135,28 @@ func (t *RemoteTx) QueueEvent(ctx context.Context, reviewID, origin, typ string,
 	return nil
 }
 
+// ImportedPRs returns the numbers of the review's PRs whose first snapshot a
+// queued pr.imported event already recorded.
+func (t *RemoteTx) ImportedPRs(ctx context.Context, reviewID string) (map[int]bool, error) {
+	rows, err := t.tx.QueryContext(ctx,
+		`SELECT CAST(json_extract(pr.value, '$.number') AS INTEGER)
+		   FROM pending_events e, json_each(e.payload, '$.pullRequests') pr
+		  WHERE e.review_id=? AND e.type=?`, reviewID, EventPRImported)
+	if err != nil {
+		return nil, fmt.Errorf("imported pull requests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int]bool{}
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			return nil, fmt.Errorf("imported pull requests: %w", err)
+		}
+		out[n] = true
+	}
+	return out, rows.Err()
+}
+
 // PendingEvent is an event a committed RemoteTx queued that has not yet been
 // appended to the review's event log.
 type PendingEvent struct {

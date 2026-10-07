@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory sat in a reviewed repo had every edit blocked, even in other repos
   and outside any repo. It now looks the review up by the repo that holds the
   edited file. This needs cc-interact v0.36.1.
+- Opening a PR review no longer floods Claude's channel. `pr.updated` now
+  reaches only the browser, like `comment.synced`, so PR bodies, checks, and
+  reviewers stay out of Claude's context. The first sync of each PR imports
+  the comments already on GitHub as a backfill: the review UI shows them all,
+  and Claude gets one `pr.imported` summary instead of a `comment.created`
+  each, delivered only when it lists open line comments from people.
+  Comments that arrive later stream as before.
+- Bot noise no longer reaches Claude. Every `[bot]` login, Graphite's stack
+  and merge-activity comments, pr-reviewer summary and companion posts, and
+  `<!-- ci-timing -->` reports
+  are stored as `author: automation`, including the stack comment Graphite
+  posts under the user's own token. Automated comments render collapsed,
+  never reach Claude's channel, never count as open or unread, can't be
+  edited or resolved, and stay out of the frozen feedback. A bot's reply in
+  a person's thread stays in that thread as automation.
+- `pr.updated` fires only when a PR's metadata changes, not when GitHub bumps
+  `updatedAt` for a new comment.
 
 ## [0.39.0] - 2026-10-07
 
