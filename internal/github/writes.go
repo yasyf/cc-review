@@ -134,14 +134,21 @@ func (c *Client) ThreadForComment(ctx context.Context, ref PRRef, commentNodeID 
 	}
 }
 
-// ReplyToReviewComment replies in the thread of review comment inReplyTo.
-func (c *Client) ReplyToReviewComment(ctx context.Context, ref PRRef, inReplyTo int64, body string) (RemoteComment, error) {
-	var out restComment
-	path := pullPath(ref, "/comments/"+strconv.FormatInt(inReplyTo, 10)+"/replies")
-	if err := c.REST(ctx, http.MethodPost, path, map[string]string{"body": body}, &out); err != nil {
-		return RemoteComment{}, fmt.Errorf("reply to comment %d on %s: %w", inReplyTo, ref, err)
+const replyToThreadMutation = `mutation AddThreadReply($thread: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { ...ReviewCommentFields } }
+}` + reviewCommentFragment
+
+// ReplyToThread replies in the review thread threadNodeID.
+func (c *Client) ReplyToThread(ctx context.Context, threadNodeID, body string) (RemoteComment, error) {
+	var out struct {
+		AddPullRequestReviewThreadReply struct {
+			Comment gqlComment `json:"comment"`
+		} `json:"addPullRequestReviewThreadReply"`
 	}
-	return out.remote(), nil
+	if err := c.GraphQL(ctx, replyToThreadMutation, map[string]any{"thread": threadNodeID, "body": body}, &out); err != nil {
+		return RemoteComment{}, fmt.Errorf("reply in thread %s: %w", threadNodeID, err)
+	}
+	return out.AddPullRequestReviewThreadReply.Comment.remote()
 }
 
 // CreateIssueComment comments on ref's conversation.

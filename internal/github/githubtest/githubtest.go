@@ -34,12 +34,18 @@ func (t StaticToken) Token(context.Context) (string, error) { return string(t), 
 
 // Write is one mutating request the server accepted: a REST POST, or a
 // GraphQL mutation recorded with Path "graphql:<operation>" and its variables
-// as Body.
+// as Body. Token is the request's bearer token and Login who it maps to.
 type Write struct {
 	Method string
 	Path   string
+	Token  string
 	Login  string
 	Body   map[string]any
+}
+
+type failure struct {
+	status  int
+	message string
 }
 
 type pullRequest struct {
@@ -65,6 +71,7 @@ type Server struct {
 	nextID      int64
 	failStatus  int
 	failMessage string
+	failNext    map[string][]failure
 	clock       time.Time
 }
 
@@ -77,6 +84,7 @@ func New(t testing.TB) *Server {
 		prs:        map[github.Repo]map[int]*pullRequest{},
 		mergeBases: map[string]string{},
 		nextID:     1000,
+		failNext:   map[string][]failure{},
 		clock:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 	mux := http.NewServeMux()
@@ -84,7 +92,6 @@ func New(t testing.TB) *Server {
 	mux.HandleFunc("GET /repos/{owner}/{name}", s.repo)
 	mux.HandleFunc("GET /repos/{owner}/{name}/compare/{spec...}", s.compare)
 	mux.HandleFunc("POST /repos/{owner}/{name}/pulls/{number}/comments", s.createReviewComment)
-	mux.HandleFunc("POST /repos/{owner}/{name}/pulls/{number}/comments/{id}/replies", s.reply)
 	mux.HandleFunc("POST /repos/{owner}/{name}/issues/{number}/comments", s.createIssueComment)
 	mux.HandleFunc("POST /repos/{owner}/{name}/pulls/{number}/reviews", s.submitReview)
 	s.srv = httptest.NewServer(s.authenticate(mux))
@@ -226,6 +233,16 @@ func (s *Server) FailWrites(status int, message string) {
 	s.failStatus, s.failMessage = status, message
 }
 
+// FailNext makes the next write to path answer status with message, once.
+// path is a REST path such as /repos/o/r/pulls/1/comments, or
+// graphql:<operation> for a mutation or ThreadOfComment; calls queue failures
+// in order.
+func (s *Server) FailNext(path string, status int, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failNext[path] = append(s.failNext[path], failure{status, message})
+}
+
 // Writes returns every write the server accepted, oldest first.
 func (s *Server) Writes() []Write {
 	s.mu.Lock()
@@ -274,7 +291,10 @@ func (s *Server) mustThread(pr *pullRequest, nodeID string) *github.Thread {
 	panic(fmt.Sprintf("githubtest: no thread %s on %s#%d", nodeID, pr.repo, pr.Number))
 }
 
-type loginKey struct{}
+type (
+	loginKey struct{}
+	tokenKey struct{}
+)
 
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +306,8 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "Bad credentials")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), loginKey{}, login)))
+		ctx := context.WithValue(context.WithValue(r.Context(), loginKey{}, login), tokenKey{}, token)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -302,12 +323,26 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"message": message})
 }
 
+func (s *Server) scriptedFailure(w http.ResponseWriter, path string) bool {
+	queued := s.failNext[path]
+	if len(queued) == 0 {
+		return false
+	}
+	s.failNext[path] = queued[1:]
+	writeError(w, queued[0].status, queued[0].message)
+	return true
+}
+
 func (s *Server) record(w http.ResponseWriter, r *http.Request, path string, body map[string]any) bool {
+	if s.scriptedFailure(w, path) {
+		return false
+	}
 	if s.failStatus != 0 {
 		writeError(w, s.failStatus, s.failMessage)
 		return false
 	}
-	s.writes = append(s.writes, Write{Method: r.Method, Path: path, Login: loginOf(r), Body: body})
+	token, _ := r.Context().Value(tokenKey{}).(string)
+	s.writes = append(s.writes, Write{Method: r.Method, Path: path, Token: token, Login: loginOf(r), Body: body})
 	return true
 }
 
@@ -414,33 +449,6 @@ func (s *Server) createReviewComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, s.restComment(comment))
 }
 
-func (s *Server) reply(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	pr, ok := s.prOf(w, r)
-	if !ok {
-		return
-	}
-	body, ok := decodeBody(w, r)
-	if !ok {
-		return
-	}
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	idx := slices.IndexFunc(pr.threads, func(t *github.Thread) bool {
-		return slices.ContainsFunc(t.Comments, func(c github.RemoteComment) bool { return c.DatabaseID == id })
-	})
-	if idx < 0 {
-		writeError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	if !s.record(w, r, r.URL.Path, body) {
-		return
-	}
-	comment := s.fill(pr, s.authored(r, stringField(body, "body")), "PRRC_", "#discussion_r")
-	pr.threads[idx].Comments = append(pr.threads[idx].Comments, comment)
-	writeJSON(w, http.StatusCreated, s.restComment(comment))
-}
-
 func (s *Server) createIssueComment(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -541,6 +549,9 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request, name string, 
 	case "Snapshot":
 		return s.snapshot(repo, req.Query)
 	case "ThreadOfComment":
+		if s.scriptedFailure(w, "graphql:ThreadOfComment") {
+			return nil, nil
+		}
 		pr, ok := s.prs[repo][intField(vars, "number")]
 		if !ok {
 			return nil, notFound(fmt.Sprintf("Could not resolve to a PullRequest with the number of %d.", intField(vars, "number")))
@@ -556,6 +567,8 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request, name string, 
 		return s.page(name, stringField(vars, "id"), stringField(vars, "after"))
 	case "ResolveThread", "UnresolveThread":
 		return s.resolve(w, r, name, stringField(vars, "id"), vars)
+	case "AddThreadReply":
+		return s.replyToThread(w, r, stringField(vars, "thread"), vars)
 	}
 	return nil, fmt.Errorf("githubtest: unknown operation %s", name)
 }
@@ -647,6 +660,25 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request, operation, id s
 				t.IsResolved = operation == "ResolveThread"
 				field := map[bool]string{true: "resolveReviewThread", false: "unresolveReviewThread"}[t.IsResolved]
 				return map[string]any{field: map[string]any{"thread": map[string]any{"id": id}}}, nil
+			}
+		}
+	}
+	return nil, notFound(fmt.Sprintf("Could not resolve to a node with the global id of '%s'", id))
+}
+
+func (s *Server) replyToThread(w http.ResponseWriter, r *http.Request, id string, vars map[string]any) (map[string]any, error) {
+	for _, prs := range s.prs {
+		for _, pr := range prs {
+			for _, t := range pr.threads {
+				if t.NodeID != id {
+					continue
+				}
+				if !s.record(w, r, "graphql:AddThreadReply", vars) {
+					return nil, nil
+				}
+				comment := s.fill(pr, s.authored(r, stringField(vars, "body")), "PRRC_", "#discussion_r")
+				t.Comments = append(t.Comments, comment)
+				return map[string]any{"addPullRequestReviewThreadReply": map[string]any{"comment": commentsJSON([]github.RemoteComment{comment})[0]}}, nil
 			}
 		}
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os/exec"
 	"reflect"
-	"strconv"
 	"testing"
 
 	"github.com/yasyf/cc-review/internal/github"
@@ -257,7 +256,7 @@ func TestWritesRoundTripThroughSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reply, err := app.ReplyToReviewComment(ctx, ref, line.DatabaseID, "on it")
+	reply, err := app.ReplyToThread(ctx, threadID, "on it")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,11 +307,14 @@ func TestWritesRoundTripThroughSnapshot(t *testing.T) {
 	paths := make([]string, 0, len(writes))
 	for _, w := range writes {
 		paths = append(paths, w.Login+" "+w.Path)
+		if wantToken := map[string]string{"alice": userToken, botLogin: appToken}[w.Login]; w.Token != wantToken {
+			t.Errorf("write %s token = %q, want %q", w.Path, w.Token, wantToken)
+		}
 	}
 	want := []string{
 		"alice /repos/acme/widgets/pulls/1/comments",
 		"alice /repos/acme/widgets/pulls/1/comments",
-		botLogin + " /repos/acme/widgets/pulls/1/comments/" + strconv.FormatInt(line.DatabaseID, 10) + "/replies",
+		botLogin + " graphql:AddThreadReply",
 		"alice /repos/acme/widgets/issues/1/comments",
 		"alice graphql:ResolveThread",
 		"alice /repos/acme/widgets/pulls/1/reviews",
@@ -337,12 +339,26 @@ func TestWriteFailures(t *testing.T) {
 	if err := c.SubmitReview(ctx, ref, "head2", "APPROVE", ""); !errors.As(err, &status) || status.Status != 422 {
 		t.Fatalf("self-approve error = %v, want 422", err)
 	}
+	s.FailNext("/repos/acme/widgets/pulls/1/comments", 422, "line must be part of the diff")
+	if _, _, err := c.CreateReviewComment(ctx, ref, github.NewReviewComment{CommitID: "head2", Path: "a.go", Line: 1, Side: "RIGHT", Body: "scripted"}); !errors.As(err, &status) || status.Status != 422 || status.Message != "line must be part of the diff" {
+		t.Fatalf("scripted failure = %v, want 422", err)
+	}
+	if _, _, err := c.CreateReviewComment(ctx, ref, github.NewReviewComment{CommitID: "head2", Path: "a.go", Line: 1, Side: "RIGHT", Body: "retry"}); err != nil {
+		t.Fatalf("retry after one scripted failure: %v", err)
+	}
+	if got := len(s.Writes()); got != 1 {
+		t.Fatalf("writes after retry = %d, want 1", got)
+	}
+	s.FailNext("graphql:AddThreadReply", 502, "bad gateway")
+	if _, err := c.ReplyToThread(ctx, s.Snapshot(repo, 1).Threads[0].NodeID, "x"); !errors.As(err, &status) || status.Status != 502 {
+		t.Fatalf("scripted reply failure = %v, want 502", err)
+	}
 	s.FailWrites(502, "upstream down")
 	if _, err := c.CreateIssueComment(ctx, ref, "x"); !errors.As(err, &status) || status.Status != 502 || status.Message != "upstream down" {
 		t.Fatalf("failed write error = %v, want 502 upstream down", err)
 	}
-	if len(s.Writes()) != 0 {
-		t.Fatalf("writes = %+v, want none", s.Writes())
+	if len(s.Writes()) != 1 {
+		t.Fatalf("writes = %+v, want only the retry", s.Writes())
 	}
 }
 
@@ -356,5 +372,35 @@ func TestSubmitReviewPinsTheCommit(t *testing.T) {
 	writes := s.Writes()
 	if len(writes) != 1 || writes[0].Body["commit_id"] != "head1" {
 		t.Fatalf("writes = %+v, want one review pinned to head1", writes)
+	}
+}
+
+func TestCreateReviewCommentKeepsTheCommentWhenThreadLookupFails(t *testing.T) {
+	s := newServer(t)
+	s.AddPR(repo, github.PullRequest{Number: 1, AuthorLogin: "alice", HeadRefName: "a", HeadRefOid: "head1", BaseRefName: "main"})
+	ref := github.PRRef{Repo: repo, Number: 1}
+	c := s.Client(userToken)
+	ctx := context.Background()
+
+	s.FailNext("graphql:ThreadOfComment", 502, "bad gateway")
+	comment, threadID, err := c.CreateReviewComment(ctx, ref, github.NewReviewComment{CommitID: "head1", Path: "a.go", Line: 1, Side: "RIGHT", Body: "posted"})
+	var lookup *github.ThreadLookupError
+	var status *github.StatusError
+	if !errors.As(err, &lookup) || !errors.As(err, &status) || status.Status != 502 {
+		t.Fatalf("CreateReviewComment error = %v, want a ThreadLookupError wrapping 502", err)
+	}
+	thread := s.Snapshot(repo, 1).Threads[0]
+	if threadID != "" || comment.NodeID == "" || comment.NodeID != thread.Comments[0].NodeID || lookup.CommentNodeID != comment.NodeID || comment.URL == "" {
+		t.Fatalf("comment = %+v thread %q lookup %+v, want the created comment %s", comment, threadID, lookup, thread.Comments[0].NodeID)
+	}
+	got, err := c.ThreadForComment(ctx, ref, comment.NodeID)
+	if err != nil || got != thread.NodeID {
+		t.Fatalf("ThreadForComment = %q %v, want %s", got, err, thread.NodeID)
+	}
+	if _, err := c.ThreadForComment(ctx, ref, "PRRC_missing"); err == nil {
+		t.Fatal("ThreadForComment found a thread for an unknown comment")
+	}
+	if len(s.Writes()) != 1 {
+		t.Fatalf("writes = %+v, want the one comment", s.Writes())
 	}
 }
