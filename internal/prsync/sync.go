@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	ccevent "github.com/yasyf/cc-interact/event"
 
@@ -83,7 +82,7 @@ func (s *Syncer) poll(ctx context.Context, p *poller) (bool, error) {
 	if !ok || meta.Kind != store.ReviewKindPR {
 		return false, fmt.Errorf("review is not a pull-request review")
 	}
-	repo, err := parseRepo(meta.Repo)
+	repo, err := github.ParseRepo(meta.Repo)
 	if err != nil {
 		return false, err
 	}
@@ -213,14 +212,6 @@ func latestSections(ctx context.Context, st *store.Store, reviewID string) (stor
 		return store.Version{}, nil, err
 	}
 	return v, sections, nil
-}
-
-func parseRepo(s string) (github.Repo, error) {
-	owner, name, ok := strings.Cut(s, "/")
-	if !ok || owner == "" || name == "" {
-		return github.Repo{}, fmt.Errorf("review repo %q is not owner/name", s)
-	}
-	return github.Repo{Owner: owner, Name: name}, nil
 }
 
 func prNumbers(sections []store.Section) []int {
