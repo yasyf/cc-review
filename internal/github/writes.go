@@ -161,6 +161,40 @@ func (c *Client) CreateIssueComment(ctx context.Context, ref PRRef, body string)
 	return out.remote(), nil
 }
 
+const updateReviewCommentMutation = `mutation UpdateReviewComment($id: ID!, $body: String!) {
+  updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: $body}) { pullRequestReviewComment { ...ReviewCommentFields } }
+}` + reviewCommentFragment
+
+const updateIssueCommentMutation = `mutation UpdateIssueComment($id: ID!, $body: String!) {
+  updateIssueComment(input: {id: $id, body: $body}) { issueComment { ...IssueCommentFields } }
+}` + issueCommentFragment
+
+// UpdateReviewComment replaces the body of review comment nodeID.
+func (c *Client) UpdateReviewComment(ctx context.Context, nodeID, body string) (RemoteComment, error) {
+	var out struct {
+		UpdatePullRequestReviewComment struct {
+			PullRequestReviewComment gqlComment `json:"pullRequestReviewComment"`
+		} `json:"updatePullRequestReviewComment"`
+	}
+	if err := c.GraphQL(ctx, updateReviewCommentMutation, map[string]any{"id": nodeID, "body": body}, &out); err != nil {
+		return RemoteComment{}, fmt.Errorf("edit review comment %s: %w", nodeID, err)
+	}
+	return out.UpdatePullRequestReviewComment.PullRequestReviewComment.remote()
+}
+
+// UpdateIssueComment replaces the body of conversation comment nodeID.
+func (c *Client) UpdateIssueComment(ctx context.Context, nodeID, body string) (RemoteComment, error) {
+	var out struct {
+		UpdateIssueComment struct {
+			IssueComment gqlComment `json:"issueComment"`
+		} `json:"updateIssueComment"`
+	}
+	if err := c.GraphQL(ctx, updateIssueCommentMutation, map[string]any{"id": nodeID, "body": body}, &out); err != nil {
+		return RemoteComment{}, fmt.Errorf("edit issue comment %s: %w", nodeID, err)
+	}
+	return out.UpdateIssueComment.IssueComment.remote()
+}
+
 // ResolveThread resolves or reopens a review thread.
 func (c *Client) ResolveThread(ctx context.Context, threadNodeID string, resolved bool) error {
 	mutation := `mutation UnresolveThread($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }`

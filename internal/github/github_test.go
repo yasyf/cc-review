@@ -325,6 +325,48 @@ func TestWritesRoundTripThroughSnapshot(t *testing.T) {
 	}
 }
 
+func TestUpdateComments(t *testing.T) {
+	s := newServer(t)
+	s.AddPR(repo, github.PullRequest{Number: 1, AuthorLogin: "alice", HeadRefName: "a", HeadRefOid: "head1", BaseRefName: "main"})
+	ref := github.PRRef{Repo: repo, Number: 1}
+	user := s.Client(userToken)
+	ctx := context.Background()
+
+	review, _, err := user.CreateReviewComment(ctx, ref, github.NewReviewComment{CommitID: "head1", Path: "a.go", Line: 3, Side: "RIGHT", Body: "before"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := user.CreateIssueComment(ctx, ref, "before")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editedReview, err := user.UpdateReviewComment(ctx, review.NodeID, "after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editedIssue, err := user.UpdateIssueComment(ctx, issue.NodeID, "after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, pair := range map[string][2]github.RemoteComment{"review": {review, editedReview}, "issue": {issue, editedIssue}} {
+		before, after := pair[0], pair[1]
+		if after.Body != "after" || after.NodeID != before.NodeID || after.DatabaseID != before.DatabaseID || !after.UpdatedAt.After(before.UpdatedAt) {
+			t.Errorf("%s edit = %+v, from %+v", name, after, before)
+		}
+	}
+	snap := s.Snapshot(repo, 1)
+	if snap.Threads[0].Comments[0].Body != "after" || snap.IssueComments[0].Body != "after" {
+		t.Fatalf("server state = %+v", snap)
+	}
+
+	if _, err := s.Client(appToken).UpdateIssueComment(ctx, issue.NodeID, "hijack"); err == nil {
+		t.Fatal("bot edited alice's comment")
+	}
+	if _, err := user.UpdateReviewComment(ctx, "PRRC_missing", "x"); !errors.Is(err, github.ErrNotFound) {
+		t.Fatalf("missing comment error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestWriteFailures(t *testing.T) {
 	s := newServer(t)
 	s.AddPR(repo, github.PullRequest{Number: 1, AuthorLogin: "alice", HeadRefName: "a", HeadRefOid: "head2", BaseRefName: "main"})

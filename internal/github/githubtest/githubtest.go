@@ -72,6 +72,7 @@ type Server struct {
 	failStatus  int
 	failMessage string
 	failNext    map[string][]failure
+	loseNext    map[string]int
 	clock       time.Time
 }
 
@@ -85,6 +86,7 @@ func New(t testing.TB) *Server {
 		mergeBases: map[string]string{},
 		nextID:     1000,
 		failNext:   map[string][]failure{},
+		loseNext:   map[string]int{},
 		clock:      time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 	mux := http.NewServeMux()
@@ -241,6 +243,23 @@ func (s *Server) FailNext(path string, status int, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failNext[path] = append(s.failNext[path], failure{status, message})
+}
+
+// LoseNext makes the next write to path take effect but answer 502, once, as
+// when GitHub applies a write and the response never arrives. path is a
+// comment-creating REST path or graphql:AddThreadReply.
+func (s *Server) LoseNext(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loseNext[path]++
+}
+
+func (s *Server) lost(path string) bool {
+	if s.loseNext[path] == 0 {
+		return false
+	}
+	s.loseNext[path]--
+	return true
 }
 
 // Writes returns every write the server accepted, oldest first.
@@ -446,6 +465,10 @@ func (s *Server) createReviewComment(w http.ResponseWriter, r *http.Request) {
 	comment := s.fill(pr, s.authored(r, stringField(body, "body")), "PRRC_", "#discussion_r")
 	thread.Comments = []github.RemoteComment{comment}
 	pr.threads = append(pr.threads, thread)
+	if s.lost(r.URL.Path) {
+		writeError(w, http.StatusBadGateway, "Bad Gateway")
+		return
+	}
 	writeJSON(w, http.StatusCreated, s.restComment(comment))
 }
 
@@ -462,6 +485,10 @@ func (s *Server) createIssueComment(w http.ResponseWriter, r *http.Request) {
 	}
 	comment := s.fill(pr, s.authored(r, stringField(body, "body")), "IC_", "#issuecomment-")
 	pr.issueComments = append(pr.issueComments, comment)
+	if s.lost(r.URL.Path) {
+		writeError(w, http.StatusBadGateway, "Bad Gateway")
+		return
+	}
 	writeJSON(w, http.StatusCreated, s.restComment(comment))
 }
 
@@ -502,6 +529,10 @@ type notFound string
 
 func (n notFound) Error() string { return string(n) }
 
+type forbidden string
+
+func (f forbidden) Error() string { return string(f) }
+
 type graphQLRequest struct {
 	Query     string         `json:"query"`
 	Variables map[string]any `json:"variables"`
@@ -522,9 +553,12 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	data, err := s.operation(w, r, match[1], req)
 	var missing notFound
+	var denied forbidden
 	switch {
 	case errors.As(err, &missing):
 		writeJSON(w, http.StatusOK, map[string]any{"data": nil, "errors": []map[string]string{{"type": "NOT_FOUND", "message": err.Error()}}})
+	case errors.As(err, &denied):
+		writeJSON(w, http.StatusOK, map[string]any{"data": nil, "errors": []map[string]string{{"type": "FORBIDDEN", "message": err.Error()}}})
 	case err != nil:
 		writeError(w, http.StatusBadRequest, err.Error())
 	case data != nil:
@@ -569,6 +603,8 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request, name string, 
 		return s.resolve(w, r, name, stringField(vars, "id"), vars)
 	case "AddThreadReply":
 		return s.replyToThread(w, r, stringField(vars, "thread"), vars)
+	case "UpdateReviewComment", "UpdateIssueComment":
+		return s.updateComment(w, r, name, vars)
 	}
 	return nil, fmt.Errorf("githubtest: unknown operation %s", name)
 }
@@ -678,7 +714,47 @@ func (s *Server) replyToThread(w http.ResponseWriter, r *http.Request, id string
 				}
 				comment := s.fill(pr, s.authored(r, stringField(vars, "body")), "PRRC_", "#discussion_r")
 				t.Comments = append(t.Comments, comment)
+				if s.lost("graphql:AddThreadReply") {
+					return nil, errors.New("bad gateway")
+				}
 				return map[string]any{"addPullRequestReviewThreadReply": map[string]any{"comment": commentsJSON([]github.RemoteComment{comment})[0]}}, nil
+			}
+		}
+	}
+	return nil, notFound(fmt.Sprintf("Could not resolve to a node with the global id of '%s'", id))
+}
+
+func (s *Server) updateComment(w http.ResponseWriter, r *http.Request, operation string, vars map[string]any) (map[string]any, error) {
+	id := stringField(vars, "id")
+	for _, prs := range s.prs {
+		for _, pr := range prs {
+			comments := []*github.RemoteComment{}
+			field, inner := "updateIssueComment", "issueComment"
+			if operation == "UpdateReviewComment" {
+				field, inner = "updatePullRequestReviewComment", "pullRequestReviewComment"
+				for _, t := range pr.threads {
+					for i := range t.Comments {
+						comments = append(comments, &t.Comments[i])
+					}
+				}
+			} else {
+				for i := range pr.issueComments {
+					comments = append(comments, &pr.issueComments[i])
+				}
+			}
+			for _, c := range comments {
+				if c.NodeID != id {
+					continue
+				}
+				if c.AuthorLogin != loginOf(r) {
+					return nil, forbidden(fmt.Sprintf("%s does not have the correct permissions to execute `%s`", loginOf(r), field))
+				}
+				if !s.record(w, r, "graphql:"+operation, vars) {
+					return nil, nil
+				}
+				c.Body = stringField(vars, "body")
+				c.UpdatedAt = c.UpdatedAt.Add(time.Minute)
+				return map[string]any{field: map[string]any{inner: commentsJSON([]github.RemoteComment{*c})[0]}}, nil
 			}
 		}
 	}
