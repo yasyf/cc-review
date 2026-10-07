@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Local reviews render every file when your global git config sets
+  `diff.mnemonicPrefix`, `diff.noprefix`, or `diff.relative`. Captured patches
+  had carried `c/` and `i/` headers, bare paths, or paths cut down to the
+  working directory, and the review UI failed those files with "invalid git
+  diff header". cc-interact v0.36.2 pins `a/` and `b/` headers and
+  repo-relative paths on every diff it captures.
+
 ## [0.40.0] - 2026-10-07
 
 ### Added
