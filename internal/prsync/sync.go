@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	ccevent "github.com/yasyf/cc-interact/event"
 
@@ -24,6 +26,14 @@ const (
 	replyKindNote = "note"
 
 	prOpen = "OPEN"
+)
+
+var (
+	htmlComment  = regexp.MustCompile(`(?s)<!--.*?-->`)
+	stackMarkers = []string{
+		"<!-- Current dependencies on/for this PR: -->",
+		"This stack of pull requests is managed by Graphite",
+	}
 )
 
 type change struct{ touched, human bool }
@@ -153,11 +163,19 @@ func (s *Syncer) stackMoved(ctx context.Context, repo github.Repo, target int, s
 
 func (s *Syncer) apply(ctx context.Context, st *store.Store, p *poller, v store.Version, sections []store.Section, snaps map[int]github.PRSnapshot) error {
 	return st.ApplyRemote(ctx, func(rt *store.RemoteTx) error {
-		sc := syncCtx{rt: rt, p: p, version: v}
+		sc := syncCtx{rt: rt, p: p, version: v, backfill: &backfill{}}
 		if err := sc.pullRequests(ctx, snaps); err != nil {
 			return err
 		}
+		imported, err := rt.ImportedPRs(ctx, p.reviewID)
+		if err != nil {
+			return err
+		}
 		for _, sec := range sections {
+			sc := sc
+			if !imported[sec.PRNumber] {
+				sc.importing = sc.backfill.add(sec.PRNumber)
+			}
 			snap := snaps[sec.PRNumber]
 			for _, th := range snap.Threads {
 				if err := sc.thread(ctx, sec, th); err != nil {
@@ -170,7 +188,7 @@ func (s *Syncer) apply(ctx context.Context, st *store.Store, p *poller, v store.
 				}
 			}
 		}
-		return nil
+		return sc.emitImported(ctx)
 	})
 }
 
@@ -194,9 +212,22 @@ func (s *Syncer) publish(ctx context.Context, st *store.Store, reviewID string) 
 }
 
 type syncCtx struct {
-	rt      *store.RemoteTx
-	p       *poller
-	version store.Version
+	rt        *store.RemoteTx
+	p         *poller
+	version   store.Version
+	backfill  *backfill
+	importing *wire.ImportedPR
+}
+
+type backfill struct {
+	prs        []*wire.ImportedPR
+	unresolved []wire.ImportedThread
+}
+
+func (b *backfill) add(number int) *wire.ImportedPR {
+	pr := &wire.ImportedPR{Number: number}
+	b.prs = append(b.prs, pr)
+	return pr
 }
 
 func latestSections(ctx context.Context, st *store.Store, reviewID string) (store.Version, []store.Section, error) {
@@ -234,6 +265,25 @@ func (p *poller) authorOf(login string) (author, origin string) {
 	default:
 		return store.AuthorRemote, ccevent.OriginHuman
 	}
+}
+
+func (p *poller) issueAuthorOf(ic github.RemoteComment) (author, origin string) {
+	if slices.ContainsFunc(stackMarkers, func(m string) bool { return strings.Contains(ic.Body, m) }) {
+		return store.AuthorAutomation, ccevent.OriginAgent
+	}
+	return p.authorOf(ic.AuthorLogin)
+}
+
+func adoptable(author string) bool {
+	return author == store.AuthorUser || author == store.AuthorClaude
+}
+
+func isBot(login string) bool {
+	return strings.HasSuffix(login, "[bot]")
+}
+
+func humanAuthored(c store.Comment) bool {
+	return c.Author == store.AuthorUser || (c.Author == store.AuthorRemote && !isBot(c.AuthorLogin))
 }
 
 func sideOf(diffSide string) string {
@@ -331,7 +381,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 			AuthorLogin: rc.AuthorLogin, AuthorAvatarURL: rc.AuthorAvatarURL, SyncState: store.SyncSynced,
 		}
 		before, had := prevReplies[r.RemoteID]
-		if !had && rAuthor != store.AuthorRemote {
+		if !had && adoptable(rAuthor) {
 			if before, had, err = sc.adoptReply(ctx, sec, false, r); err != nil {
 				return err
 			}
@@ -347,7 +397,7 @@ func (sc syncCtx) thread(ctx context.Context, sec store.Section, th github.Threa
 	}
 	switch {
 	case created:
-		return sc.emitComment(ctx, ch.origin(), store.EventCommentCreated, saved)
+		return sc.created(ctx, ch.origin(), saved)
 	case statusOnly && saved.Status == "resolved":
 		return sc.emit(ctx, ccevent.OriginHuman, store.EventCommentResolved, map[string]any{"commentId": strconv.FormatInt(saved.ID, 10)})
 	case ch.any():
@@ -362,7 +412,7 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	author, origin := sc.p.authorOf(ic.AuthorLogin)
+	author, origin := sc.p.issueAuthorOf(ic)
 	c := store.Comment{
 		VersionID: sc.version.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
 		Side: "additions", Body: ic.Body, Author: author, Status: "open",
@@ -374,7 +424,7 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 	if err != nil {
 		return err
 	}
-	if !existed && author != store.AuthorRemote {
+	if !existed && adoptable(author) {
 		reply := store.Reply{Origin: author, Body: ic.Body, RemoteID: ic.NodeID, RemoteURL: ic.URL}
 		if _, adopted, err := sc.adoptReply(ctx, sec, true, reply); err != nil || adopted {
 			return err
@@ -389,7 +439,7 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 	}
 	switch {
 	case created:
-		return sc.emitComment(ctx, origin, store.EventCommentCreated, saved)
+		return sc.created(ctx, origin, saved)
 	case existed && diffComment(prev, saved).content:
 		return sc.emitComment(ctx, origin, store.EventCommentUpdated, saved)
 	}
@@ -403,7 +453,7 @@ func (sc syncCtx) existing(ctx context.Context, c store.Comment) (store.Comment,
 		return prev, true, nil
 	case !errors.Is(err, store.ErrNotFound):
 		return store.Comment{}, false, err
-	case c.Author == store.AuthorRemote:
+	case !adoptable(c.Author):
 		return store.Comment{}, false, nil
 	}
 	adopted, ok, err := sc.rt.AdoptComment(ctx, sc.p.reviewID, c)
@@ -429,7 +479,7 @@ func (sc syncCtx) pullRequests(ctx context.Context, snaps map[int]github.PRSnaps
 			return fmt.Errorf("upsert pull request #%d: %w", n, err)
 		}
 		if changed {
-			if err := sc.emit(ctx, ccevent.OriginSystem, store.EventPRUpdated, wire.PRUpdatedFields(pr)); err != nil {
+			if err := sc.emit(ctx, ccevent.OriginAgent, store.EventPRUpdated, wire.PRUpdatedFields(pr)); err != nil {
 				return err
 			}
 		}
@@ -456,14 +506,59 @@ func PullRequestRow(reviewID string, pr github.PullRequest, viewer string) store
 	}
 }
 
+func (sc syncCtx) created(ctx context.Context, origin string, c store.Comment) error {
+	if sc.importing == nil {
+		return sc.emitComment(ctx, origin, store.EventCommentCreated, c)
+	}
+	sc.importing.Comments++
+	if c.Subject == subjectLine && c.Status == "open" && humanAuthored(c) {
+		sc.backfill.unresolved = append(sc.backfill.unresolved, wire.ImportedThread{
+			CommentID: strconv.FormatInt(c.ID, 10), PRNumber: sc.importing.Number, Branch: c.Branch,
+			FilePath: c.FilePath, Line: c.EndLine, AuthorLogin: c.AuthorLogin, Body: stripHTMLComments(c.Body),
+		})
+	}
+	return sc.emitComment(ctx, ccevent.OriginAgent, store.EventCommentCreated, c)
+}
+
+func (sc syncCtx) emitImported(ctx context.Context) error {
+	if len(sc.backfill.prs) == 0 {
+		return nil
+	}
+	prs := make([]wire.ImportedPR, len(sc.backfill.prs))
+	for i, pr := range sc.backfill.prs {
+		prs[i] = *pr
+	}
+	origin := ccevent.OriginAgent
+	if len(sc.backfill.unresolved) > 0 {
+		origin = ccevent.OriginHuman
+	}
+	return sc.emit(ctx, origin, store.EventPRImported, wire.PRImportedFields(prs, sc.backfill.unresolved))
+}
+
 func (sc syncCtx) emitComment(ctx context.Context, origin, typ string, c store.Comment) error {
+	if c.Author == store.AuthorAutomation {
+		origin = ccevent.OriginAgent
+	}
 	replies, err := sc.rt.ListRepliesByComment(ctx, c.ID)
 	if err != nil {
 		return err
 	}
+	comment := wire.ToComment(c, replies)
+	if c.Author == store.AuthorRemote && isBot(c.AuthorLogin) {
+		comment.Body = stripHTMLComments(comment.Body)
+	}
+	for i, r := range replies {
+		if r.Origin == store.AuthorRemote && isBot(r.AuthorLogin) {
+			comment.Replies[i].Body = stripHTMLComments(comment.Replies[i].Body)
+		}
+	}
 	return sc.emit(ctx, origin, typ, map[string]any{
-		"commentId": strconv.FormatInt(c.ID, 10), "comment": wire.ToComment(c, replies),
+		"commentId": strconv.FormatInt(c.ID, 10), "comment": comment,
 	})
+}
+
+func stripHTMLComments(body string) string {
+	return strings.TrimSpace(htmlComment.ReplaceAllString(body, ""))
 }
 
 func (sc syncCtx) emit(ctx context.Context, origin, typ string, fields map[string]any) error {

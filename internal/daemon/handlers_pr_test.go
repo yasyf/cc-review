@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	ccevent "github.com/yasyf/cc-interact/event"
+
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/github/githubtest"
 	"github.com/yasyf/cc-review/internal/store"
@@ -164,6 +166,15 @@ func TestStartPRCapturesOneSectionPerStackedPR(t *testing.T) {
 	}
 	if n := countEvents(t, s, resp.ReviewID, store.EventPRUpdated); n != 2 {
 		t.Fatalf("pr.updated events = %d, want 2", n)
+	}
+	channel, err := s.cc.EventsSince(ctx, resp.ReviewID, 0, ccevent.OriginAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range channel {
+		if e.Type == store.EventPRUpdated {
+			t.Fatalf("pr.updated reached a channel consumer: %s", e.Payload)
+		}
 	}
 	if got := s.openedPRReviews(); !reflect.DeepEqual(got, []string{resp.ReviewID}) {
 		t.Fatalf("opened PR reviews = %v, want [%s]", got, resp.ReviewID)

@@ -489,7 +489,7 @@ func (s *Server) handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 			notFoundOr500(w, err)
 			return
 		}
-		if c.Author == store.AuthorRemote {
+		if c.Author == store.AuthorRemote || c.Author == store.AuthorAutomation {
 			http.Error(w, "only your own and Claude's comments can be edited", http.StatusConflict)
 			return
 		}

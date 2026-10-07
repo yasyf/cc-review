@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -13,7 +15,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +40,8 @@ const (
 	viewerLogin = "octo"
 	botLogin    = "cc-review-octo[bot]"
 	coworker    = "hubot"
+	reviewerBot = "forge-pr-reviewer[bot]"
+	stackBody   = "<!-- Current dependencies on/for this PR: -->\n* **#2**\n* **#1**\n\nThis stack of pull requests is managed by Graphite."
 	headA       = "aaaa000000000000000000000000000000000000"
 	headB       = "bbbb000000000000000000000000000000000000"
 )
@@ -204,6 +207,18 @@ type firedEvent struct {
 				Body string `json:"body"`
 			} `json:"replies"`
 		} `json:"comment"`
+		PullRequests []struct {
+			Number   int `json:"number"`
+			Comments int `json:"comments"`
+		} `json:"pullRequests"`
+		Unresolved []struct {
+			CommentID   string `json:"commentId"`
+			PRNumber    int    `json:"prNumber"`
+			FilePath    string `json:"filePath"`
+			Line        int    `json:"line"`
+			AuthorLogin string `json:"authorLogin"`
+			Body        string `json:"body"`
+		} `json:"unresolved"`
 	}
 }
 
@@ -256,10 +271,12 @@ func TestPollMirrorsStackAndSecondPollIsSilent(t *testing.T) {
 	issue := f.gh.AddIssueComment(testRepo, 1, github.RemoteComment{AuthorLogin: coworker, Body: "LGTM overall"})
 
 	f.poll()
-	got := types(f.drain())
+	evs := f.drain()
+	got := types(evs)
 	want := []string{
-		"pr.updated/system", "pr.updated/system",
-		"comment.created/human", "comment.created/human", "comment.created/human",
+		"pr.updated/agent", "pr.updated/agent",
+		"comment.created/agent", "comment.created/agent", "comment.created/agent",
+		"pr.imported/human",
 	}
 	if !slices.Equal(sortedPRFirst(got), want) {
 		t.Fatalf("first poll events = %v, want %v", got, want)
@@ -309,6 +326,14 @@ func TestPollMirrorsStackAndSecondPollIsSilent(t *testing.T) {
 	if len(prs) != 2 || !prs[0].ViewerIsAuthor || prs[1].ViewerIsAuthor || prs[1].HeadSHA != headB {
 		t.Fatalf("pull requests = %+v", prs)
 	}
+	imported := evs[len(evs)-1].Payload
+	if got := fmt.Sprint(imported.PullRequests); got != "[{1 2} {2 1}]" {
+		t.Fatalf("imported pull requests = %s, want #1 with 2 comments and #2 with 1", got)
+	}
+	if u := imported.Unresolved; len(u) != 1 || u[0].CommentID != strconv.FormatInt(line.ID, 10) || u[0].PRNumber != 2 ||
+		u[0].FilePath != "main.go" || u[0].Line != 12 || u[0].AuthorLogin != coworker || u[0].Body != "rename this" {
+		t.Fatalf("imported unresolved = %+v, want only the open line thread", u)
+	}
 
 	f.poll()
 	if evs := f.drain(); len(evs) != 0 {
@@ -319,7 +344,7 @@ func TestPollMirrorsStackAndSecondPollIsSilent(t *testing.T) {
 func sortedPRFirst(in []string) []string {
 	var prs, rest []string
 	for _, s := range in {
-		if s == "pr.updated/system" {
+		if s == "pr.updated/agent" {
 			prs = append(prs, s)
 		} else {
 			rest = append(rest, s)
@@ -430,7 +455,7 @@ func TestHeadChangeRecapturesAndReanchors(t *testing.T) {
 	if c := f.comment(thread.Comments[0].NodeID); c.VersionID != versions[1].ID || c.SectionID != sections[1].ID {
 		t.Fatalf("thread stayed on version %d section %d, want %d/%d", c.VersionID, c.SectionID, versions[1].ID, sections[1].ID)
 	}
-	if got, want := types(f.drain()), []string{"pr.updated/system", "comment.updated/agent"}; !slices.Equal(got, want) {
+	if got, want := types(f.drain()), []string{"pr.updated/agent", "comment.updated/agent"}; !slices.Equal(got, want) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
 
@@ -468,41 +493,25 @@ func (b sseBackend) AttachViewer(subjectID string) func() {
 	return b.f.activity.AttachViewer(subjectID)
 }
 
-func TestBotCommentNeverReachesTheChannel(t *testing.T) {
-	f := newFixture(t, true)
-	bot := f.gh.AddThread(testRepo, 2, github.Thread{
-		Path: "main.go", SubjectType: "LINE", Line: 3, DiffSide: "RIGHT",
-		Comments: []github.RemoteComment{{AuthorLogin: botLogin, Body: "from claude"}},
-	})
-	human := f.gh.AddThread(testRepo, 2, github.Thread{
-		Path: "main.go", SubjectType: "LINE", Line: 9, DiffSide: "RIGHT",
-		Comments: []github.RemoteComment{{AuthorLogin: coworker, Body: "from a coworker"}},
-	})
-	f.poll()
-	if c := f.comment(bot.Comments[0].NodeID); c.Author != store.AuthorClaude || c.AuthorLogin != botLogin {
-		t.Fatalf("bot comment = %+v", c)
-	}
+func (f *fixture) channel() []string {
+	f.t.Helper()
 	const sentinel = "test.done"
-	if _, err := f.append(t.Context(), &ccevent.Event{SubjectID: f.reviewID, Origin: ccevent.OriginHuman, Type: sentinel, Payload: []byte(`{"type":"test.done"}`)}); err != nil {
-		t.Fatal(err)
+	if _, err := f.append(f.t.Context(), &ccevent.Event{SubjectID: f.reviewID, Origin: ccevent.OriginHuman, Type: sentinel, Payload: []byte(`{"type":"test.done"}`)}); err != nil {
+		f.t.Fatal(err)
 	}
-
 	srv := httptest.NewServer(sse.NewServer(sseBackend{f}, sse.Config{}).Handler())
-	t.Cleanup(srv.Close)
+	f.t.Cleanup(srv.Close)
 	u, err := url.Parse(srv.URL)
 	if err != nil {
-		t.Fatal(err)
+		f.t.Fatal(err)
 	}
 	port, err := strconv.Atoi(u.Port())
 	if err != nil {
-		t.Fatal(err)
+		f.t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(f.t.Context(), 10*time.Second)
 	defer cancel()
-	var (
-		mu       sync.Mutex
-		received []string
-	)
+	var received []string
 	err = consume.ConsumeEvents(ctx, consume.StreamSource{
 		Port: port, SubjectID: f.reviewID, Consumer: "channel", ExcludeOrigin: ccevent.OriginAgent, Paths: paths.App(),
 	}, func(_ int64, data string) (bool, error) {
@@ -515,30 +524,163 @@ func TestBotCommentNeverReachesTheChannel(t *testing.T) {
 		if err := json.Unmarshal([]byte(data), &e); err != nil {
 			return true, err
 		}
-		mu.Lock()
-		defer mu.Unlock()
 		received = append(received, e.Type+":"+e.Comment.Body)
 		return e.Type == sentinel, nil
 	})
 	if err != nil {
-		t.Fatalf("consume: %v", err)
+		f.t.Fatalf("consume: %v", err)
 	}
-	want := []string{"pr.updated:", "pr.updated:", "comment.created:" + human.Comments[0].Body, sentinel + ":"}
-	if !slices.Equal(sortedConsumed(received), want) {
-		t.Fatalf("channel received %v, want %v", received, want)
+	return received
+}
+
+func TestBotCommentNeverReachesTheChannel(t *testing.T) {
+	f := newFixture(t, true)
+	f.poll()
+	bot := f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 3, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: botLogin, Body: "from claude"}},
+	})
+	human := f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 9, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: coworker, Body: "from a coworker"}},
+	})
+	f.poll()
+	if c := f.comment(bot.Comments[0].NodeID); c.Author != store.AuthorClaude || c.AuthorLogin != botLogin {
+		t.Fatalf("bot comment = %+v", c)
+	}
+	want := []string{"comment.created:" + human.Comments[0].Body, "test.done:"}
+	if got := f.channel(); !slices.Equal(got, want) {
+		t.Fatalf("channel received %v, want %v", got, want)
 	}
 }
 
-func sortedConsumed(in []string) []string {
-	var prs, rest []string
-	for _, s := range in {
-		if s == "pr.updated:" {
-			prs = append(prs, s)
-		} else {
-			rest = append(rest, s)
+func TestFirstPollStreamsOnlyItsSummaryToTheChannel(t *testing.T) {
+	f := newFixture(t, true)
+	f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 9, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: coworker, Body: "existing feedback"}},
+	})
+	f.gh.AddIssueComment(testRepo, 2, github.RemoteComment{AuthorLogin: viewerLogin, Body: stackBody})
+	f.gh.AddIssueComment(testRepo, 1, github.RemoteComment{AuthorLogin: reviewerBot, Body: "Review summary\n<!-- forge:AAAA -->"})
+	f.poll()
+	stored, err := f.st.ListCommentsByVersion(t.Context(), f.stackVersionID())
+	if err != nil || len(stored) != 3 {
+		t.Fatalf("stored comments = %d %v, want the whole first snapshot", len(stored), err)
+	}
+
+	later := f.gh.AddThread(testRepo, 1, github.Thread{
+		Path: "base.go", SubjectType: "LINE", Line: 2, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: coworker, Body: "new feedback"}},
+	})
+	f.poll()
+	want := []string{"pr.imported:", "comment.created:" + later.Comments[0].Body, "test.done:"}
+	if got := f.channel(); !slices.Equal(got, want) {
+		t.Fatalf("channel received %v, want %v", got, want)
+	}
+}
+
+func TestFirstPollWithoutHumanThreadsStreamsNothing(t *testing.T) {
+	f := newFixture(t, true)
+	f.gh.AddIssueComment(testRepo, 1, github.RemoteComment{AuthorLogin: reviewerBot, Body: "Review summary"})
+	f.gh.AddIssueComment(testRepo, 2, github.RemoteComment{AuthorLogin: coworker, Body: "conversation, not a line"})
+	f.poll()
+	if got, want := f.channel(), []string{"test.done:"}; !slices.Equal(got, want) {
+		t.Fatalf("channel received %v, want %v", got, want)
+	}
+}
+
+func TestNewPRInTheStackIsImportedOnce(t *testing.T) {
+	f := newFixture(t, true)
+	f.poll()
+	f.drain()
+
+	const headC = "eeee000000000000000000000000000000000000"
+	f.gh.SetMergeBase(testRepo, headB, headC, headB)
+	f.gh.AddPR(testRepo, github.PullRequest{Number: 3, Title: "upstack", AuthorLogin: coworker, HeadRefName: "feat-c", HeadRefOid: headC, BaseRefName: "feat-b"})
+	f.gh.AddIssueComment(testRepo, 3, github.RemoteComment{AuthorLogin: coworker, Body: "already here"})
+	f.poll()
+	evs := f.drain()
+	var imported []string
+	for _, e := range evs {
+		switch e.Type {
+		case "comment.created":
+			if e.Origin != ccevent.OriginAgent {
+				t.Fatalf("comment.created on the new PR's first snapshot has origin %s, want agent", e.Origin)
+			}
+		case "pr.imported":
+			imported = append(imported, fmt.Sprint(e.Payload.PullRequests))
 		}
 	}
-	return append(prs, rest...)
+	if !slices.Equal(imported, []string{"[{3 1}]"}) {
+		t.Fatalf("pr.imported = %v, want only #3 with its one comment", imported)
+	}
+
+	f.gh.AddIssueComment(testRepo, 3, github.RemoteComment{AuthorLogin: coworker, Body: "arrived later"})
+	f.poll()
+	if got, want := types(f.drain()), []string{"comment.created/human"}; !slices.Equal(got, want) {
+		t.Fatalf("events after the import = %v, want %v", got, want)
+	}
+}
+
+func TestGraphiteStackCommentIsAutomation(t *testing.T) {
+	f := newFixture(t, true)
+	f.poll()
+	f.drain()
+
+	stack := f.gh.AddIssueComment(testRepo, 2, github.RemoteComment{AuthorLogin: viewerLogin, Body: stackBody})
+	f.poll()
+	if c := f.comment(stack.NodeID); c.Author != store.AuthorAutomation || c.AuthorLogin != viewerLogin || c.Body != stackBody {
+		t.Fatalf("stack comment = %+v, want it stored whole as automation", c)
+	}
+	if got, want := types(f.drain()), []string{"comment.created/agent"}; !slices.Equal(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+func TestBotCommentPayloadDropsHTMLComments(t *testing.T) {
+	f := newFixture(t, true)
+	f.poll()
+	f.drain()
+
+	const body = "Two findings.\n<!-- forge-pr-reviewer:eyJmaW5kaW5ncyI6W119 -->\n<!--\nmulti\nline\n-->"
+	review := f.gh.AddIssueComment(testRepo, 1, github.RemoteComment{AuthorLogin: reviewerBot, Body: body})
+	thread := f.gh.AddThread(testRepo, 2, github.Thread{
+		Path: "main.go", SubjectType: "LINE", Line: 4, DiffSide: "RIGHT",
+		Comments: []github.RemoteComment{{AuthorLogin: coworker, Body: "keep <!-- this --> as written"}},
+	})
+	f.gh.AddReply(testRepo, 2, thread.NodeID, github.RemoteComment{AuthorLogin: reviewerBot, Body: "agreed <!-- blob -->"})
+	f.poll()
+
+	if c := f.comment(review.NodeID); c.Author != store.AuthorRemote || c.Body != body {
+		t.Fatalf("bot comment = %+v, want it stored whole as remote", c)
+	}
+	bodies := map[string]string{}
+	for _, e := range f.drain() {
+		if e.Type != "comment.created" || e.Origin != ccevent.OriginHuman {
+			t.Fatalf("event %s/%s, want comment.created/human", e.Type, e.Origin)
+		}
+		bodies[e.Payload.CommentID] = e.Payload.Comment.Body
+		for _, r := range e.Payload.Comment.Replies {
+			bodies[e.Payload.CommentID+"/reply"] = r.Body
+		}
+	}
+	want := map[string]string{
+		strconv.FormatInt(f.comment(review.NodeID).ID, 10):                        "Two findings.",
+		strconv.FormatInt(f.comment(thread.Comments[0].NodeID).ID, 10):            "keep <!-- this --> as written",
+		strconv.FormatInt(f.comment(thread.Comments[0].NodeID).ID, 10) + "/reply": "agreed",
+	}
+	if !maps.Equal(bodies, want) {
+		t.Fatalf("payload bodies = %q, want %q", bodies, want)
+	}
+}
+
+func (f *fixture) stackVersionID() int64 {
+	f.t.Helper()
+	v, _, err := latestSections(f.t.Context(), f.st, f.reviewID)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return v.ID
 }
 
 func TestPollerIntervalFollowsWatched(t *testing.T) {
@@ -897,7 +1039,7 @@ func TestPollAdoptsOurUnrecordedComment(t *testing.T) {
 	if replies, err := f.st.ListRepliesByComment(ctx, localID); err != nil || len(replies) != 1 {
 		t.Fatalf("replies = %+v %v, want only the adopted one", replies, err)
 	}
-	if got, want := types(f.drain()), []string{"pr.updated/system", "pr.updated/system", "comment.synced/agent", "comment.synced/agent"}; !slices.Equal(got, want) {
+	if got, want := types(f.drain()), []string{"pr.updated/agent", "pr.updated/agent", "comment.synced/agent", "comment.synced/agent", "pr.imported/agent"}; !slices.Equal(got, want) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
 }

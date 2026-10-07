@@ -87,11 +87,17 @@ New GitHub comments land in the review as threads, matched by their GitHub id so
 | --- | --- | --- |
 | You | your comment | yes, as your feedback |
 | Your cc-review App (`cc-review-<login>[bot]`) | Claude's comment | no |
+| Graphite's stack comment, whoever posted it | a collapsed automation comment | no |
+| Another bot (`<name>[bot]`) | the bot, by name and avatar | yes, without its hidden `<!-- ... -->` markup |
 | Anyone else | the coworker, by name and avatar | yes, as coworker feedback |
 
 Claude reads a coworker's comment like one of yours and can reply under it, and the reply posts to GitHub as the App. Claude never receives its own App's comments back, so a thread can't turn into Claude answering itself.
 
-When a PR's head moves while the review is open, cc-review captures a new version of the review on its own, the same way a second `/cc-review:start` does for local work. A submitted review stays submitted: a head that moves after Submit waits for the next `start --pr`, which opens the next round. A change to a PR's title, state, checks, or reviewers updates the PR header in place.
+Graphite posts its stack comment with your token, so GitHub reports you as its author. cc-review recognizes it by its body and files it as automation instead: it stays in the review, collapsed, and never counts as your feedback in Claude's channel or the frozen feedback.
+
+The first poll of a PR is an import, not new activity. It stores every comment already on GitHub, and the review UI shows all of them. Claude gets one summary for the import, and only when it holds open line comments from people, you or a coworker. Comments that land after the import reach Claude one by one as above.
+
+When a PR's head moves while the review is open, cc-review captures a new version of the review on its own, the same way a second `/cc-review:start` does for local work. A submitted review stays submitted: a head that moves after Submit waits for the next `start --pr`, which opens the next round. A change to a PR's title, state, checks, or reviewers updates the PR header in place; that metadata goes to the browser only, never to Claude.
 
 ### Outdated threads
 

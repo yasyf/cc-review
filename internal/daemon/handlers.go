@@ -556,8 +556,7 @@ func (rv *review) recordPullRequests(ctx context.Context, st *store.Store, ap cc
 			return err
 		}
 		if changed {
-			emit(ctx, ap, reviewID, ccevent.OriginSystem, store.EventPRUpdated, version,
-				map[string]any{"pullRequest": wire.ToPullRequest(row)})
+			emit(ctx, ap, reviewID, ccevent.OriginAgent, store.EventPRUpdated, version, wire.PRUpdatedFields(row))
 		}
 	}
 	return nil

@@ -328,3 +328,52 @@ func TestBuildCarriesAuthors(t *testing.T) {
 		t.Fatalf("replies = %+v, want one reply by user me", replies)
 	}
 }
+
+func TestBuildSkipsAutomationComments(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+
+	subjectID := store.NewSlugHash()
+	if _, err := ccstore.NewSubjectStore(st.DB()).
+		Create(ctx, subjectID, store.ReviewSlug(subjectID), "s", "/repo", 0, "open"); err != nil {
+		t.Fatal(err)
+	}
+	input := []store.SectionInput{{Position: 0, Branch: "feat", BaseRef: "b", HeadRef: "h", FilesJSON: "[]", PRNumber: 7}}
+	stack := func(v store.Version, sec store.Section, remoteID string) {
+		t.Helper()
+		if _, _, err := st.UpsertRemoteComment(ctx, store.Comment{
+			VersionID: v.ID, SectionID: sec.ID, Branch: "feat", Side: "additions", Subject: "file",
+			Body: "This stack of pull requests is managed by Graphite.", Author: store.AuthorAutomation, AuthorLogin: "me", RemoteID: remoteID,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v1, s1, err := st.CreateVersion(ctx, subjectID, "feat", "", "", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack(v1, s1[0], "IC_stranded")
+	v2, s2, err := st.CreateVersion(ctx, subjectID, "feat", "", "", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack(v2, s2[0], "IC_current")
+	if _, err := st.CreateComment(ctx, store.Comment{
+		VersionID: v2.ID, SectionID: s2[0].ID, Branch: "feat", FilePath: "a.go", Side: "additions",
+		StartLine: 1, EndLine: 1, Body: "rename", Author: store.AuthorUser, Status: "open",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fb, err := Build(ctx, st, subjectID, v2, time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.Threads) != 1 || fb.Threads[0].Body != "rename" {
+		t.Fatalf("threads = %+v, want only the user's comment", fb.Threads)
+	}
+}

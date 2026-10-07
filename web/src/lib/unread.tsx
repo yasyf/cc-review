@@ -22,7 +22,7 @@ export function latestEntry(comment: Comment): { id: string; author: Author } {
 
 export function isUnread(comment: Comment, seen: SeenMap): boolean {
   const latest = latestEntry(comment);
-  return latest.author !== 'user' && seen[comment.id] !== latest.id;
+  return latest.author !== 'user' && latest.author !== 'automation' && seen[comment.id] !== latest.id;
 }
 
 export function unreadCount(comments: readonly Comment[], seen: SeenMap): number {

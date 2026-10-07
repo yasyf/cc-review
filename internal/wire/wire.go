@@ -251,6 +251,33 @@ func PRUpdatedFields(pr store.PullRequest) map[string]any {
 	return map[string]any{"pullRequest": ToPullRequest(pr)}
 }
 
+// ImportedPR counts the comments a pr.imported event stored from one PR's
+// first snapshot.
+type ImportedPR struct {
+	Number   int `json:"number"`
+	Comments int `json:"comments"`
+}
+
+// ImportedThread is an unresolved, line-anchored human thread a PR's first
+// snapshot already held when cc-review imported it.
+type ImportedThread struct {
+	CommentID   string `json:"commentId"`
+	PRNumber    int    `json:"prNumber"`
+	Branch      string `json:"branch"`
+	FilePath    string `json:"filePath"`
+	Line        int    `json:"line"`
+	AuthorLogin string `json:"authorLogin"`
+	Body        string `json:"body"`
+}
+
+// PRImportedFields is the pr.imported event payload.
+func PRImportedFields(prs []ImportedPR, unresolved []ImportedThread) map[string]any {
+	if unresolved == nil {
+		unresolved = []ImportedThread{}
+	}
+	return map[string]any{"pullRequests": prs, "unresolved": unresolved}
+}
+
 // CommentSyncedFields is the comment.synced event payload for a comment's own
 // sync transition.
 func CommentSyncedFields(c store.Comment) map[string]any {

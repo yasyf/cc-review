@@ -20,6 +20,7 @@ const (
 	EventStatusChanged       = "status.changed"
 	EventPRUpdated           = "pr.updated"
 	EventCommentSynced       = "comment.synced"
+	EventPRImported          = "pr.imported"
 )
 
 // Origins recorded in events.origin.
@@ -30,11 +31,14 @@ const (
 )
 
 // Authors recorded in comments.author and replies.origin. AuthorRemote is a
-// GitHub user who is neither the viewer nor the cc-review app's bot.
+// GitHub user who is neither the viewer nor the cc-review app's bot;
+// AuthorAutomation is tooling such as Graphite's stack comment, whatever token
+// posted it.
 const (
-	AuthorUser   = "user"
-	AuthorClaude = "claude"
-	AuthorRemote = "remote"
+	AuthorUser       = "user"
+	AuthorClaude     = "claude"
+	AuthorRemote     = "remote"
+	AuthorAutomation = "automation"
 )
 
 // Sync states recorded in comments.sync_state and replies.sync_state. A local

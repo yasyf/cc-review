@@ -15,7 +15,7 @@ export type CommentStatus = 'open' | 'resolved';
 // Origin is the side that wrote a comment or reply; Author also tells the
 // viewer apart from another GitHub user on a PR review.
 export type Origin = 'user' | 'claude';
-export type Author = Origin | 'remote';
+export type Author = Origin | 'remote' | 'automation';
 export type SyncState = 'local' | 'posting' | 'synced' | 'failed';
 export type CommentSubject = 'line' | 'file';
 export type ReviewKind = 'local' | 'pr';
@@ -137,6 +137,21 @@ export interface PullRequest {
   reviewers: PullRequestReviewer[];
   viewerIsAuthor: boolean;
   updatedAt: string;
+}
+
+export interface ImportedPullRequest {
+  number: number;
+  comments: number;
+}
+
+export interface ImportedThread {
+  commentId: string;
+  prNumber: number;
+  branch: string;
+  filePath: string;
+  line: number;
+  authorLogin: string;
+  body: string;
 }
 
 export interface ReviewSummary {
@@ -409,6 +424,12 @@ export type ReviewEvent =
   | { type: 'annotations.updated'; version_number: number; annotations: Annotation[] }
   | { type: 'channel.changed'; version_number: number; connected: boolean }
   | { type: 'pr.updated'; version_number: number; pullRequest: PullRequest }
+  | {
+      type: 'pr.imported';
+      version_number: number;
+      pullRequests: ImportedPullRequest[];
+      unresolved: ImportedThread[];
+    }
   | {
       type: 'comment.synced';
       version_number: number;
