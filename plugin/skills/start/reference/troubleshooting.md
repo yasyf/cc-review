@@ -18,4 +18,8 @@
 
 **The stream went quiet after a plugin upgrade.** Upgrading replaces the daemon mid-session; streams refresh their connection automatically, but a watcher built by the old binary may stop. Re-arm the Monitor — `watch` resumes from its cursor, so nothing is lost. On the streamer fallback there's nothing to re-arm: each cycle re-execs the binary, so the next relaunch is already the new build.
 
-**Nothing to review.** In a git repo, `start` snapshots the uncommitted working tree (tracked, staged, and untracked, minus ignored) against `HEAD` — or the empty tree when the repo has no commits. In a jj repo (including colocated), it snapshots the working-copy change (`@`) against its parent. With no changes, the diff is empty.
+**Nothing to review.** In a git repo, a new review with uncommitted work (tracked, staged, and untracked, minus ignored) diffs it against `HEAD`, or the empty tree when the repo has no commits. A clean tree diffs the branch against its fork point from trunk instead, and `--base <ref>` pins any other base. In a jj repo (including colocated), it snapshots the working-copy change (`@`) against its parent. When even that diff is empty, `start` exits saying `no changes to review`.
+
+**`start --pr` printed a `setup:` line, or `reply` fails with an install URL.** The user's cc-review GitHub App is missing or isn't installed on the PR's repo, and Claude's PR replies post only as that App. Pass the line to the user: `cc-review github setup` creates the App, and the install URL adds it to the repo. An org-owned repo needs an org owner to approve the install. `cc-review github status` shows where things stand.
+
+**`start --pr` asks for `--new`.** This window already has a different review open. Rerun with `--new`, which detaches that review and starts the PR review.
