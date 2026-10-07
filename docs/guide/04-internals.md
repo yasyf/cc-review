@@ -17,6 +17,8 @@ Version skew resolves newest-wins on first contact. When a CLI finds a daemon bu
 
 The HTTP plane binds a 127.0.0.1 port and publishes it to `~/.cc-review/v1/http.json` so the CLI and stream consumers can find it. The file is left in place on shutdown, and a booting daemon tries that previous port first before falling back to an ephemeral one, so printed review URLs survive a daemon swap. `CC_REVIEW_HTTP_PORT` overrides that port selection, and `CC_REVIEW_URL` replaces the origin of printed review URLs; the daemon reads both variables, so on Linux set them on the `cc-review supervise` process. With `cc-review daemon --dev` the port is pinned to 8787, overriding `CC_REVIEW_HTTP_PORT`. The Vite dev proxy expects the API there during frontend work.
 
+When synckit's mesh state exists, the daemon also serves the HTTP plane on its own tailnet addresses, one extra listener per address on a shared port that survives restarts. Each listener answers both plaintext and TLS, using a certificate from `tailscale cert` for the machine's MagicDNS name when the tailnet publishes one. A reconcile pass every 30 seconds binds addresses that appeared after boot, so a late `tailscale up` needs no restart. `start` and `github setup` print these addresses as `tailnet:` URLs: https on the certificate's name once it is minted, otherwise http on the bare machine name.
+
 Daemons spawned by the CLI append their stdout and stderr to `~/.cc-review/v1/daemon.log` — boot lines, eviction sequences, and panics all land there across daemon generations. A manual `cc-review daemon` run keeps its output on the terminal.
 
 ## Two planes
@@ -25,7 +27,7 @@ The daemon exposes two surfaces.
 
 The **control plane** is a unix socket at `~/.cc-review/v1/daemon.sock` (mode 0600) speaking exact protocol v1. This is what CLI commands call. The ops dispatched in `internal/daemon` are `health`, `shutdown`, `start`, `resolve`, `reply`, `feedback`, `status`, `session-record`, `guard-edit`, `file-states`, `update-ai-request`, `submit-organization`, and `review-files`. A mismatched protocol is rejected before dispatch.
 
-The **HTTP plane** (`internal/httpapi`) binds 127.0.0.1 only, and that bind is the entire access-control story. It serves the embedded SPA at `/`, a JSON REST surface, and one SSE stream. These routes are registered in `internal/httpapi/server.go`.
+The **HTTP plane** (`internal/httpapi`) binds 127.0.0.1. Loopback requests pass without credentials; a tailnet request passes only when synckit trusts the peer's address, and a browser request's Origin must name loopback or the daemon's own MagicDNS name or tailnet IPs, never another machine. It serves the embedded SPA at `/`, a JSON REST surface, and one SSE stream. These routes are registered in `internal/httpapi/server.go`.
 
 ```
 GET  /api/session/{reviewId}
@@ -44,7 +46,7 @@ GET  /github/setup
 GET  /github/setup/callback
 ```
 
-`/github/setup` serves the GitHub App manifest form behind `cc-review github setup`. Its callback sits outside the daemon's auth guard so GitHub's redirect can reach it; a single-use state nonce with a 10-minute lifetime protects it instead.
+`/github/setup` serves the GitHub App manifest form behind `cc-review github setup`. The manifest's redirect names the scheme and host the page was opened on, so a setup started over the tailnet returns there. Its callback sits outside the daemon's auth guard so GitHub's redirect can reach it; a single-use state nonce with a 10-minute lifetime protects it instead.
 
 ## The event log
 

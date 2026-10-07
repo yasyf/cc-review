@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tailnet serving. When synckit's mesh state exists, the daemon also serves the
+  review UI and API on its own tailnet addresses, so a review opens from any
+  machine synckit trusts. `start` and `github setup` print a `tailnet:` URL
+  next to the localhost one: https on the machine's MagicDNS name once
+  `tailscale cert` mints a certificate, plain http on the bare machine name
+  before that. Addresses that appear after the daemon boots are picked up
+  within 30 seconds. `github setup` opened on a tailnet URL sends GitHub's
+  callback back to that same address.
+
 ## [0.38.0] - 2026-10-07
 
 ### Added
