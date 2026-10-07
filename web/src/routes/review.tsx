@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { getRouteApi } from '@tanstack/react-router';
 import { AppShell, ToastStack } from '@cc-interact/react';
@@ -10,13 +10,17 @@ import { UnreadProvider } from '../lib/unread';
 import { useKeyboardShortcuts } from '../lib/useKeyboardShortcuts';
 import { ViewPrefsProvider } from '../lib/view-prefs';
 import { SidebarFrame } from '../lib/sidebar-layout';
+import { scopeSession } from '../lib/stack';
+import type { SessionResponse } from '../lib/types';
 import { AiBar } from '../components/AiBar';
 import { DiffToolbar } from '../components/DiffToolbar';
 import { DiffView } from '../components/DiffView';
+import { ReviewHeader } from '../components/ReviewHeader';
 import { ReviewSkeleton } from '../components/ReviewSkeleton';
 import type { DiffViewHandle } from '../lib/diff/useDiffHandle';
 import { ShortcutHelp } from '../components/ShortcutHelp';
 import { Sidebar } from '../components/Sidebar';
+import { StackRail } from '../components/StackRail';
 import { SubmitBar } from '../components/SubmitBar';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -36,12 +40,9 @@ function ShortcutLayer({
   return null;
 }
 
-function ReviewContent() {
+function ReviewContent({ section }: { section: string | undefined }) {
   const { slug, version } = useReview();
   const { data, isPending, error, refetch, isRefetching } = useSession(slug, version);
-  const { notifications, dismiss } = useEventStream();
-  const diffRef = useRef<DiffViewHandle>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
 
   if (isPending) return <ReviewSkeleton />;
   if (error) {
@@ -60,6 +61,24 @@ function ReviewContent() {
       </EmptyState>
     );
   }
+  return <ReviewBody data={data} section={section} />;
+}
+
+function ReviewBody({ data, section }: { data: SessionResponse; section: string | undefined }) {
+  const { slug, version } = useReview();
+  const { notifications, dismiss } = useEventStream();
+  const navigate = routeApi.useNavigate();
+  const diffRef = useRef<DiffViewHandle>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const scope = data.sections.some((s) => s.sectionKey === section) ? section : undefined;
+  const scoped = useMemo(() => scopeSession(data, scope), [data, scope]);
+
+  function setScope(next: string | undefined) {
+    void navigate({
+      search: ({ section: _previous, ...rest }) => (next === undefined ? rest : { ...rest, section: next }),
+      replace: true,
+    });
+  }
 
   return (
     <UnreadProvider reviewId={slug} comments={data.comments} prune={version === undefined}>
@@ -71,15 +90,23 @@ function ReviewContent() {
               header={<SubmitBar session={data} />}
               sidebar={
                 <Sidebar
-                  session={data}
+                  session={scoped}
                   onSelectFile={(ref) => diffRef.current?.scrollToFile(ref)}
                   onSelectComment={(comment) => diffRef.current?.scrollToComment(comment)}
                 />
               }
               main={
                 <>
-                  <DiffToolbar session={data} />
-                  <DiffView key={data.versionId} session={data} ref={diffRef} />
+                  <ReviewHeader session={data} scope={scope} />
+                  <div className="review-main">
+                    {data.sections.length > 1 ? (
+                      <StackRail session={data} scope={scope} onScope={setScope} />
+                    ) : null}
+                    <div className="review-main-diff">
+                      <DiffToolbar session={scoped} />
+                      <DiffView key={data.versionId} session={scoped} ref={diffRef} />
+                    </div>
+                  </div>
                 </>
               }
               footer={<AiBar session={data} diffRef={diffRef} />}
@@ -100,7 +127,7 @@ export function ReviewView() {
   return (
     <ReviewProvider value={search.version === undefined ? { slug } : { slug, version: search.version }}>
       <EventStreamProvider subject={slug} scope={search.version}>
-        <ReviewContent />
+        <ReviewContent section={search.section} />
       </EventStreamProvider>
     </ReviewProvider>
   );

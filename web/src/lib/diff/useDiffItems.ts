@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import type { Comment, Section, SessionResponse } from '../types';
 import { fileOrder } from '../order';
+import { isLineThread } from '../threads';
 import { useViewPrefs } from '../view-prefs';
 import { buildItems, commentItemId, fileItemId, parseFiles } from './items';
 import type { ReviewItem, SectionFiles } from './items';
@@ -25,7 +26,6 @@ export function useDiffItems(session: SessionResponse, composer: ComposerState):
     [session.sections],
   );
   const order = useMemo(() => fileOrder(session, viewMode), [session, viewMode]);
-  const showBanners = session.sections.length > 1;
   const autoCollapse = useMemo(
     () =>
       new Set(
@@ -35,30 +35,30 @@ export function useDiffItems(session: SessionResponse, composer: ComposerState):
       ),
     [session.sections],
   );
+  const lineComments = useMemo(() => session.comments.filter(isLineThread), [session.comments]);
   const items = useMemo(
     () =>
       buildItems(
         sectionFiles,
-        session.comments,
+        lineComments,
         draft,
         order,
         hideReviewed,
         expandOverrides,
         autoCollapse,
-        showBanners,
       ),
-    [sectionFiles, session.comments, draft, order, hideReviewed, expandOverrides, autoCollapse, showBanners],
+    [sectionFiles, lineComments, draft, order, hideReviewed, expandOverrides, autoCollapse],
   );
 
   const orderedComments = useMemo(
     () =>
-      [...session.comments].sort((a, b) => {
+      [...lineComments].sort((a, b) => {
         const ra = order.get(commentItemId(a)) ?? Infinity;
         const rb = order.get(commentItemId(b)) ?? Infinity;
         if (ra !== rb) return ra - rb;
         return a.range.end - b.range.end;
       }),
-    [session.comments, order],
+    [lineComments, order],
   );
 
   useEffect(() => {

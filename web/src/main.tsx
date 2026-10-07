@@ -13,6 +13,7 @@ import './styles/layout.css';
 import './styles/controls.css';
 import './styles/diff.css';
 import './styles/threads.css';
+import './styles/pr.css';
 
 applyThemeMode(readThemeMode());
 

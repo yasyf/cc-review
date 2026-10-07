@@ -5,7 +5,7 @@ import { CodeView } from '@pierre/diffs/react';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { ANNOTATION_UNSAFE_CSS } from '../lib/annotations';
 import { TURN_UNSAFE_CSS } from '../lib/attribution';
-import { isBanner, parseItemId } from '../lib/diff/items';
+import { parseItemId } from '../lib/diff/items';
 import type { AnnotationMeta, ReviewItem } from '../lib/diff/items';
 import { useComposerDraft } from '../lib/diff/useComposerDraft';
 import { useAttributionIndex, useDecorations } from '../lib/diff/useDecorations';
@@ -24,7 +24,6 @@ import { CommentThread } from './CommentThread';
 import { FileHeaderControls } from './FileHeaderControls';
 import { FocusPopover } from './FocusPopover';
 import { InlineComposer } from './InlineComposer';
-import { SectionHeader } from './SectionHeader';
 import { TurnPopover } from './TurnPopover';
 
 const UNSAFE_CSS = TURN_UNSAFE_CSS + IMPORTANCE_UNSAFE_CSS + ANNOTATION_UNSAFE_CSS;
@@ -67,7 +66,6 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
       unsafeCSS: UNSAFE_CSS,
       onPostRender: (node: HTMLElement, _instance: unknown, phase: PostRenderPhase, context: { item: { id: string } }) => {
         if (phase === 'unmount') return;
-        node.classList.toggle('section-banner', isBanner(context.item.id));
         decorate(node, context.item.id);
         node.classList.toggle('file-current', context.item.id === currentItemRef.current);
       },
@@ -90,11 +88,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
 
   const renderHeaderMetadata = useCallback((item: ReviewItem) => {
     const ref = parseItemId(item.id);
-    return ref.kind === 'banner' ? (
-      <SectionHeader sectionKey={ref.sectionKey} />
-    ) : (
-      <FileHeaderControls sectionKey={ref.sectionKey} path={ref.path} />
-    );
+    return <FileHeaderControls sectionKey={ref.sectionKey} path={ref.path} />;
   }, []);
 
   return (

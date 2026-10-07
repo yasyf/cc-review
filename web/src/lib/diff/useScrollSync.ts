@@ -4,6 +4,7 @@ import { firstOccurrence } from '../attribution';
 import { useReview } from '../review-context';
 import type { AttributionRange, Comment, Section } from '../types';
 import { useViewPrefs } from '../view-prefs';
+import { isLineThread } from '../threads';
 import { commentItemId, fileItemId, parseItemId } from './items';
 import type { CodeViewInstance, CodeViewRef, FileRef, ReviewItem } from './items';
 
@@ -96,7 +97,6 @@ export function useScrollSync({
   const reveal = useCallback(
     (itemId: string) => {
       const parsed = parseItemId(itemId);
-      if (parsed.kind !== 'file') return;
       const state = sectionByKey.get(parsed.sectionKey)?.fileStates[parsed.path];
       if (state?.hidden) {
         mutateStates([{ sectionKey: parsed.sectionKey, path: parsed.path, hidden: false }], {
@@ -136,7 +136,7 @@ export function useScrollSync({
       if (++pendingScrollMisses.current >= MAX_PENDING_SCROLL_MISSES) setPendingScroll(null);
       return;
     }
-    if (pendingScroll.kind === 'file') {
+    if (pendingScroll.kind === 'file' || !isLineThread(pendingScroll.comment)) {
       codeView.current?.scrollTo({ type: 'item', id, align: 'start', behavior: 'smooth' });
     } else {
       const { range } = pendingScroll.comment;

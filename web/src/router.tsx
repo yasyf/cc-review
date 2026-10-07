@@ -1,4 +1,5 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import { LandingView } from './routes/landing';
 import { ReviewView } from './routes/review';
 import { parseSidebarTab } from './lib/sidebar-layout';
 import type { SidebarTab } from './lib/sidebar-layout';
@@ -8,14 +9,13 @@ const rootRoute = createRootRoute({ component: () => <Outlet /> });
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  component: () => (
-    <div className="state">Open a review link: <code>/s/&lt;hash&gt;</code></div>
-  ),
+  component: LandingView,
 });
 
 export interface ReviewSearch {
   version?: number;
   tab?: SidebarTab;
+  section?: string;
 }
 
 const reviewRoute = createRoute({
@@ -29,6 +29,7 @@ const reviewRoute = createRoute({
     return {
       ...(version === undefined || Number.isNaN(version) ? {} : { version }),
       ...(tab ? { tab } : {}),
+      ...(typeof search.section === 'string' ? { section: search.section } : {}),
     };
   },
   component: ReviewView,

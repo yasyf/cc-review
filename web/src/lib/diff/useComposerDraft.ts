@@ -25,7 +25,6 @@ export function useComposerDraft(
 
   const openDraft = useCallback((itemId: string, range: SelectedLineRange) => {
     const parsed = parseItemId(itemId);
-    if (parsed.kind !== 'file') return;
     const section = sectionByKeyRef.current.get(parsed.sectionKey);
     if (!section) return;
     setDraft({

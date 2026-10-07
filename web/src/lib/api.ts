@@ -8,11 +8,14 @@ import {
 import type {
   AiRequest,
   AskAnswer,
+  CommentSubject,
   LineRange,
   ProvenanceResponse,
+  ReviewSummary,
   SessionResponse,
   Side,
 } from './types';
+import type { Verdict } from './verdict';
 
 export type VersionKey = number | 'latest';
 
@@ -31,6 +34,13 @@ export function useSession(slug: string, version?: number) {
   return useQuery({
     queryKey: sessionKey(slug, version ?? 'latest'),
     queryFn: () => fetchSession(slug, version),
+  });
+}
+
+export function useReviews() {
+  return useQuery({
+    queryKey: ['reviews'] as const,
+    queryFn: () => request<ReviewSummary[]>('/api/reviews'),
   });
 }
 
@@ -54,6 +64,7 @@ export interface CreateCommentInput {
   range: LineRange;
   lineContent: string;
   body: string;
+  subject?: CommentSubject;
 }
 
 export function useCreateComment(slug: string) {
@@ -78,6 +89,16 @@ export function useResolveComment() {
       request<{ ok: true }>(`/api/comments/${input.id}`, {
         method: 'PUT',
         body: JSON.stringify({ status: input.status, body: input.body }),
+      }),
+  });
+}
+
+export function useRetryComment() {
+  return useMutation({
+    mutationFn: ({ commentId, replyId }: { commentId: string; replyId?: string }) =>
+      request<{ ok: true }>(`/api/comments/${commentId}/retry`, {
+        method: 'POST',
+        body: JSON.stringify(replyId === undefined ? {} : { replyId }),
       }),
   });
 }
@@ -189,13 +210,19 @@ export function useAnswerAiRequest(slug: string) {
   });
 }
 
+export interface SubmitInput {
+  versionNumber?: number;
+  verdict?: Verdict;
+  summary: string;
+}
+
 export function useSubmit(slug: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (input: SubmitInput) =>
       request<{ ok: boolean; feedbackPath: string }>('/api/submit', {
         method: 'POST',
-        body: JSON.stringify({ reviewId: slug }),
+        body: JSON.stringify({ reviewId: slug, ...input }),
       }),
     // The new status streams back as status.changed, but a cache keyed to an
     // older version rejects that frame; invalidate as a net.
