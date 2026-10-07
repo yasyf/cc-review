@@ -335,7 +335,7 @@ func (sc syncCtx) issueComment(ctx context.Context, sec store.Section, ic github
 
 func (sc syncCtx) pullRequests(ctx context.Context, snaps map[int]github.PRSnapshot) error {
 	for n, snap := range snaps {
-		pr := sc.toStorePR(snap.PR)
+		pr := PullRequestRow(sc.p.reviewID, snap.PR, sc.p.viewer)
 		changed, err := sc.st.UpsertPullRequest(ctx, pr)
 		if err != nil {
 			return fmt.Errorf("upsert pull request #%d: %w", n, err)
@@ -347,7 +347,9 @@ func (sc syncCtx) pullRequests(ctx context.Context, snaps map[int]github.PRSnaps
 	return nil
 }
 
-func (sc syncCtx) toStorePR(pr github.PullRequest) store.PullRequest {
+// PullRequestRow is the stored form of a PR fetched from GitHub; viewer is the
+// GitHub login the daemon reads as, which decides ViewerIsAuthor.
+func PullRequestRow(reviewID string, pr github.PullRequest, viewer string) store.PullRequest {
 	checks := make([]store.PRCheck, len(pr.Checks))
 	for i, c := range pr.Checks {
 		checks[i] = store.PRCheck{Name: c.Name, State: c.State, URL: c.URL}
@@ -357,10 +359,10 @@ func (sc syncCtx) toStorePR(pr github.PullRequest) store.PullRequest {
 		reviewers[i] = store.PRReviewer{Login: r.Login, AvatarURL: r.AvatarURL, State: r.State}
 	}
 	return store.PullRequest{
-		ReviewID: sc.p.reviewID, Number: pr.Number, NodeID: pr.NodeID, Title: pr.Title, Body: pr.Body, State: pr.State,
+		ReviewID: reviewID, Number: pr.Number, NodeID: pr.NodeID, Title: pr.Title, Body: pr.Body, State: pr.State,
 		URL: pr.URL, AuthorLogin: pr.AuthorLogin, HeadRefName: pr.HeadRefName, HeadSHA: pr.HeadRefOid,
 		BaseRefName: pr.BaseRefName, Draft: pr.Draft, Mergeable: pr.Mergeable, Checks: checks, Reviewers: reviewers,
-		ViewerIsAuthor: pr.AuthorLogin == sc.p.viewer, UpdatedAt: pr.UpdatedAt,
+		ViewerIsAuthor: pr.AuthorLogin == viewer, UpdatedAt: pr.UpdatedAt,
 	}
 }
 
