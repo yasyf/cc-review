@@ -6,25 +6,30 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@cc-interact/react": "^0.1.1",
-    "@pierre/diffs": "1.3.0-beta.3",
+    "@cc-interact/react": "^0.5.0",
+    "@pierre/diffs": "1.5.2",
     "@pierre/trees": "1.0.0-beta.4",
-    "@shikijs/transformers": "^3",
+    "@shikijs/transformers": "^4",
     "@tanstack/react-query": "^5",
     "@tanstack/react-router": "^1",
+    "dompurify": "^3",
+    "marked": "^18",
     "react": "^19",
     "react-dom": "^19",
-    "shiki": "^3"
+    "shiki": "^4"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5",
+    "jsdom": "^29",
     "typescript": "^5",
-    "vite": "^7"
+    "vite": "^7",
+    "vitest": "^3"
   }
 }

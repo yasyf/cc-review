@@ -1,4 +1,6 @@
+import { ConnectionFrame } from '@cc-interact/react';
 import { useClose, useSubmit } from '../lib/api';
+import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
 import { STATUS_NOTICES } from '../lib/status';
 import type { SessionResponse } from '../lib/types';
@@ -7,6 +9,7 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   const { slug } = useReview();
   const submit = useSubmit(slug);
   const close = useClose(slug);
+  const { connected } = useEventStream();
 
   const status = session.review.status;
   // Claude-authored comments are informational annotations, not reviewer TODOs.
@@ -40,6 +43,7 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
           />
         </span>
         <span className={`status status-${status}`}>{status}</span>
+        <ConnectionFrame connected={connected} />
       </div>
       <div className="actions">
         {status === 'open' ? (

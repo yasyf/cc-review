@@ -47,7 +47,7 @@ export interface DiffViewHandle {
   focusPrevComment(): void;
 }
 
-type CodeViewInstance = NonNullable<ReturnType<CodeViewHandle<AnnotationMeta>['getInstance']>>;
+type CodeViewInstance = NonNullable<ReturnType<CodeViewHandle<AnnotationMeta, undefined>['getInstance']>>;
 
 // The current file switches when the next file's top crosses the viewport top
 // (under the sticky header); +1px keeps the boundary inclusive.
@@ -93,7 +93,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     activeTurnId,
   } = useViewPrefs();
   const { mutate: mutateStates } = useSetFileStates(slug, version);
-  const codeView = useRef<CodeViewHandle<AnnotationMeta>>(null);
+  const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
   const seqRef = useRef(0);
   const [draft, setDraft] = useState<ComposerDraft | null>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScroll | null>(null);
@@ -282,7 +282,7 @@ export function DiffView({ session, ref }: { session: SessionResponse; ref?: Ref
     prevActiveTurnId.current = activeTurnId;
   }, [activeTurnId, attributionIndex]);
 
-  const options = useMemo<CodeViewOptions<AnnotationMeta>>(
+  const options = useMemo<CodeViewOptions<AnnotationMeta, undefined>>(
     () => ({
       theme: themes,
       diffStyle: 'unified',

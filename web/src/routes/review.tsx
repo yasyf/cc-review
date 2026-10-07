@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { getRouteApi } from '@tanstack/react-router';
-import { AppShell, NotificationsBar } from '@cc-interact/react';
+import { AppShell, ToastStack } from '@cc-interact/react';
 import { useSession } from '../lib/api';
 import { EventStreamProvider, useEventStream } from '../lib/events';
 import { LocalRequestsProvider } from '../lib/local-requests';
@@ -37,7 +37,7 @@ function ShortcutLayer({
 function ReviewContent() {
   const { slug, version } = useReview();
   const { data, isPending, error } = useSession(slug, version);
-  const { connected, notifications, dismiss } = useEventStream();
+  const { notifications, dismiss } = useEventStream();
   const diffRef = useRef<DiffViewHandle>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -51,13 +51,6 @@ function ReviewContent() {
           <ShortcutLayer diffRef={diffRef} helpOpen={helpOpen} setHelpOpen={setHelpOpen} />
           <AppShell
             header={<SubmitBar session={data} />}
-            notifications={
-              <NotificationsBar
-                connected={connected}
-                notifications={notifications}
-                onDismiss={dismiss}
-              />
-            }
             sidebar={
               <Sidebar
                 session={data}
@@ -73,6 +66,7 @@ function ReviewContent() {
             }
             footer={<AiBar session={data} diffRef={diffRef} />}
           />
+          <ToastStack notifications={notifications} onDismiss={dismiss} />
           <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
         </LocalRequestsProvider>
       </ViewPrefsProvider>
