@@ -22,6 +22,7 @@ import (
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/httpapi"
 	"github.com/yasyf/cc-review/internal/paths"
+	"github.com/yasyf/cc-review/internal/prsync"
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
 	"github.com/yasyf/cc-review/internal/store"
 	"github.com/yasyf/cc-review/internal/version"
@@ -95,6 +96,7 @@ type review struct {
 	gh             *github.Client
 	cloneURL       func(github.Repo) string
 	prReviewOpened func(ctx context.Context, reviewID string)
+	prsync         *prsync.Syncer
 	db             func() *sql.DB
 	append         ccd.AppendFunc
 	reviewLocks    sync.Map
@@ -128,11 +130,10 @@ func Serve(ctx context.Context, fixedPort int) error {
 
 func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, error) {
 	rv := &review{
-		decisions:      ledger,
-		log:            log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
-		gh:             github.New(github.UserTokenSource()),
-		cloneURL:       githubCloneURL,
-		prReviewOpened: func(context.Context, string) {},
+		decisions: ledger,
+		log:       log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
+		gh:        github.New(github.UserTokenSource()),
+		cloneURL:  githubCloneURL,
 	}
 	spec, err := runtimeconfig.Spec()
 	if err != nil {
@@ -162,6 +163,8 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		return nil, nil, err
 	}
 	rv.injectEvent = s.InjectEvent
+	rv.prsync = rv.newPRSync(s)
+	rv.prReviewOpened = rv.startPRSync
 	rv.db, rv.append = s.DB, s.Append
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
@@ -306,6 +309,7 @@ func (rv *review) bootReconcile(ctx context.Context, s *ccd.Server) error {
 	if _, err := rv.sweepStaleOpen(ctx, st, s.Append, time.Now().Add(-reviewIdleTTL)); err != nil {
 		return fmt.Errorf("expire stale reviews: %w", err)
 	}
+	s.Background(func(ctx context.Context) { rv.resumePRSync(ctx, st) })
 	return nil
 }
 
