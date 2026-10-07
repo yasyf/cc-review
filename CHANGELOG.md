@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-07
+
 ### Added
 
 - Tailnet serving. When synckit's mesh state exists, the daemon also serves the
