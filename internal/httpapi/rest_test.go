@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	ccevent "github.com/yasyf/cc-interact/event"
 	ccstore "github.com/yasyf/cc-interact/store"
@@ -660,6 +661,82 @@ func TestSessionEmptyTurnsAndAttributionsSerializeNonNull(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"turnActivity":{}`)) {
 		t.Fatalf(`session body lacks "turnActivity":{}: %s`, body)
+	}
+	if !bytes.Contains(body, []byte(`"pullRequests":[]`)) {
+		t.Fatalf(`session body lacks "pullRequests":[]: %s`, body)
+	}
+}
+
+func TestSessionCarriesPullRequestsKindAndRemoteThreads(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	ctx := context.Background()
+	review, version, section := createReviewVersion(t, st, `[]`)
+	if err := st.SetReviewKind(ctx, review.ID, store.ReviewKindPR, "yasyf/cc-review", 12); err != nil {
+		t.Fatal(err)
+	}
+	updated := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	if _, err := st.UpsertPullRequest(ctx, store.PullRequest{
+		ReviewID: review.ID, Number: 12, NodeID: "PR_12", Title: "feat: a", State: "OPEN", URL: "https://gh/pull/12",
+		AuthorLogin: "me", HeadRefName: "feat", HeadSHA: "abc", BaseRefName: "main", Mergeable: "MERGEABLE",
+		Checks:    []store.PRCheck{{Name: "ci", State: "SUCCESS", URL: "https://ci/1"}},
+		Reviewers: []store.PRReviewer{{Login: "octo", AvatarURL: "https://avatars/octo", State: "APPROVED"}},
+		UpdatedAt: updated,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	comment, _, err := st.UpsertRemoteComment(ctx, store.Comment{
+		VersionID: version.ID, SectionID: section.ID, Branch: "main", Pending: true, FilePath: "a.go", Side: "additions",
+		StartLine: 3, EndLine: 3, Body: "why?", Author: store.AuthorRemote, RemoteID: "PRRC_1", RemoteThreadID: "PRRT_1",
+		RemoteURL: "https://gh/c/1", AuthorLogin: "octo", AuthorAvatarURL: "https://avatars/octo", Outdated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.UpsertRemoteReply(ctx, store.Reply{
+		CommentID: comment.ID, Origin: store.AuthorClaude, Kind: "note", Body: "because", RemoteID: "PRRC_2",
+		RemoteURL: "https://gh/c/2", AuthorLogin: "cc-review-me[bot]",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var session struct {
+		Review       wire.Review        `json:"review"`
+		PullRequests []wire.PullRequest `json:"pullRequests"`
+		Comments     []wire.Comment     `json:"comments"`
+		Sections     []struct {
+			PRNumber int `json:"prNumber"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(getSessionBody(t, srv, review.ID), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.Review.Kind != store.ReviewKindPR || session.Review.Repo != "yasyf/cc-review" || session.Review.PRNumber != 12 {
+		t.Fatalf("review = %+v, want kind pr yasyf/cc-review#12", session.Review)
+	}
+	wantPR := wire.PullRequest{
+		Number: 12, Title: "feat: a", State: "OPEN", URL: "https://gh/pull/12", AuthorLogin: "me", HeadRefName: "feat",
+		HeadSHA: "abc", BaseRefName: "main", Mergeable: "MERGEABLE",
+		Checks:    []store.PRCheck{{Name: "ci", State: "SUCCESS", URL: "https://ci/1"}},
+		Reviewers: []store.PRReviewer{{Login: "octo", AvatarURL: "https://avatars/octo", State: "APPROVED"}},
+		UpdatedAt: "2026-10-06T12:00:00Z",
+	}
+	if len(session.PullRequests) != 1 || !reflect.DeepEqual(session.PullRequests[0], wantPR) {
+		t.Fatalf("pullRequests = %+v, want [%+v]", session.PullRequests, wantPR)
+	}
+	if len(session.Sections) != 1 || session.Sections[0].PRNumber != 0 {
+		t.Fatalf("sections = %+v, want one section without a PR", session.Sections)
+	}
+	if len(session.Comments) != 1 {
+		t.Fatalf("comments = %+v, want 1", session.Comments)
+	}
+	got := session.Comments[0]
+	if got.Origin != "user" || got.Author != store.AuthorRemote || got.AuthorLogin != "octo" || !got.Outdated ||
+		got.Subject != "line" || got.SyncState != store.SyncSynced || got.RemoteURL != "https://gh/c/1" {
+		t.Fatalf("comment = %+v", got)
+	}
+	if len(got.Replies) != 1 || got.Replies[0].Origin != store.AuthorClaude || got.Replies[0].Author != store.AuthorClaude ||
+		got.Replies[0].AuthorLogin != "cc-review-me[bot]" || got.Replies[0].SyncState != store.SyncSynced {
+		t.Fatalf("replies = %+v", got.Replies)
 	}
 }
 
