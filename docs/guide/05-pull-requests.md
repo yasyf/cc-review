@@ -106,3 +106,6 @@ After Submit, Claude works through the threads, coworkers' included, grouped by 
 PR mode doesn't touch your working copy. It keeps one bare, blobless clone per repo at `~/.cc-review/v1/repos/<owner>/<name>.git`, cloned at depth 1 with no tags and a single branch. For each PR it fetches `refs/pull/<N>/head` and the PR's merge-base commit, again at depth 1. Git leaves file contents on GitHub until a diff needs them, so loading a stack fetches only the blobs of files the PRs change.
 
 The cost is that the first view of a file needs the network. The store is derived state like everything else under `~/.cc-review/v1`: delete a repo's directory and the next PR review clones it again.
+
+<!-- e2e scratch A: line one -->
+<!-- e2e scratch A: line two -->
