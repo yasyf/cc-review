@@ -22,7 +22,6 @@ import (
 	"github.com/yasyf/cc-review/internal/generated"
 	"github.com/yasyf/cc-review/internal/ghapp"
 	"github.com/yasyf/cc-review/internal/github"
-	"github.com/yasyf/cc-review/internal/outbound"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/prstack"
 	"github.com/yasyf/cc-review/internal/prsync"
@@ -708,7 +707,7 @@ func (rv *review) checkClaudeWrite(ctx context.Context, st *store.Store, reviewI
 	if meta.Kind != store.ReviewKindPR {
 		return false, nil
 	}
-	repo, err := outbound.ParseRepo(meta.Repo)
+	repo, err := github.ParseRepo(meta.Repo)
 	if err != nil {
 		return false, err
 	}

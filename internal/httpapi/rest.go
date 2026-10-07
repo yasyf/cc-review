@@ -17,6 +17,7 @@ import (
 
 	"github.com/yasyf/cc-review/internal/corrections"
 	"github.com/yasyf/cc-review/internal/feedback"
+	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/outbound"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/store"
@@ -959,7 +960,7 @@ func (s *Server) submitVerdict(ctx context.Context, reviewID string, req submitR
 	if verdict == outbound.VerdictComment && req.Summary == "" {
 		return 0, nil
 	}
-	repo, err := outbound.ParseRepo(meta.Repo)
+	repo, err := github.ParseRepo(meta.Repo)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}

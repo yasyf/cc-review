@@ -435,7 +435,7 @@ func (s *Syncer) target(ctx context.Context, st *store.Store, c store.Comment, a
 	if err != nil {
 		return github.PRRef{}, store.Section{}, nil, err
 	}
-	repo, err := ParseRepo(meta.Repo)
+	repo, err := github.ParseRepo(meta.Repo)
 	if err != nil {
 		return github.PRRef{}, store.Section{}, nil, err
 	}
@@ -499,15 +499,6 @@ func (s *Syncer) emitSynced(ctx context.Context, st *store.Store, commentID int6
 		Payload: wire.Event(store.EventCommentSynced, version, fields),
 	})
 	return err
-}
-
-// ParseRepo splits a review_meta repo ("owner/name").
-func ParseRepo(s string) (github.Repo, error) {
-	owner, name, ok := strings.Cut(s, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return github.Repo{}, fmt.Errorf("repo %q: want owner/name", s)
-	}
-	return github.Repo{Owner: owner, Name: name}, nil
 }
 
 func newReviewComment(c store.Comment, headSHA string) github.NewReviewComment {
