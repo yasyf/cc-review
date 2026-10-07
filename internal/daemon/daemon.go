@@ -21,6 +21,7 @@ import (
 	"github.com/yasyf/cc-review/internal/digest"
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/httpapi"
+	"github.com/yasyf/cc-review/internal/outbound"
 	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/prsync"
 	"github.com/yasyf/cc-review/internal/runtimeconfig"
@@ -71,6 +72,8 @@ const (
 
 	urlEnv = "CC_REVIEW_URL"
 
+	reviewKindPR = "pr"
+
 	gateBlockReason = "An open `cc-review` blocks edits until the reviewer presses Submit. Answer their comments with `cc-review reply` and resume editing after submit."
 	gateErrorReason = "Edits are blocked because the review status could not be read. Run `cc-review status`, then `cc-review stop` if the daemon is wedged."
 )
@@ -97,6 +100,7 @@ type review struct {
 	cloneURL       func(github.Repo) string
 	prReviewOpened func(ctx context.Context, reviewID string)
 	prsync         *prsync.Syncer
+	outbound       *outbound.Syncer
 	db             func() *sql.DB
 	append         ccd.AppendFunc
 	reviewLocks    sync.Map
@@ -166,6 +170,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	rv.prsync = rv.newPRSync(s)
 	rv.prReviewOpened = rv.startPRSync
 	rv.db, rv.append = s.DB, s.Append
+	rv.outbound = outbound.New(s.DB, s.Append, github.New(github.UserTokenSource()), outbound.GitHubApp())
 	s.Register(OpStart, rv.handleStart)
 	s.Register(OpReply, rv.handleReply)
 	s.Register(OpFeedback, rv.handleFeedback)
@@ -186,6 +191,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		Log:               rv.log,
 		Append:            s.Append,
 		ConsumerConnected: s.ConsumerConnected,
+		Outbound:          rv.outbound,
 		Dist:              web.Dist(),
 		GitHub:            userGitHub(),
 	})

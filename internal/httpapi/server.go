@@ -21,6 +21,7 @@ import (
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/ghapp"
 	"github.com/yasyf/cc-review/internal/github"
+	"github.com/yasyf/cc-review/internal/outbound"
 	"github.com/yasyf/cc-review/internal/store"
 )
 
@@ -38,6 +39,7 @@ type Deps struct {
 	Log               *log.Logger
 	Append            appendFunc
 	ConsumerConnected func(reviewID string) bool
+	Outbound          *outbound.Syncer
 	Dist              fs.FS
 	GitHub            *github.Client
 }
@@ -49,6 +51,7 @@ type Server struct {
 	log       *log.Logger
 	append    appendFunc
 	connected func(reviewID string) bool
+	outbound  *outbound.Syncer
 
 	provMu     sync.Mutex
 	provCache  map[int64][]provenanceItem // closed turns only; never persisted
@@ -68,6 +71,7 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 		log:        d.Log,
 		append:     d.Append,
 		connected:  d.ConsumerConnected,
+		outbound:   d.Outbound,
 		provCache:  make(map[int64][]provenanceItem),
 		provWarned: make(map[string]bool),
 	}
@@ -75,6 +79,7 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /api/session/{reviewId}/versions", s.handleGetVersions)
 	mux.HandleFunc("POST /api/comments", s.handleCreateComment)
 	mux.HandleFunc("PUT /api/comments/{id}", s.handleUpdateComment)
+	mux.HandleFunc("POST /api/comments/{id}/retry", s.handleRetryComment)
 	mux.HandleFunc("POST /api/replies/{commentId}", s.handleCreateReply)
 	mux.HandleFunc("POST /api/file-states", s.handleSetFileStates)
 	mux.HandleFunc("POST /api/ai-requests", s.handleCreateAIRequest)

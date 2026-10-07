@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -385,6 +386,12 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 			return errReply(fmt.Sprintf("annotation %d: a comment annotation needs a body", i))
 		}
 	}
+	var pr bool
+	if slices.ContainsFunc(b.Annotations, func(a AnnotateInput) bool { return a.Kind == "comment" }) {
+		if pr, err = rv.checkClaudeWrite(hc.Ctx, st, sub.ID); err != nil {
+			return errReply(err.Error())
+		}
+	}
 	createdHighlight := false
 	for _, a := range b.Annotations {
 		sec := byKey[a.SectionKey]
@@ -402,6 +409,7 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 			VersionID: v.ID, SectionID: sec.ID, Branch: sec.Key(), Pending: sec.Pending,
 			FilePath: a.FilePath, Side: a.Side,
 			StartLine: a.StartLine, EndLine: a.EndLine, Body: a.Body, Author: store.OriginClaude, Status: "open",
+			Subject: "line", SyncState: syncState(pr),
 		})
 		if err != nil {
 			if errors.Is(err, store.ErrStaleSection) {
@@ -415,6 +423,11 @@ func (rv *review) handleAnnotate(hc ccd.HandlerCtx) ccd.Reply {
 		}
 		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginAgent, store.EventCommentCreated, v.VersionNumber,
 			map[string]any{"commentId": strconv.FormatInt(cid, 10), "comment": wire.ToComment(c, nil)})
+		if pr {
+			if err := rv.outbound.PostCommentNow(hc.Ctx, sub.ID, cid); err != nil {
+				return errReply(fmt.Sprintf("post comment %d to GitHub: %v", cid, err))
+			}
+		}
 	}
 	if createdHighlight {
 		if err := emitAnnotations(hc.Ctx, hc.Append, st, sub.ID, v); err != nil {
