@@ -35,7 +35,7 @@ cc-review github status
 
 It prints the App's slug and bot login, and whether the App is installed on the current directory's repo.
 
-Why a separate App instead of your token? Coworkers reading a thread can tell your words from Claude's at a glance, since Claude's replies come from `cc-review-<your login>[bot]`. And cc-review needs to recognize Claude's comments when it reads the PR back, so it never hands Claude its own words as new feedback. There's no fallback to your token: when the App is missing or not installed, Claude's reply fails with the install URL in the error.
+Why a separate App instead of your token? Coworkers reading a thread can tell your words from Claude's at a glance, since Claude's replies come from `cc-review-<your login>[bot]`. And cc-review needs to recognize Claude's comments when it reads the PR back, so it never hands Claude its own words as new feedback. There's no fallback to your token: when the App is missing, Claude's reply fails naming `cc-review github setup`, and when it isn't installed on the repo, the error carries the install URL.
 
 ## Open a PR or a stack
 
