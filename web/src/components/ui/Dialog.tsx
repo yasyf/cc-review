@@ -52,7 +52,7 @@ export function Dialog({
     }
     const first = items[0];
     const last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && document.activeElement === last) {

@@ -27,7 +27,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: 0;
+  min-width: var(--control-h);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -757,6 +757,13 @@
 @media (max-width: 900px) {
   .submit-bar .meta .dim,
   .submit-bar .meta .progress-track {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .submit-bar .branch,
+  .submit-bar .conn,
+  .submit-bar .theme-toggle {
     display: none;
   }
 }

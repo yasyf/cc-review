@@ -89,6 +89,13 @@ describe('Dialog', () => {
     expect(document.activeElement).toBe(last);
   });
 
+  it('wraps Shift+Tab from the freshly focused dialog to the last element', () => {
+    renderDialog(true);
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    keydown(dialog, 'Tab', true);
+    expect(document.activeElement?.textContent).toBe('Save');
+  });
+
   it('returns focus to the opener when it closes', () => {
     renderDialog(true);
     renderDialog(false);

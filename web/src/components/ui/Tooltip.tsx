@@ -28,6 +28,16 @@ export function Tooltip({
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+    return () => {
+      window.removeEventListener('scroll', hide, true);
+      window.removeEventListener('resize', hide);
+    };
+  }, [open]);
+
   useLayoutEffect(() => {
     const anchor = anchorRef.current?.firstElementChild;
     const tip = tipRef.current;
