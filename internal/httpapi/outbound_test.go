@@ -524,6 +524,29 @@ func TestLocalSubmitRejectsVerdict(t *testing.T) {
 	}
 }
 
+func TestSubmitCarriesSummaryToClaude(t *testing.T) {
+	testhome.Temp(t)
+	st, cc, srv := newTestServer(t)
+	review, _, _ := createReviewVersion(t, st, "[]")
+	resp := postJSON(t, srv.URL+"/api/submit", map[string]any{"reviewId": review.ID, "summary": "ship it after the rename"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	evs, err := cc.EventsSince(context.Background(), review.ID, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var submit struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(evs[len(evs)-1].Payload, &submit); err != nil {
+		t.Fatal(err)
+	}
+	if evs[len(evs)-1].Type != store.EventSubmit || submit.Summary != "ship it after the rename" {
+		t.Fatalf("last event = %s %s, want submit carrying the summary", evs[len(evs)-1].Type, evs[len(evs)-1].Payload)
+	}
+}
+
 func TestLocalCommentStaysLocal(t *testing.T) {
 	st, _, srv := newTestServer(t)
 	_, _, sec := createReviewVersion(t, st, "[]")

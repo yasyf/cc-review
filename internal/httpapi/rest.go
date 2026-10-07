@@ -883,8 +883,11 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.emit(ctx, review.ID, ccevent.OriginSystem, store.EventSubmit, version.VersionNumber,
-		map[string]any{"feedbackPath": fbPath})
+	fields := map[string]any{"feedbackPath": fbPath}
+	if req.Summary != "" {
+		fields["summary"] = req.Summary
+	}
+	s.emit(ctx, review.ID, ccevent.OriginSystem, store.EventSubmit, version.VersionNumber, fields)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "feedbackPath": fbPath})
 }
 
@@ -928,8 +931,8 @@ func (s *Server) submitVerdict(ctx context.Context, reviewID string, req submitR
 		return http.StatusInternalServerError, err
 	}
 	if meta.Kind != store.ReviewKindPR {
-		if req.Verdict != "" || req.Summary != "" {
-			return http.StatusBadRequest, errors.New("verdict and summary apply only to pull request reviews")
+		if req.Verdict != "" {
+			return http.StatusBadRequest, errors.New("a verdict applies only to pull request reviews")
 		}
 		return 0, nil
 	}
