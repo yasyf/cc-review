@@ -391,15 +391,16 @@ type startInfo struct {
 }
 
 // startReply builds the start op's reply: the review id and http port on the
-// envelope, the URL, version, resume flag, channel state, stack or PR info, and
-// re-offered AI requests in the body. A pull-request review also hands its id
-// to the PR poller.
+// envelope, the URL and its tailnet URLs, version, resume flag, channel state,
+// stack or PR info, and re-offered AI requests in the body. A pull-request
+// review also hands its id to the PR poller.
 func (rv *review) startReply(hc ccd.HandlerCtx, sub subject.Subject, version int, resumed bool, channelState string, info startInfo, aiRequests []json.RawMessage) ccd.Reply {
 	if info.PR != nil {
 		rv.prReviewOpened(hc.Ctx, sub.ID)
 	}
 	raw, _ := json.Marshal(result{
-		URL: reviewURL(hc.HTTPPort, sub.Slug), Version: version, Resumed: resumed,
+		URL: reviewURL(hc.HTTPPort, sub.Slug), TailnetURLs: rv.tailnet.URLs(hc.Ctx, hc.HTTPPort, "/s/"+sub.Slug),
+		Version: version, Resumed: resumed,
 		ChannelState: channelState, Stack: info.Stack, PR: info.PR, GitHubSetup: info.GitHubSetup,
 		AIRequests: aiRequests,
 	})

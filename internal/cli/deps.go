@@ -6,6 +6,7 @@ import (
 	"github.com/yasyf/cc-interact/cmd"
 	ccd "github.com/yasyf/cc-interact/daemon"
 	"github.com/yasyf/cc-interact/procs"
+	"github.com/yasyf/synckit/meshtrust"
 
 	"github.com/yasyf/cc-review/internal/daemon"
 	"github.com/yasyf/cc-review/internal/paths"
@@ -54,7 +55,7 @@ func deps() cmd.Deps {
 		ClaudePID:              procs.ClaudePID,
 		WindowAlive:            procs.LiveClaude,
 		TerminalEvent:          func(t string) bool { return t == "submit" },
-		Serve:                  func(ctx context.Context) error { return daemon.Serve(ctx, 0) },
+		Serve:                  func(ctx context.Context) error { return daemon.Serve(ctx, 0, meshtrust.Detect()) },
 		ChannelTools:           channelTools,
 	}
 }

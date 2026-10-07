@@ -62,6 +62,7 @@ func (rc *ReviewClient) do(ctx context.Context, op ccd.Op, session, cwd string, 
 // Started is the start op's outcome the CLI renders.
 type Started struct {
 	URL          string
+	TailnetURLs  []string
 	ReviewID     string
 	Version      int
 	Resumed      bool
@@ -81,7 +82,7 @@ func (rc *ReviewClient) Start(ctx context.Context, session, cwd string, fresh bo
 		return Started{}, err
 	}
 	return Started{
-		URL: res.URL, ReviewID: reply.SubjectID, Version: res.Version, Resumed: res.Resumed,
+		URL: res.URL, TailnetURLs: res.TailnetURLs, ReviewID: reply.SubjectID, Version: res.Version, Resumed: res.Resumed,
 		ChannelState: res.ChannelState, Stack: res.Stack, PR: res.PR, GitHubSetup: res.GitHubSetup,
 		AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort,
 	}, nil
@@ -201,4 +202,14 @@ func (rc *ReviewClient) List(ctx context.Context, session, cwd string) ([]Review
 		return nil, err
 	}
 	return res.Reviews, nil
+}
+
+// TailnetURLs returns the tailnet URLs reaching path, a daemon path starting
+// with a slash; empty when the daemon serves no tailnet address.
+func (rc *ReviewClient) TailnetURLs(ctx context.Context, path string) ([]string, error) {
+	_, res, err := rc.do(ctx, OpTailnetURLs, "", "", body{Path: path})
+	if err != nil {
+		return nil, err
+	}
+	return res.TailnetURLs, nil
 }

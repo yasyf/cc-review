@@ -69,7 +69,7 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	served := make(chan error, 1)
-	go func() { served <- Serve(ctx, 0) }()
+	go func() { served <- Serve(ctx, 0, nil) }()
 
 	client := &http.Client{Timeout: 250 * time.Millisecond}
 	httpInfoPath := filepath.Join(home, ".cc-review", "v1", "http.json")
@@ -167,6 +167,16 @@ func TestServeMountsRESTWithActivatedDB(t *testing.T) {
 		}
 	}
 
+	rc, err := NewReviewClient(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	urls, err := rc.TailnetURLs(ctx, "/github/setup")
+	_ = rc.Close()
+	if err != nil || len(urls) != 0 {
+		t.Fatalf("TailnetURLs without mesh trust = %q, %v; want none", urls, err)
+	}
+
 	cancel()
 	select {
 	case serveErr := <-served:
@@ -195,7 +205,7 @@ func TestRecapturePRReadsTheDBServeActivates(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ledger.Close() })
-	s, rv, err := newDaemon(ledger, 0)
+	s, rv, err := newDaemon(ctx, ledger, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

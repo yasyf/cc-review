@@ -15,7 +15,9 @@ import (
 	ccevent "github.com/yasyf/cc-interact/event"
 	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
+	"github.com/yasyf/cc-interact/tailnet"
 	"github.com/yasyf/cc-interact/vcs"
+	"github.com/yasyf/synckit/meshtrust"
 
 	"github.com/yasyf/cc-review/internal/decisions"
 	"github.com/yasyf/cc-review/internal/digest"
@@ -87,9 +89,10 @@ var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 // ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through,
 // the GitHub client and clone URL a pull-request capture reads through, the
 // hook that hands an opened pull-request review to its poller, the DB and
-// Append chokepoint an off-RPC recapture writes through, the
-// per-review locks serializing version creation, and the ids of the turns this
-// daemon opened on a fresh tree snapshot.
+// Append chokepoint an off-RPC recapture writes through, the tailnet serving
+// state printed URLs render from, the per-review locks serializing version
+// creation, and the ids of the turns this daemon opened on a fresh tree
+// snapshot.
 type review struct {
 	decisions      *decisions.Log
 	log            *log.Logger
@@ -101,6 +104,7 @@ type review struct {
 	outbound       *outbound.Syncer
 	db             func() *sql.DB
 	append         ccd.AppendFunc
+	tailnet        *tailnet.Tailnet
 	reviewLocks    sync.Map
 	sliceWarn      sync.Once
 
@@ -112,8 +116,9 @@ type review struct {
 // gate = block while a review is open, version-stamped channel presence — wires
 // the review ops and the REST plane onto it, starts the stale-request sweeper,
 // and serves until the context is cancelled. fixedPort pins the HTTP plane for
-// the Vite dev proxy; 0 binds an ephemeral port.
-func Serve(ctx context.Context, fixedPort int) error {
+// the Vite dev proxy; 0 binds an ephemeral port. A non-nil tp also serves the
+// HTTP plane on the machine's tailnet addresses to the mesh peers it trusts.
+func Serve(ctx context.Context, fixedPort int, tp *meshtrust.Provider) error {
 	if err := paths.EnsureStateDir(); err != nil {
 		return err
 	}
@@ -122,7 +127,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 		return err
 	}
 	defer func() { _ = ledger.Close() }()
-	s, rv, err := newDaemon(ledger, fixedPort)
+	s, rv, err := newDaemon(ctx, ledger, fixedPort, tp)
 	if err != nil {
 		return err
 	}
@@ -130,7 +135,7 @@ func Serve(ctx context.Context, fixedPort int) error {
 	return s.Serve(ctx)
 }
 
-func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, error) {
+func newDaemon(ctx context.Context, ledger *decisions.Log, fixedPort int, tp *meshtrust.Provider) (*ccd.Server, *review, error) {
 	rv := &review{
 		decisions: ledger,
 		log:       log.New(os.Stderr, "[cc-review] ", log.LstdFlags),
@@ -143,7 +148,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	}
 
 	public := http.NewServeMux()
-	s, err := ccd.New(ccd.Config{
+	s, tn, err := tailnet.NewServer(ctx, ccd.Config{
 		AppName:           "cc-review",
 		Paths:             paths.App(),
 		Daemon:            spec,
@@ -160,10 +165,11 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 		UnsupportedSchema: ccstore.ArchiveUnsupportedSchema,
 		FixedPort:         fixedPort,
 		PublicHandler:     public,
-	})
+	}, tp)
 	if err != nil {
 		return nil, nil, err
 	}
+	rv.tailnet = tn
 	rv.injectEvent = s.InjectEvent
 	rv.prsync = rv.newPRSync(s)
 	rv.prReviewOpened = rv.startPRSync
@@ -182,6 +188,7 @@ func newDaemon(ledger *decisions.Log, fixedPort int) (*ccd.Server, *review, erro
 	s.Register(OpTurnEnd, rv.handleTurnEnd)
 	s.Register(OpClose, rv.handleClose)
 	s.Register(OpList, rv.handleList)
+	s.Register(OpTailnetURLs, rv.handleTailnetURLs)
 
 	httpapi.RESTMount(s.Mux(), public, httpapi.Deps{
 		DB:                s.DB,
@@ -384,6 +391,14 @@ func reviewURL(httpPort int, slug string) string {
 		return origin + "/s/" + slug
 	}
 	return fmt.Sprintf("http://127.0.0.1:%d/s/%s", httpPort, slug)
+}
+
+func (rv *review) handleTailnetURLs(hc ccd.HandlerCtx) ccd.Reply {
+	b, err := decodeBody(hc.Env.Body)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	return okReply(result{TailnetURLs: rv.tailnet.URLs(hc.Ctx, hc.HTTPPort, b.Path)})
 }
 
 // emit appends a tagged-union event through the daemon's single Append

@@ -11,6 +11,7 @@ import (
 
 	"github.com/yasyf/cc-interact/vcs"
 	"github.com/yasyf/daemonkit"
+	"github.com/yasyf/synckit/meshtrust"
 
 	"github.com/yasyf/cc-review/internal/daemon"
 )
@@ -24,7 +25,8 @@ const httpPortEnv = "CC_REVIEW_HTTP_PORT"
 // newDaemonCmd is the hidden entry point the lazy-start spawns. --dev pins the
 // HTTP plane to a known port for the Vite dev proxy; the lazily-spawned daemon
 // (Args=["daemon"], no --dev) binds CC_REVIEW_HTTP_PORT when its environment
-// sets one, and an ephemeral port otherwise.
+// sets one, and an ephemeral port otherwise. When synckit's mesh state exists
+// the daemon also serves its tailnet addresses.
 func newDaemonCmd() *cobra.Command {
 	var dev bool
 	cmd := &cobra.Command{
@@ -40,7 +42,7 @@ func newDaemonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return daemon.Serve(cmd.Context(), port)
+			return daemon.Serve(cmd.Context(), port, meshtrust.Detect())
 		},
 	}
 	cmd.Flags().BoolVar(&dev, "dev", false, "bind the HTTP plane to a fixed port for the Vite dev proxy")

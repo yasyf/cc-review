@@ -34,6 +34,7 @@ const (
 	OpTurnEnd            ccd.Op = "turn-end"
 	OpClose              ccd.Op = "close"
 	OpList               ccd.Op = "list"
+	OpTailnetURLs        ccd.Op = "tailnet-urls"
 )
 
 // StackInfo is the start op's summary of a Graphite stack: the trunk and the
@@ -148,12 +149,14 @@ type body struct {
 	Prompt        string              `json:"prompt,omitempty"`         // turn-start
 	Ref           string              `json:"ref,omitempty"`            // close (slug or id; empty = this window's review)
 	Stale         bool                `json:"stale,omitempty"`          // close (expire idle-open reviews instead)
+	Path          string              `json:"path,omitempty"`           // tailnet-urls
 }
 
 // result is the domain payload a handler returns in Reply.Body. Envelope-level
 // outputs (review id, status, http port) ride on the Reply itself.
 type result struct {
 	URL          string            `json:"url,omitempty"`           // start
+	TailnetURLs  []string          `json:"tailnet_urls,omitempty"`  // start | tailnet-urls
 	Version      int               `json:"version,omitempty"`       // start
 	Resumed      bool              `json:"resumed,omitempty"`       // start
 	ChannelState string            `json:"channel_state,omitempty"` // start
