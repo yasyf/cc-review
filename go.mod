@@ -15,15 +15,19 @@ require (
 
 require (
 	github.com/go-enry/go-enry/v2 v2.9.6
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/yasyf/cc-interact v0.35.4
 	github.com/yasyf/daemonkit v0.32.0
+	github.com/zalando/go-keyring v0.2.8
 )
 
 require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
