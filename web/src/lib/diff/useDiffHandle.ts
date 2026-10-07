@@ -4,7 +4,7 @@ import { useSetFileStates } from '../api';
 import { useReview } from '../review-context';
 import type { Comment, Section } from '../types';
 import { useViewPrefs } from '../view-prefs';
-import { commentItemId, isBanner, parseItemId } from './items';
+import { commentItemId, parseItemId } from './items';
 import type { CodeViewInstance, CodeViewRef, FileRef, ReviewItem } from './items';
 import { CURRENT_ITEM_OFFSET_PX } from './useScrollSync';
 import type { ScrollSync } from './useScrollSync';
@@ -32,15 +32,10 @@ function commentIndexNearScroll(viewer: CodeViewInstance, comments: readonly Com
 }
 
 function stepTarget(list: readonly ReviewItem[], currentId: string | null, dir: 1 | -1): string | null {
-  const files = list.filter((item) => !isBanner(item.id));
-  if (files.length === 0) return null;
-  const idx = files.findIndex((item) => item.id === currentId);
-  if (idx >= 0) return files[Math.max(0, Math.min(idx + dir, files.length - 1))].id;
-  const listIdx = list.findIndex((item) => item.id === currentId);
-  if (currentId === null || !isBanner(currentId) || listIdx < 0) return files[0].id;
-  const nextFile = list.slice(listIdx + 1).find((item) => !isBanner(item.id));
-  const prevFile = list.slice(0, listIdx).reverse().find((item) => !isBanner(item.id));
-  return (dir === 1 ? (nextFile ?? prevFile) : (prevFile ?? nextFile))?.id ?? null;
+  if (list.length === 0) return null;
+  const idx = list.findIndex((item) => item.id === currentId);
+  if (idx < 0) return list[0].id;
+  return list[Math.max(0, Math.min(idx + dir, list.length - 1))].id;
 }
 
 export function useDiffHandle(
@@ -99,7 +94,6 @@ export function useDiffHandle(
         const id = currentItemRef.current;
         if (!id) return;
         const parsed = parseItemId(id);
-        if (parsed.kind !== 'file') return;
         const reviewed = latest.current.sectionByKey.get(parsed.sectionKey)?.fileStates[parsed.path]?.reviewed ?? false;
         if (reviewed) {
           mutateStates([{ sectionKey: parsed.sectionKey, path: parsed.path, reviewed: false }]);
@@ -108,15 +102,14 @@ export function useDiffHandle(
         // Capture the next file before mutating: with hideReviewed on, the viewed
         // file leaves `items` and the indices shift.
         const list = latest.current.items;
-        const nextId =
-          list.slice(list.findIndex((item) => item.id === id) + 1).find((item) => !isBanner(item.id))?.id ?? null;
+        const nextId = list[list.findIndex((item) => item.id === id) + 1]?.id ?? null;
         clearExpandOverride(id);
         mutateStates([{ sectionKey: parsed.sectionKey, path: parsed.path, reviewed: true }]);
         if (nextId) goToItem(nextId);
       },
       toggleCollapseCurrent() {
         const id = currentItemRef.current;
-        if (id && !isBanner(id)) toggleExpandOverride(id);
+        if (id) toggleExpandOverride(id);
       },
       focusNextComment: () => stepComment(1),
       focusPrevComment: () => stepComment(-1),

@@ -1,4 +1,4 @@
-import type { AiRequest, ChapterFile, Comment, Reply, Section, SessionResponse } from '../lib/types';
+import type { AiRequest, ChapterFile, Comment, PullRequest, Reply, Section, SessionResponse } from '../lib/types';
 
 export function section(overrides: Partial<Section> = {}): Section {
   return {
@@ -82,6 +82,27 @@ export function aiRequest(overrides: Partial<AiRequest> = {}): AiRequest {
 
 export function chapterFile(path: string, risk: ChapterFile['risk']): ChapterFile {
   return { path, risk, rationale: '', focus: '', lines: [] };
+}
+
+export function pullRequest(overrides: Partial<PullRequest> = {}): PullRequest {
+  return {
+    number: 1,
+    title: 'PR 1',
+    body: '',
+    state: 'OPEN',
+    draft: false,
+    url: 'https://github.com/o/r/pull/1',
+    authorLogin: 'author',
+    headRefName: 'feat/x',
+    headSha: 'head',
+    baseRefName: 'main',
+    mergeable: 'MERGEABLE',
+    checks: [],
+    reviewers: [],
+    viewerIsAuthor: false,
+    updatedAt: '2026-10-01T00:00:00Z',
+    ...overrides,
+  };
 }
 
 export function session(overrides: Partial<SessionResponse> = {}): SessionResponse {

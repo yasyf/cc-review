@@ -68,7 +68,7 @@ input[type='checkbox'] {
 .focus-popover-chip,
 .action-chip,
 .risk-chip,
-.section-pending,
+.section-chip,
 .needs-reply-chip,
 .gen-chip,
 .ai-status,
@@ -100,7 +100,7 @@ input[type='checkbox'] {
 }
 
 .status-open,
-.section-pending,
+.section-chip,
 .gen-chip-vendored,
 .ai-status-instant {
   color: var(--accent);

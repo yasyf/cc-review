@@ -1,27 +1,28 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { Comment, Origin } from './types';
+import type { Author, Comment } from './types';
 
 // Map of comment id → id of the newest thread entry the user has seen (a reply
 // id, or the comment's own id when the thread has no replies). Persisted per
 // review in localStorage; a thread is unread only while its newest entry came
-// from Claude, so user-authored entries never need a write to stay read.
+// from Claude or a coworker, so the viewer's own entries never need a write to
+// stay read.
 export type SeenMap = Record<string, string>;
 
 const storageKey = (reviewId: string) => `cc-review:seen:${reviewId}`;
 
-export function latestEntry(comment: Comment): { id: string; origin: Origin } {
+export function latestEntry(comment: Comment): { id: string; author: Author } {
   const last = comment.replies[comment.replies.length - 1];
-  if (!last) return { id: comment.id, origin: comment.origin };
+  if (!last) return { id: comment.id, author: comment.author };
   // An answered ask carries the user's answer in place of a user reply row,
   // so it counts as user-authored for read-state.
-  const origin = last.kind === 'ask' && last.answered ? 'user' : last.origin;
-  return { id: last.id, origin };
+  const author = last.kind === 'ask' && last.answered ? 'user' : last.author;
+  return { id: last.id, author };
 }
 
 export function isUnread(comment: Comment, seen: SeenMap): boolean {
   const latest = latestEntry(comment);
-  return latest.origin === 'claude' && seen[comment.id] !== latest.id;
+  return latest.author !== 'user' && seen[comment.id] !== latest.id;
 }
 
 export function unreadCount(comments: readonly Comment[], seen: SeenMap): number {

@@ -19,26 +19,17 @@ export interface FileRef {
   path: string;
 }
 
-// The CodeView item id encodes a FileRef or a section banner. Branch names
-// cannot contain ':' and '' is a valid section key, so the first ':' after the
-// 'f:' prefix always delimits key from path and the parse is total.
-export type ItemRef =
-  | { kind: 'file'; sectionKey: string; path: string }
-  | { kind: 'banner'; sectionKey: string };
-
+// The CodeView item id encodes a FileRef. Branch names cannot contain ':' and
+// '' is a valid section key, so the first ':' after the 'f:' prefix always
+// delimits key from path and the parse is total.
 export function fileItemId(sectionKey: string, path: string): string {
   return `f:${sectionKey}:${path}`;
 }
 
-export function bannerItemId(sectionKey: string): string {
-  return `s:${sectionKey}`;
-}
-
-export function parseItemId(id: string): ItemRef {
-  if (id[0] === 's') return { kind: 'banner', sectionKey: id.slice(2) };
+export function parseItemId(id: string): FileRef {
   const rest = id.slice(2);
   const sep = rest.indexOf(':');
-  return { kind: 'file', sectionKey: rest.slice(0, sep), path: rest.slice(sep + 1) };
+  return { sectionKey: rest.slice(0, sep), path: rest.slice(sep + 1) };
 }
 
 // The section a comment lands on: pending → '', else its branch.
@@ -67,10 +58,6 @@ export type CodeViewRef = RefObject<CodeViewHandle<AnnotationMeta, undefined> | 
 
 export type CodeViewInstance = NonNullable<ReturnType<CodeViewHandle<AnnotationMeta, undefined>['getInstance']>>;
 
-export function isBanner(id: string): boolean {
-  return parseItemId(id).kind === 'banner';
-}
-
 // A section paired with its parsed diff; the input unit for buildItems.
 export interface SectionFiles {
   section: Section;
@@ -91,24 +78,8 @@ export function parseFiles(patchText: string): FileDiffMetadata[] {
   return parsePatchFiles(patchText).flatMap((patch) => patch.files);
 }
 
-// The banner is a synthetic collapsed empty file item; its header chrome is
-// rendered by SectionHeader through renderHeaderMetadata (which self-subscribes
-// to the cache), so the item itself never changes and pins version 0.
-function bannerItem(section: Section): ReviewItem {
-  return {
-    id: bannerItemId(section.sectionKey),
-    type: 'file',
-    file: { name: section.pending ? 'Working tree' : section.branch, contents: '' },
-    annotations: [],
-    collapsed: true,
-    version: 0,
-  };
-}
-
-// Interleave each section's file items in position order, prefixed by a banner
-// item when banners are shown (only for a multi-section review, so a flat
-// review's item list is exactly today's — one section, no banner). Within a
-// section, files sort by the view-mode order map and comments/composer attach
+// Interleave each section's file items in position order. Within a section,
+// files sort by the view-mode order map and comments/composer attach
 // as line annotations, mirroring the single-diff behaviour.
 //
 // The version parity scheme is per file item and unchanged: draft versions are
@@ -125,7 +96,6 @@ export function buildItems(
   hideReviewed: boolean,
   expandOverrides: ReadonlySet<string>,
   autoCollapse: ReadonlySet<string>,
-  showBanners: boolean,
 ): ReviewItem[] {
   const byItem = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
   for (const comment of comments) {
@@ -140,8 +110,6 @@ export function buildItems(
   const items: ReviewItem[] = [];
 
   for (const { section, files } of sections) {
-    if (showBanners) items.push(bannerItem(section));
-
     const visible = files.filter((file) => {
       const state = section.fileStates[file.name];
       if (state?.hidden) return false;
@@ -187,6 +155,22 @@ export function buildItems(
   }
 
   return items;
+}
+
+function hunkIndexAt(fileDiff: FileDiffMetadata, side: Side, lineNumber: number): number {
+  return fileDiff.hunks.findIndex((hunk) => {
+    const start = side === 'additions' ? hunk.additionStart : hunk.deletionStart;
+    const count = side === 'additions' ? hunk.additionCount : hunk.deletionCount;
+    return lineNumber >= start && lineNumber < start + count;
+  });
+}
+
+export function rangeInOneHunk(
+  fileDiff: FileDiffMetadata,
+  range: { start: number; end: number; side: Side; endSide: Side },
+): boolean {
+  const first = hunkIndexAt(fileDiff, range.side, range.start);
+  return first >= 0 && first === hunkIndexAt(fileDiff, range.endSide, range.end);
 }
 
 // Resolve the source text of a selected line so it can ride along with a new

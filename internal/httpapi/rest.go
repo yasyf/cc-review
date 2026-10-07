@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,20 @@ type sectionResponse struct {
 	Organization *store.Organization                 `json:"organization"`
 	Attributions *map[string][]wire.AttributionRange `json:"attributions,omitempty"`
 	PRNumber     int                                 `json:"prNumber"`
+}
+
+type reviewSummary struct {
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	Scope        string `json:"scope"`
+	Status       string `json:"status"`
+	Kind         string `json:"kind"`
+	Repo         string `json:"repo"`
+	PRNumber     int    `json:"prNumber"`
+	Branch       string `json:"branch"`
+	Title        string `json:"title"`
+	CreatedAt    string `json:"createdAt"`
+	LastActivity string `json:"lastActivity"`
 }
 
 type createCommentReq struct {
@@ -328,6 +343,39 @@ func (s *Server) turnActivity(turns []vcs.Turn) map[string][]wire.Decision {
 		out[strconv.FormatInt(t.ID, 10)] = wired
 	}
 	return out
+}
+
+func (s *Server) handleListReviews(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := s.st().ListReviews(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]reviewSummary, 0, len(rows))
+	for _, row := range slices.Backward(rows) {
+		meta, _, err := s.st().GetReviewMeta(ctx, row.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		prs, err := s.st().PullRequests(ctx, row.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		title := ""
+		if i := slices.IndexFunc(prs, func(pr store.PullRequest) bool { return pr.Number == meta.PRNumber }); i >= 0 {
+			title = prs[i].Title
+		}
+		out = append(out, reviewSummary{
+			ID: row.ID, Slug: row.Slug, Scope: row.Scope, Status: row.Status,
+			Kind: meta.Kind, Repo: meta.Repo, PRNumber: meta.PRNumber, Branch: meta.Branch, Title: title,
+			CreatedAt:    row.CreatedAt.UTC().Format(time.RFC3339),
+			LastActivity: row.LastActivity.UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleGetVersions(w http.ResponseWriter, r *http.Request) {

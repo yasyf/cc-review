@@ -2,11 +2,13 @@ import { getRouteApi } from '@tanstack/react-router';
 import type { FileRef } from '../lib/diff/items';
 import { useSidebarLayout } from '../lib/sidebar-layout';
 import type { SidebarTab } from '../lib/sidebar-layout';
+import { conversationThreads, fileThreads } from '../lib/threads';
 import { unreadCount, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
 import { ChapterPanel } from './ChapterPanel';
 import { CommentsPanel } from './CommentsPanel';
+import { ConversationPanel } from './ConversationPanel';
 import { FileTreePanel } from './FileTreePanel';
 import { SidebarResizer } from './SidebarResizer';
 import { TodoPanel } from './TodoPanel';
@@ -19,6 +21,7 @@ const routeApi = getRouteApi('/s/$slug');
 const TABS: { id: SidebarTab; label: string; icon: IconName }[] = [
   { id: 'files', label: 'Files', icon: 'tree' },
   { id: 'comments', label: 'Comments', icon: 'comment' },
+  { id: 'conversation', label: 'Conversation', icon: 'conversation' },
   { id: 'activity', label: 'Activity', icon: 'activity' },
 ];
 
@@ -37,7 +40,11 @@ export function Sidebar({
   const { mode, dismissOverlay } = useSidebarLayout();
   const { seen } = useUnread();
   const { viewMode } = useViewPrefs();
-  const unread = unreadCount(session.comments, seen);
+  const badges: Partial<Record<SidebarTab, number>> = {
+    comments: unreadCount(fileThreads(session.comments), seen),
+    conversation: unreadCount(conversationThreads(session.comments), seen),
+  };
+  const tabs = TABS.filter(({ id }) => id !== 'conversation' || session.review.kind === 'pr');
   const organized = viewMode !== 'default' && session.sections.some((s) => s.organization !== null);
 
   function setTab(next: SidebarTab) {
@@ -60,7 +67,7 @@ export function Sidebar({
   return (
     <>
       <div className="sidebar-tabs" role="tablist" aria-label="Sidebar">
-        {TABS.map(({ id, label, icon }) => (
+        {tabs.map(({ id, label, icon }) => (
           <button
             key={id}
             type="button"
@@ -71,12 +78,14 @@ export function Sidebar({
           >
             <Icon name={icon} size={14} />
             {label}
-            {id === 'comments' && unread > 0 ? <span className="tab-badge">{unread}</span> : null}
+            {(badges[id] ?? 0) > 0 ? <span className="tab-badge">{badges[id]}</span> : null}
           </button>
         ))}
       </div>
       {tab === 'activity' ? (
         <TurnActivityPanel session={session} />
+      ) : tab === 'conversation' ? (
+        <ConversationPanel session={session} />
       ) : tab === 'files' ? (
         organized ? (
           viewMode === 'todo' ? (

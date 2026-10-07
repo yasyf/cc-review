@@ -1,8 +1,10 @@
 import { commentItemId } from '../lib/diff/items';
 import { fileOrder } from '../lib/order';
+import { fileThreads } from '../lib/threads';
 import { isUnread, useUnread } from '../lib/unread';
 import type { Comment, SessionResponse } from '../lib/types';
 import { useViewPrefs } from '../lib/view-prefs';
+import { authorName } from './ThreadAuthor';
 
 interface CommentGroup {
   filePath: string;
@@ -29,7 +31,7 @@ export function CommentsPanel({
 
   const order = fileOrder(session, viewMode);
   const groups = new Map<string, CommentGroup>();
-  for (const comment of session.comments) {
+  for (const comment of fileThreads(session.comments)) {
     const id = commentItemId(comment);
     const group =
       groups.get(id) ??
@@ -60,7 +62,7 @@ export function CommentsPanel({
             .sort((a, b) => a.range.end - b.range.end)
             .map((comment) => {
               const unread = isUnread(comment, seen);
-              const who = comment.origin === 'claude' ? 'Claude' : 'You';
+              const who = authorName(comment, session.review.kind);
               return (
                 <button
                   key={comment.id}
@@ -72,7 +74,7 @@ export function CommentsPanel({
                 >
                   <span className="comment-card-head">
                     {unread ? <span className="unread-dot" /> : null}
-                    {who} commented on Line {comment.range.end}
+                    {who} commented {comment.subject === 'line' ? `on Line ${comment.range.end}` : 'on the file'}
                     {comment.replies.length > 0 ? (
                       <span className="comment-card-count">{comment.replies.length}</span>
                     ) : null}

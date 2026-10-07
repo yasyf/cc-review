@@ -1,4 +1,5 @@
 import { ConnectionFrame } from '@cc-interact/react';
+import { useState } from 'react';
 import { useClose, useSubmit } from '../lib/api';
 import { useEventStream } from '../lib/events';
 import { useReview } from '../lib/review-context';
@@ -6,6 +7,7 @@ import { STATUS_NOTICES } from '../lib/status';
 import type { SessionResponse } from '../lib/types';
 import { useSidebarLayout } from '../lib/sidebar-layout';
 import { Button, IconButton } from './ui/Button';
+import { SubmitDialog } from './SubmitDialog';
 import { ThemeToggle } from './ui/ThemeToggle';
 
 export function SubmitBar({ session }: { session: SessionResponse }) {
@@ -14,6 +16,7 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
   const close = useClose(slug);
   const { connected } = useEventStream();
   const { mode, toggle } = useSidebarLayout();
+  const [submitOpen, setSubmitOpen] = useState(false);
 
   const status = session.review.status;
   // Claude-authored comments are informational annotations, not reviewer TODOs.
@@ -63,9 +66,10 @@ export function SubmitBar({ session }: { session: SessionResponse }) {
             <Button variant="ghost" disabled={close.isPending} onClick={() => close.mutate()}>
               {close.isPending ? 'Closing…' : 'Close without submitting'}
             </Button>
-            <Button variant="primary" disabled={submit.isPending} onClick={() => submit.mutate()}>
-              {submit.isPending ? 'Submitting…' : 'Submit review'}
+            <Button variant="primary" onClick={() => setSubmitOpen(true)}>
+              {session.review.kind === 'pr' ? 'Submit review' : 'Send to Claude'}
             </Button>
+            <SubmitDialog session={session} submit={submit} open={submitOpen} onClose={() => setSubmitOpen(false)} />
           </>
         ) : (
           <>

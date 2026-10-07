@@ -75,6 +75,7 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 		provCache:  make(map[int64][]provenanceItem),
 		provWarned: make(map[string]bool),
 	}
+	mux.HandleFunc("GET /api/reviews", s.handleListReviews)
 	mux.HandleFunc("GET /api/session/{reviewId}", s.handleGetSession)
 	mux.HandleFunc("GET /api/session/{reviewId}/versions", s.handleGetVersions)
 	mux.HandleFunc("POST /api/comments", s.handleCreateComment)

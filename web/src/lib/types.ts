@@ -139,6 +139,20 @@ export interface PullRequest {
   updatedAt: string;
 }
 
+export interface ReviewSummary {
+  id: string;
+  slug: string;
+  scope: string;
+  status: ReviewStatus;
+  kind: ReviewKind;
+  repo: string;
+  prNumber: number;
+  branch: string;
+  title: string;
+  createdAt: string;
+  lastActivity: string;
+}
+
 // Mirrors the daemon's gitdiff.FileChange. The diff itself is parsed from
 // patchText; this list is only used for the file count, so it carries just the
 // git name-status fields the daemon actually emits.
