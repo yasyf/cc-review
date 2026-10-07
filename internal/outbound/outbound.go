@@ -324,13 +324,11 @@ func (s *Syncer) finishComment(ctx context.Context, commentID int64, state, remo
 	if err := st.SetCommentSync(ctx, commentID, state, remoteID, threadID, url, errText(cause)); err != nil {
 		return errors.Join(cause, err)
 	}
-	reviewID, version, err := st.ResolveCommentContext(ctx, commentID)
+	c, err := st.GetComment(ctx, commentID)
 	if err != nil {
 		return errors.Join(cause, err)
 	}
-	return errors.Join(cause, s.emitSynced(ctx, reviewID, version, map[string]any{
-		"commentId": strconv.FormatInt(commentID, 10), "syncState": state, "syncError": errText(cause), "remoteUrl": url,
-	}))
+	return errors.Join(cause, s.emitSynced(ctx, st, commentID, wire.CommentSyncedFields(c)))
 }
 
 func (s *Syncer) finishReply(ctx context.Context, r store.Reply, state, remoteID, url string, cause error) error {
@@ -338,20 +336,21 @@ func (s *Syncer) finishReply(ctx context.Context, r store.Reply, state, remoteID
 	if err := st.SetReplySync(ctx, r.ID, state, remoteID, url, errText(cause)); err != nil {
 		return errors.Join(cause, err)
 	}
-	reviewID, version, err := st.ResolveCommentContext(ctx, r.CommentID)
+	r, err := st.GetReply(ctx, r.ID)
 	if err != nil {
 		return errors.Join(cause, err)
 	}
-	return errors.Join(cause, s.emitSynced(ctx, reviewID, version, map[string]any{
-		"commentId": strconv.FormatInt(r.CommentID, 10), "replyId": strconv.FormatInt(r.ID, 10),
-		"syncState": state, "syncError": errText(cause), "remoteUrl": url,
-	}))
+	return errors.Join(cause, s.emitSynced(ctx, st, r.CommentID, wire.ReplySyncedFields(r)))
 }
 
 // emitSynced uses the agent origin to keep a browser-only badge update off
 // Claude's channel, as organization.updated does.
-func (s *Syncer) emitSynced(ctx context.Context, reviewID string, version int, fields map[string]any) error {
-	_, err := s.append(ctx, &ccevent.Event{
+func (s *Syncer) emitSynced(ctx context.Context, st *store.Store, commentID int64, fields map[string]any) error {
+	reviewID, version, err := st.ResolveCommentContext(ctx, commentID)
+	if err != nil {
+		return err
+	}
+	_, err = s.append(ctx, &ccevent.Event{
 		SubjectID: reviewID, Origin: ccevent.OriginAgent, Type: store.EventCommentSynced,
 		Payload: wire.Event(store.EventCommentSynced, version, fields),
 	})
