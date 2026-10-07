@@ -106,3 +106,6 @@ cd .. && go build ./cmd/cc-review
 ```
 
 A committed placeholder `index.html` keeps a clean tree compiling; a real build replaces it with hashed assets. The HTTP plane registers the SPA handler last and least-specific, so `/api` and `/events` always win routing.
+
+<!-- e2e scratch B: line one -->
+<!-- e2e scratch B: line two -->
