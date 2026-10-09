@@ -40,20 +40,12 @@ type Server struct {
 	repoMu    sync.Mutex
 	repoLocks map[string]*sync.Mutex
 
-	injectMu sync.Mutex
-	injected []injectCall
+	channelMu    sync.Mutex
+	channel      ccd.ChannelState
+	channelReads []string
 
 	openedMu sync.Mutex
 	opened   []string
-}
-
-// injectCall records one solicited-frame injection the review handlers asked
-// for, standing in for the daemon's (*ccd.Server).InjectEvent.
-type injectCall struct {
-	subjectID string
-	consumer  string
-	pid       int
-	payload   string
 }
 
 // Request is the test-side view of one control RPC: the envelope identity plus
@@ -186,11 +178,12 @@ func newServer(cc *ccstore.Store, ledger *decisions.Log) *Server {
 			Active: func(sub subject.Subject) bool { return sub.Status == "open" },
 		},
 	}
-	s.rv.injectEvent = func(subjectID, consumer string, pid int, payload string) int {
-		s.injectMu.Lock()
-		defer s.injectMu.Unlock()
-		s.injected = append(s.injected, injectCall{subjectID, consumer, pid, payload})
-		return 1
+	s.channel = ccd.ChannelInactive
+	s.rv.channelState = func(_ ccd.HandlerCtx, subjectID string) ccd.ChannelState {
+		s.channelMu.Lock()
+		defer s.channelMu.Unlock()
+		s.channelReads = append(s.channelReads, subjectID)
+		return s.channel
 	}
 	s.rv.db, s.rv.append = cc.DB, s.appendEvent
 	s.rv.prReviewOpened = func(_ context.Context, reviewID string) {
@@ -207,10 +200,16 @@ func (s *Server) openedPRReviews() []string {
 	return append([]string(nil), s.opened...)
 }
 
-func (s *Server) injectCalls() []injectCall {
-	s.injectMu.Lock()
-	defer s.injectMu.Unlock()
-	return append([]injectCall(nil), s.injected...)
+func (s *Server) setChannel(cs ccd.ChannelState) {
+	s.channelMu.Lock()
+	defer s.channelMu.Unlock()
+	s.channel = cs
+}
+
+func (s *Server) channelReadsOf() []string {
+	s.channelMu.Lock()
+	defer s.channelMu.Unlock()
+	return append([]string(nil), s.channelReads...)
 }
 
 // appendEvent mirrors the daemon's Append chokepoint: persist, then publish (no
@@ -359,10 +358,6 @@ func (s *Server) handleGuardEdit(ctx context.Context, req Request) Response {
 	allow, reason := s.rv.gate(ctx, sub, tool)
 	s.rv.gateObserve(ctx, sub, tool, allow, reason)
 	return Response{OK: true, Allow: allow, Reason: reason}
-}
-
-func (s *Server) channelState(reviewID, scope string, pid int) string {
-	return channelState(s.activity, reviewID, scope, pid)
 }
 
 func (s *Server) sweepStalePending(ctx context.Context, before time.Time) error {

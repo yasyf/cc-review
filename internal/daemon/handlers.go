@@ -156,7 +156,7 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 	if err != nil {
 		return errReply(err.Error())
 	}
-	cs := rv.channelStateProbed(hc, sub.ID)
+	cs := string(rv.channelState(hc, sub.ID))
 	reoffer, err := openAIRequestsJSON(hc.Ctx, st, sub.ID, version)
 	if err != nil {
 		return errReply(err.Error())
@@ -356,7 +356,7 @@ func (rv *review) reuseVersion(hc ccd.HandlerCtx, st *store.Store, sub subject.S
 		emit(hc.Ctx, hc.Append, sub.ID, ccevent.OriginSystem, store.EventStatusChanged,
 			latest.VersionNumber, map[string]any{"status": statusOpen})
 	}
-	cs := rv.channelStateProbed(hc, sub.ID)
+	cs := string(rv.channelState(hc, sub.ID))
 	// Every section organized: close any stranded organize request. Otherwise
 	// rescue an open one or queue a fresh request.
 	organized, err := allSectionsOrganized(hc.Ctx, st, sections)
