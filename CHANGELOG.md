@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `start` reads the window's channel route from cc-interact v0.37.0's
+  `Server.ChannelState`, which now owns the active/pending/inactive rules and
+  the `channel.probe` handshake cc-review used to carry itself. The resolve-poll
+  window for `pending` grows from 3 s to 10 s, twice cc-interact's 5 s poll
+  ceiling, so a waiting channel no longer flickers to `inactive` between polls.
+  The build moves to `toolchain go1.26.9` with `x/net` v0.60.0, fixing
+  GO-2026-6611, GO-2026-6612, GO-2026-6613, and GO-2026-6617.
+
 ## [0.40.1] - 2026-10-07
 
 ### Fixed

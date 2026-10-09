@@ -595,116 +595,22 @@ func TestResolveStaleSessionFindsOwnWindowReview(t *testing.T) {
 	}
 }
 
-func TestChannelState(t *testing.T) {
-	// The window under test is pid 100; a non-zero pid names which window each
-	// signal belongs to, so foreign-pid rows prove the keying.
-	for _, tc := range []struct {
-		name                          string
-		provenPID, attachPID, pollPID int // 0 = no signal
-		want                          string
-	}{
-		{"no signal", 0, 0, 0, "inactive"},
-		{"poll only", 0, 0, 100, "pending"},
-		{"attach only", 0, 100, 0, "pending"},
-		{"attach and poll unproven", 0, 100, 100, "pending"},
-		{"proven without presence", 100, 0, 0, "inactive"},
-		{"proven with poll only", 100, 0, 100, "pending"},
-		{"proven and attached", 100, 100, 0, "active"},
-		{"proven attached and polled", 100, 100, 100, "active"},
-		{"foreign window's poll", 0, 0, 200, "inactive"},
-		{"foreign window's attachment", 0, 200, 0, "inactive"},
-		{"foreign window's proof while attached", 200, 100, 0, "pending"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{activity: ccd.NewActivity()}
-			if tc.provenPID != 0 {
-				s.activity.MarkProven(tc.provenPID)
-			}
-			if tc.attachPID != 0 {
-				detach := s.activity.Attach("r1", channelConsumer, tc.attachPID)
-				defer detach()
-			}
-			if tc.pollPID != 0 {
-				s.activity.NotePoll("/repo", channelConsumer, tc.pollPID)
-			}
-			if got := s.channelState("r1", "/repo", 100); got != tc.want {
-				t.Fatalf("channelState = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestHandleChannelAck(t *testing.T) {
-	s, repo := testServer(t)
-
-	// An attached-but-unproven window flips pending -> active once its channel
-	// round trip is proven (what channel-ack records via Activity.MarkProven).
-	detach := s.activity.Attach("r1", channelConsumer, 100)
-	defer detach()
-	if got := s.channelState("r1", repo, 100); got != "pending" {
-		t.Fatalf("pre-ack state = %q, want pending", got)
-	}
-	s.activity.MarkProven(100)
-	if got := s.channelState("r1", repo, 100); got != "active" {
-		t.Fatalf("post-ack state = %q, want active", got)
-	}
-	if got := s.channelState("r1", repo, 200); got == "active" {
-		t.Fatal("the ack must not prove another window")
-	}
-}
-
-// TestStartProbesUnprovenChannel pins the solicited handshake: start injects
-// exactly one channel.probe into this window's attached-but-unproven channel
-// stream, and never probes an unattached, poll-only, or already-proven window.
-func TestStartProbesUnprovenChannel(t *testing.T) {
+func TestStartReportsTheWindowsChannelState(t *testing.T) {
 	s, repo := testServer(t)
 	ctx := context.Background()
 	writeFile(t, repo, "pending.go", "package p\n")
 
-	// No channel signal at all: inactive, no probe.
-	resp := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
-	if !resp.OK {
-		t.Fatalf("start: %s", resp.Error)
-	}
-	if resp.ChannelState != "inactive" || len(s.injectCalls()) != 0 {
-		t.Fatalf("state %q, probes %d; want inactive, 0", resp.ChannelState, len(s.injectCalls()))
-	}
-
-	// Resolve-poll-only pending: no stream is attached, so there is nothing to
-	// probe.
-	if resp := s.handleResolve(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Consumer: "channel"}); !resp.OK {
-		t.Fatalf("resolve: %s", resp.Error)
-	}
-	resp = s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
-	if !resp.OK {
-		t.Fatalf("start: %s", resp.Error)
-	}
-	if resp.ChannelState != "pending" || len(s.injectCalls()) != 0 {
-		t.Fatalf("state %q, probes %d; want pending, 0 (poll only)", resp.ChannelState, len(s.injectCalls()))
-	}
-
-	// Attached but unproven: one probe, aimed at exactly this window's stream.
-	detach := s.activity.Attach(resp.ReviewID, channelConsumer, 100)
-	defer detach()
-	resp = s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
-	if !resp.OK {
-		t.Fatalf("start: %s", resp.Error)
-	}
-	calls := s.injectCalls()
-	if resp.ChannelState != "pending" || len(calls) != 1 {
-		t.Fatalf("state %q, probes %d; want pending, 1", resp.ChannelState, len(calls))
-	}
-	if want := (injectCall{resp.ReviewID, channelConsumer, 100, probePayload}); calls[0] != want {
-		t.Fatalf("probe = %+v, want %+v", calls[0], want)
-	}
-
-	// Proven: active, and start stops probing.
-	s.activity.MarkProven(100)
-	resp = s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
-	if !resp.OK {
-		t.Fatalf("start: %s", resp.Error)
-	}
-	if resp.ChannelState != "active" || len(s.injectCalls()) != 1 {
-		t.Fatalf("state %q, probes %d; want active, still 1", resp.ChannelState, len(s.injectCalls()))
+	for _, cs := range []ccd.ChannelState{ccd.ChannelInactive, ccd.ChannelPending, ccd.ChannelActive} {
+		s.setChannel(cs)
+		resp := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo})
+		if !resp.OK {
+			t.Fatalf("start: %s", resp.Error)
+		}
+		if resp.ChannelState != string(cs) {
+			t.Fatalf("start reported %q, want %q", resp.ChannelState, cs)
+		}
+		if reads := s.channelReadsOf(); reads[len(reads)-1] != resp.ReviewID {
+			t.Fatalf("start read the channel of %q, want its review %q", reads[len(reads)-1], resp.ReviewID)
+		}
 	}
 }

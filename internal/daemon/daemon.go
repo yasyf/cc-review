@@ -46,19 +46,8 @@ const (
 	organizePrompt = "Organize this review into chapters and rate per-file risk."
 
 	// channelConsumer is the stream-consumer name the channel server registers
-	// under; channelState keys presence to it.
+	// under; ccd.Server.ChannelState keys presence to it.
 	channelConsumer = "channel"
-
-	// channelPollWindow is how recent a channel resolve poll must be to count as
-	// presence; it only distinguishes pending from inactive.
-	channelPollWindow = 3 * time.Second
-
-	// probePayload is the solicited delivery check start injects into a window's
-	// attached-but-unproven channel. It lands mid-turn — start only runs inside a
-	// skill turn — so the model proves the round trip (channel-ack) without an
-	// unsolicited wake; never persisted, so it can neither replay nor reach the
-	// browser.
-	probePayload = `{"type":"channel.probe","note":"delivery probe; run channel-ack; no reply needed"}`
 
 	// stalePendingTTL is how long a human AI-bar request may sit pending before
 	// the sweeper fails it.
@@ -85,8 +74,8 @@ var userGitHub = func() *github.Client { return github.New(github.UserTokenSourc
 var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 
 // review holds the cross-handler state the substrate's HandlerCtx does not carry:
-// the shared decision ledger, the daemon logger, the SSE inject hook
-// ((*ccd.Server).InjectEvent) that channelStateProbed solicits probes through,
+// the shared decision ledger, the daemon logger, the window's channel route
+// ((*ccd.Server).ChannelState, which also probes an unproven route),
 // the GitHub client and clone URL a pull-request capture reads through, the
 // hook that hands an opened pull-request review to its poller, the DB and
 // Append chokepoint an off-RPC recapture writes through, the tailnet serving
@@ -96,7 +85,7 @@ var lifecycle = subject.Lifecycle{Initial: statusOpen, Closed: "closed"}
 type review struct {
 	decisions      *decisions.Log
 	log            *log.Logger
-	injectEvent    func(subjectID, consumer string, pid int, payload string) int
+	channelState   func(hc ccd.HandlerCtx, subjectID string) ccd.ChannelState
 	gh             *github.Client
 	cloneURL       func(github.Repo) string
 	prReviewOpened func(ctx context.Context, reviewID string)
@@ -170,7 +159,9 @@ func newDaemon(ctx context.Context, ledger *decisions.Log, fixedPort int, tp *me
 		return nil, nil, err
 	}
 	rv.tailnet = tn
-	rv.injectEvent = s.InjectEvent
+	rv.channelState = func(hc ccd.HandlerCtx, subjectID string) ccd.ChannelState {
+		return s.ChannelState(hc, subjectID, channelConsumer)
+	}
 	rv.prsync = rv.newPRSync(s)
 	rv.prReviewOpened = rv.startPRSync
 	rv.db, rv.append = s.DB, s.Append
@@ -337,39 +328,6 @@ func (rv *review) sweepLoop(ctx context.Context, s *ccd.Server) {
 			}
 		}
 	}
-}
-
-// channelState classifies this window's channel route. active requires a proven
-// round trip (the model acked a delivered channel tag) AND a channel consumer
-// currently attached to this review's SSE stream — presence alone can never
-// produce active, because Claude Code silently drops channel notifications when
-// channels are unavailable. An attached or recently-polling but unproven consumer
-// is pending; no consumer is inactive. The pid key keeps window A's signals from
-// lighting up window B's start.
-func channelState(act *ccd.Activity, reviewID, scope string, pid int) string {
-	attached := act.Attached(reviewID, channelConsumer, pid)
-	if attached && act.Proven(pid) {
-		return "active"
-	}
-	if attached || act.PolledSince(scope, channelConsumer, pid, channelPollWindow) {
-		return "pending"
-	}
-	return "inactive"
-}
-
-// channelStateProbed classifies the window's channel route and, when the route
-// is wired but unproven, solicits the proof: one channel.probe frame injected
-// into exactly this window's attached channel stream. Pid-targeted so a parallel
-// window's idle agent is never woken; skipped when nothing is attached (a
-// resolve-poll-only pending has no stream to prove) or the window is already
-// proven.
-func (rv *review) channelStateProbed(hc ccd.HandlerCtx, subjectID string) string {
-	cs := channelState(hc.Activity, subjectID, hc.Scope, hc.Window.ClaudePID)
-	if cs == "pending" && hc.Activity.Attached(subjectID, channelConsumer, hc.Window.ClaudePID) {
-		n := rv.injectEvent(subjectID, channelConsumer, hc.Window.ClaudePID, probePayload)
-		rv.log.Printf("channel probe -> %s pid=%d streams=%d", subjectID, hc.Window.ClaudePID, n)
-	}
-	return cs
 }
 
 func reviewURL(httpPort int, slug string) string {
