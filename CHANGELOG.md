@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.2] - 2026-10-09
+
 ### Changed
 
 - `start` reads the window's channel route from cc-interact v0.37.0's
