@@ -62,6 +62,7 @@ type fixture struct {
 	snapshots    atomic.Int64
 	holdSnapshot atomic.Pointer[chan struct{}]
 	watched      atomic.Bool
+	paused       atomic.Bool
 	afterFetch   atomic.Pointer[func()]
 	onCapture    atomic.Pointer[func()]
 	failAppend   atomic.Bool
@@ -139,6 +140,7 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 		Client:    f.client,
 		Watched:   func(string) bool { return f.watched.Load() },
 		Recapture: f.recapture,
+		Paused:    func() bool { return f.paused.Load() },
 		Background: func(fn func(context.Context)) {
 			go fn(ctx)
 		},
@@ -874,6 +876,29 @@ func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
 	if n := f.requests.Load(); n != limited {
 		t.Fatalf("watched poller made %d requests after GitHub rate-limited it", n-limited)
 	}
+}
+
+func TestPausedPollerQueriesNothingUntilResumed(t *testing.T) {
+	savedWatched := watchedInterval
+	watchedInterval = 5 * time.Millisecond
+	t.Cleanup(func() { watchedInterval = savedWatched })
+	f := newFixture(t, true)
+	if _, err := f.syncer.viewerLogin(t.Context()); err != nil {
+		t.Fatalf("viewer: %v", err)
+	}
+	f.requests.Store(0)
+	f.paused.Store(true)
+	f.watched.Store(true)
+	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.syncer.Stop(f.reviewID) })
+	time.Sleep(60 * time.Millisecond)
+	if n := f.requests.Load(); n != 0 {
+		t.Fatalf("paused watched poller made %d requests", n)
+	}
+	f.paused.Store(false)
+	waitFor(t, "poll after resume", func() bool { return f.requests.Load() > 0 })
 }
 
 func TestPollerExitsWhenReviewCloses(t *testing.T) {

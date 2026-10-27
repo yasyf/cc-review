@@ -46,6 +46,10 @@ func Repos() string { return filepath.Join(StateDir(), "repos") }
 // GitHubApp is the cc-review GitHub App's JSON record.
 func GitHubApp() string { return filepath.Join(StateDir(), "github-app.json") }
 
+// SyncPaused is the marker whose presence pauses every pull-request review's
+// GitHub poller; `cc-review github sync pause` writes it.
+func SyncPaused() string { return filepath.Join(StateDir(), "github-sync-paused") }
+
 // GitHubAppLogo is the avatar PNG `cc-review github setup` writes for the app.
 func GitHubAppLogo() string { return filepath.Join(StateDir(), "github-app-logo.png") }
 

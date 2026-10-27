@@ -31,7 +31,7 @@ func newGitHubCmd() *cobra.Command {
 		Short: "Create and inspect the cc-review GitHub App Claude replies as",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newGitHubSetupCmd(), newGitHubStatusCmd())
+	cmd.AddCommand(newGitHubSetupCmd(), newGitHubStatusCmd(), newGitHubSyncCmd())
 	return cmd
 }
 
@@ -111,6 +111,40 @@ func newGitHubStatusCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory (defaults to the current directory)")
 	return cmd
+}
+
+func newGitHubSyncCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:       "sync pause|resume|status",
+		Short:     "Pause or resume every pull-request review's GitHub poller",
+		Long:      "Pause stops every pull-request review from polling GitHub for comments and pushes until resume; starting or resuming a review still reads its pull request once.",
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: []string{"pause", "resume", "status"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "pause":
+				if err := paths.EnsureStateDir(); err != nil {
+					return err
+				}
+				if err := os.WriteFile(paths.SyncPaused(), nil, 0o600); err != nil {
+					return err
+				}
+			case "resume":
+				if err := os.Remove(paths.SyncPaused()); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			case "status":
+			default:
+				return fmt.Errorf("unknown sync action %q: want pause, resume, or status", args[0])
+			}
+			state := "running"
+			if _, err := os.Stat(paths.SyncPaused()); err == nil {
+				state = "paused"
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "sync: "+state)
+			return nil
+		},
+	}
 }
 
 func printAppStatus(w io.Writer, app ghapp.App, repo github.Repo, tokenErr error) error {

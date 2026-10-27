@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-27
+
+### Added
+
+- `cc-review github sync pause|resume|status` pauses every pull-request review's GitHub poller until resumed. Starting or resuming a review still reads its pull request once. Use it when the GitHub quota is shared with tools that need it more.
+
 ## [0.41.2] - 2026-10-27
 
 ### Fixed
