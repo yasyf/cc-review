@@ -50,23 +50,24 @@ const (
 var testRepo = github.Repo{Owner: "octo", Name: "widgets"}
 
 type fixture struct {
-	t           *testing.T
-	gh          *githubtest.Server
-	cc          *ccstore.Store
-	st          *store.Store
-	bus         *ccevent.Bus
-	activity    *ccd.Activity
-	syncer      *Syncer
-	reviewID    string
-	requests    atomic.Int64
-	snapshots   atomic.Int64
-	watched     atomic.Bool
-	afterFetch  atomic.Pointer[func()]
-	onCapture   atomic.Pointer[func()]
-	failAppend  atomic.Bool
-	rateLimited atomic.Bool
-	client      *github.Client
-	cursor      int64
+	t            *testing.T
+	gh           *githubtest.Server
+	cc           *ccstore.Store
+	st           *store.Store
+	bus          *ccevent.Bus
+	activity     *ccd.Activity
+	syncer       *Syncer
+	reviewID     string
+	requests     atomic.Int64
+	snapshots    atomic.Int64
+	holdSnapshot atomic.Pointer[chan struct{}]
+	watched      atomic.Bool
+	afterFetch   atomic.Pointer[func()]
+	onCapture    atomic.Pointer[func()]
+	failAppend   atomic.Bool
+	rateLimited  atomic.Bool
+	client       *github.Client
+	cursor       int64
 }
 
 type countingToken struct {
@@ -123,6 +124,9 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 		}
 		if bytes.Contains(body, []byte("...PRSync")) {
 			f.snapshots.Add(1)
+			if hold := f.holdSnapshot.Load(); hold != nil {
+				<-*hold
+			}
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		proxy.ServeHTTP(w, r)
@@ -816,6 +820,34 @@ func TestReviewsOfTheSamePullRequestsShareOneSnapshot(t *testing.T) {
 	f.pollWith(f.pollerFor(other, time.Hour))
 	if n := f.snapshots.Load(); n != 2 {
 		t.Fatalf("a poll after a write reused the snapshot from before it: %d snapshots, want 2", n)
+	}
+}
+
+func TestConcurrentPollsOfTheSamePullRequestsJoinOneSnapshot(t *testing.T) {
+	f := newFixture(t, true)
+	other := f.addReview("s2")
+	f.snapshots.Store(0)
+	hold := make(chan struct{})
+	f.holdSnapshot.Store(&hold)
+
+	errs := make(chan error, 2)
+	for _, id := range []string{f.reviewID, other} {
+		p := f.pollerFor(id, time.Hour)
+		go func() {
+			_, err := f.syncer.poll(t.Context(), p)
+			errs <- err
+		}()
+		waitFor(t, "snapshot in flight", func() bool { return f.snapshots.Load() == 1 })
+	}
+	time.Sleep(20 * time.Millisecond)
+	close(hold)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("poll: %v", err)
+		}
+	}
+	if n := f.snapshots.Load(); n != 1 {
+		t.Fatalf("two concurrent polls of the same pull requests fetched %d snapshots, want 1", n)
 	}
 }
 

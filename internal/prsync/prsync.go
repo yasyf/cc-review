@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/yasyf/cc-review/internal/ghapp"
 	"github.com/yasyf/cc-review/internal/github"
@@ -50,9 +51,10 @@ type Syncer struct {
 	pollers map[string]*poller
 	applies map[string]*applyGate
 
-	snapMu sync.Mutex
-	snaps  map[string]sharedSnapshot
-	writes atomic.Uint64
+	snapMu   sync.Mutex
+	snaps    map[string]sharedSnapshot
+	writes   atomic.Uint64
+	fetching singleflight.Group
 }
 
 type sharedSnapshot struct {
@@ -88,8 +90,8 @@ func (s *Syncer) Exclusive(reviewID string) (release func()) {
 	g := s.gate(reviewID)
 	g.mu.Lock()
 	return func() {
-		g.writes.Add(1)
 		s.writes.Add(1)
+		g.writes.Add(1)
 		g.mu.Unlock()
 	}
 }

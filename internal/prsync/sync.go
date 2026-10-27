@@ -153,8 +153,9 @@ func (s *Syncer) fetch(ctx context.Context, st *store.Store, reviewID string, re
 	return v, sections, snaps, nil
 }
 
-// snapshot reads the pull requests' snapshot, reusing one another review of
-// the same pull requests fetched within maxAge when no write has landed since.
+// snapshot reads the pull requests' snapshot, reusing or joining one another
+// review of the same pull requests fetched within maxAge when no write has
+// landed since. A zero maxAge always fetches afresh.
 func (s *Syncer) snapshot(ctx context.Context, repo github.Repo, numbers []int, maxAge time.Duration) (map[int]github.PRSnapshot, error) {
 	key := fmt.Sprint(repo, numbers)
 	writes := s.writes.Load()
@@ -164,6 +165,19 @@ func (s *Syncer) snapshot(ctx context.Context, repo github.Repo, numbers []int, 
 	if ok && shared.writes == writes && time.Since(shared.at) < maxAge {
 		return shared.snaps, nil
 	}
+	if maxAge == 0 {
+		return s.fetchSnapshot(ctx, key, repo, numbers, writes)
+	}
+	snaps, err, _ := s.fetching.Do(fmt.Sprint(key, writes), func() (any, error) {
+		return s.fetchSnapshot(ctx, key, repo, numbers, writes)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return snaps.(map[int]github.PRSnapshot), nil
+}
+
+func (s *Syncer) fetchSnapshot(ctx context.Context, key string, repo github.Repo, numbers []int, writes uint64) (map[int]github.PRSnapshot, error) {
 	snaps, err := s.cfg.Client.Snapshot(ctx, repo, numbers)
 	if err != nil {
 		return nil, err
