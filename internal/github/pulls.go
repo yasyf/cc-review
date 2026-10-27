@@ -65,10 +65,10 @@ func (c *Client) PullRequest(ctx context.Context, ref PRRef) (PullRequest, error
 		} `json:"repository"`
 	}
 	vars := map[string]any{"owner": ref.Repo.Owner, "name": ref.Repo.Name, "number": ref.Number}
-	if err := c.GraphQL(ctx, pullRequestQuery, vars, &out); err != nil {
+	if err := c.read(ctx, ref.Repo, pullRequestQuery, vars, &out); err != nil {
 		return PullRequest{}, fmt.Errorf("read %s: %w", ref, err)
 	}
-	return c.pullRequestOf(ctx, out.Repository.PullRequest)
+	return c.pullRequestOf(ctx, ref.Repo, out.Repository.PullRequest)
 }
 
 // OpenPRsWithHead lists the open pull requests from repo's own branch.
@@ -92,14 +92,14 @@ func (c *Client) openPRs(ctx context.Context, repo Repo, filter map[string]any) 
 				PullRequests connection[gqlPR] `json:"pullRequests"`
 			} `json:"repository"`
 		}
-		if err := c.GraphQL(ctx, openPRsQuery, vars, &out); err != nil {
+		if err := c.read(ctx, repo, openPRsQuery, vars, &out); err != nil {
 			return nil, fmt.Errorf("list open pull requests of %s %v: %w", repo, filter, err)
 		}
 		for _, g := range out.Repository.PullRequests.Nodes {
 			if g.IsCrossRepository {
 				continue
 			}
-			pr, err := c.pullRequestOf(ctx, g)
+			pr, err := c.pullRequestOf(ctx, repo, g)
 			if err != nil {
 				return nil, err
 			}

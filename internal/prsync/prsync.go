@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	watchedInterval = time.Minute
-	idleInterval    = 5 * time.Minute
+	watchedInterval  = time.Minute
+	rateLimitBackoff = 5 * time.Minute
 )
 
 // ErrAppMissing refuses a poller before the cc-review GitHub App exists: without
@@ -43,8 +43,10 @@ type Config struct {
 	Log        *log.Logger
 }
 
-// Syncer owns the per-review pollers. Reviews of the same pull requests share
-// one GitHub snapshot per poll interval, so a second review adds no queries.
+// Syncer owns the per-review pollers. A poller reads GitHub once when it starts,
+// then only while a viewer has the review open. Reviews of the same pull
+// requests share one GitHub snapshot per poll interval, so a second review adds
+// no queries.
 type Syncer struct {
 	cfg Config
 
@@ -75,6 +77,7 @@ type poller struct {
 	maxAge   time.Duration
 	app      ghapp.App
 	viewer   string
+	wake     chan struct{}
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -130,7 +133,7 @@ func (s *Syncer) Start(ctx context.Context, reviewID string) error {
 		return nil
 	}
 	pctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	p := &poller{reviewID: reviewID, app: app, viewer: viewer, cancel: cancel, done: make(chan struct{})}
+	p := &poller{reviewID: reviewID, maxAge: watchedInterval, app: app, viewer: viewer, wake: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
 	s.pollers[reviewID] = p
 	s.cfg.Background(func(daemonCtx context.Context) {
 		stop := context.AfterFunc(daemonCtx, cancel)
@@ -139,6 +142,21 @@ func (s *Syncer) Start(ctx context.Context, reviewID string) error {
 		s.run(pctx, p)
 	})
 	return nil
+}
+
+// Wake polls the review at once when a viewer opens it, unless its poller read
+// GitHub within the watched interval.
+func (s *Syncer) Wake(reviewID string) {
+	s.mu.Lock()
+	p, ok := s.pollers[reviewID]
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Stop cancels the review's poller and waits for it to exit.
@@ -190,18 +208,12 @@ func (s *Syncer) forget(p *poller) {
 func (s *Syncer) run(ctx context.Context, p *poller) {
 	t := time.NewTicker(watchedInterval)
 	defer t.Stop()
-	var last time.Time
-	limited := false
+	var last, held time.Time
+	due := true
 	for {
-		watched := s.cfg.Watched(p.reviewID) && !limited
-		if !s.cfg.Paused() && (last.IsZero() || watched || time.Since(last) >= idleInterval) {
-			p.maxAge = idleInterval
-			if watched {
-				p.maxAge = watchedInterval
-			}
+		if due && !s.cfg.Paused() && time.Now().After(held) {
 			live, err := s.poll(ctx, p)
-			last = time.Now()
-			limited = errors.Is(err, github.ErrRateLimited)
+			last, held = time.Now(), heldUntil(err)
 			if err != nil && ctx.Err() == nil {
 				s.cfg.Log.Printf("prsync %s: %v", p.reviewID, err)
 			}
@@ -212,7 +224,21 @@ func (s *Syncer) run(ctx context.Context, p *poller) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-p.wake:
+			due = time.Since(last) >= watchedInterval
 		case <-t.C:
+			due = s.cfg.Watched(p.reviewID)
 		}
 	}
+}
+
+func heldUntil(err error) time.Time {
+	var limit *github.RateLimitError
+	switch {
+	case errors.As(err, &limit) && !limit.Reset.IsZero():
+		return limit.Reset
+	case errors.Is(err, github.ErrRateLimited):
+		return time.Now().Add(rateLimitBackoff)
+	}
+	return time.Time{}
 }

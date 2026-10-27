@@ -67,7 +67,7 @@ const (
 	gateErrorReason = "Edits are blocked because the review status could not be read. Run `cc-review status`, then `cc-review stop` if the daemon is wedged."
 )
 
-var userGitHub = func() *github.Client { return github.New(github.UserTokenSource()) }
+var userGitHub = func() *github.Client { return github.New(github.UserTokenSource(), github.WithCCXReads()) }
 
 // lifecycle names the subject statuses the resolver writes: a fresh review is
 // born open; a fresh start closes the window's prior review.
@@ -187,6 +187,7 @@ func newDaemon(ctx context.Context, ledger *decisions.Log, fixedPort int, tp *me
 		Log:               rv.log,
 		Append:            s.Append,
 		ConsumerConnected: s.ConsumerConnected,
+		Viewed:            rv.prsync.Wake,
 		Outbound:          rv.outbound,
 		Dist:              web.Dist(),
 		GitHub:            rv.gh,

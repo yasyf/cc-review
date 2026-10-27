@@ -64,7 +64,7 @@ func (c *Client) Snapshot(ctx context.Context, repo Repo, numbers []int) (map[in
 	var out struct {
 		Repository map[string]gqlPR `json:"repository"`
 	}
-	if err := c.GraphQL(ctx, query.String(), map[string]any{"owner": repo.Owner, "name": repo.Name}, &out); err != nil {
+	if err := c.read(ctx, repo, query.String(), map[string]any{"owner": repo.Owner, "name": repo.Name}, &out); err != nil {
 		return nil, fmt.Errorf("snapshot %s %v: %w", repo, numbers, err)
 	}
 	snaps := make(map[int]PRSnapshot, len(numbers))
@@ -73,7 +73,7 @@ func (c *Client) Snapshot(ctx context.Context, repo Repo, numbers []int) (map[in
 		if !ok {
 			return nil, fmt.Errorf("snapshot %s: no pull request #%d in the response", repo, n)
 		}
-		snap, err := c.snapshotOf(ctx, g)
+		snap, err := c.snapshotOf(ctx, repo, g)
 		if err != nil {
 			return nil, fmt.Errorf("snapshot %s#%d: %w", repo, n, err)
 		}
@@ -82,24 +82,24 @@ func (c *Client) Snapshot(ctx context.Context, repo Repo, numbers []int) (map[in
 	return snaps, nil
 }
 
-func (c *Client) snapshotOf(ctx context.Context, g gqlPR) (PRSnapshot, error) {
-	pr, err := c.pullRequestOf(ctx, g)
+func (c *Client) snapshotOf(ctx context.Context, repo Repo, g gqlPR) (PRSnapshot, error) {
+	pr, err := c.pullRequestOf(ctx, repo, g)
 	if err != nil {
 		return PRSnapshot{}, err
 	}
-	threads, err := followPages(ctx, c, "ReviewThreadsPage", g.ID, "PullRequest", "reviewThreads", "...ThreadFields", threadFragment, g.ReviewThreads)
+	threads, err := followPages(ctx, c, repo, "ReviewThreadsPage", g.ID, "PullRequest", "reviewThreads", "...ThreadFields", threadFragment, g.ReviewThreads)
 	if err != nil {
 		return PRSnapshot{}, err
 	}
 	snap := PRSnapshot{PR: pr, Threads: make([]Thread, 0, len(threads))}
 	for _, t := range threads {
-		thread, err := c.threadOf(ctx, t)
+		thread, err := c.threadOf(ctx, repo, t)
 		if err != nil {
 			return PRSnapshot{}, err
 		}
 		snap.Threads = append(snap.Threads, thread)
 	}
-	issueComments, err := followPages(ctx, c, "IssueCommentsPage", g.ID, "PullRequest", "comments", "...IssueCommentFields", issueCommentFragment, g.Comments)
+	issueComments, err := followPages(ctx, c, repo, "IssueCommentsPage", g.ID, "PullRequest", "comments", "...IssueCommentFields", issueCommentFragment, g.Comments)
 	if err != nil {
 		return PRSnapshot{}, err
 	}
@@ -109,8 +109,8 @@ func (c *Client) snapshotOf(ctx context.Context, g gqlPR) (PRSnapshot, error) {
 	return snap, nil
 }
 
-func (c *Client) threadOf(ctx context.Context, t gqlThread) (Thread, error) {
-	nodes, err := followPages(ctx, c, "ThreadCommentsPage", t.ID, "PullRequestReviewThread", "comments", "...ReviewCommentFields", reviewCommentFragment, t.Comments)
+func (c *Client) threadOf(ctx context.Context, repo Repo, t gqlThread) (Thread, error) {
+	nodes, err := followPages(ctx, c, repo, "ThreadCommentsPage", t.ID, "PullRequestReviewThread", "comments", "...ReviewCommentFields", reviewCommentFragment, t.Comments)
 	if err != nil {
 		return Thread{}, err
 	}

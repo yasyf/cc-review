@@ -32,13 +32,14 @@ type appendFunc = func(ctx context.Context, e *ccevent.Event) (int64, error)
 
 // Deps carries a lazy DB accessor because the daemon's store opens only once
 // its runtime activates, after mount time, plus the REST plane's other process
-// dependencies.
+// dependencies. Viewed hears each page load of a review.
 type Deps struct {
 	DB                func() *sql.DB
 	Decisions         *decisions.Log
 	Log               *log.Logger
 	Append            appendFunc
 	ConsumerConnected func(reviewID string) bool
+	Viewed            func(reviewID string)
 	Outbound          *outbound.Syncer
 	Dist              fs.FS
 	GitHub            *github.Client
@@ -51,6 +52,7 @@ type Server struct {
 	log       *log.Logger
 	append    appendFunc
 	connected func(reviewID string) bool
+	viewed    func(reviewID string)
 	outbound  *outbound.Syncer
 
 	provMu     sync.Mutex
@@ -71,6 +73,7 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 		log:        d.Log,
 		append:     d.Append,
 		connected:  d.ConsumerConnected,
+		viewed:     d.Viewed,
 		outbound:   d.Outbound,
 		provCache:  make(map[int64][]provenanceItem),
 		provWarned: make(map[string]bool),

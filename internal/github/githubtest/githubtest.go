@@ -10,6 +10,8 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -108,6 +110,65 @@ func (s *Server) URL() string { return s.srv.URL }
 func (s *Server) Client(token string) *github.Client {
 	return github.New(StaticToken(token), github.WithBaseURL(s.srv.URL, s.srv.URL+"/graphql"))
 }
+
+// CCXCall is one run of a FakeCCX: the GH_REPO and CCX_CALLER it saw and its
+// arguments joined by spaces.
+type CCXCall struct {
+	Repo   string
+	Caller string
+	Args   string
+}
+
+// FakeCCX is a ccx on PATH that answers `vcs gh -- api graphql --input -` from
+// the server, or refuses every run once Refuse names its stderr.
+type FakeCCX struct {
+	t   *testing.T
+	dir string
+}
+
+// CCX fronts PATH with a FakeCCX that authenticates to the server as token.
+func (s *Server) CCX(t *testing.T, token string) *FakeCCX {
+	t.Helper()
+	f := &FakeCCX{t: t, dir: t.TempDir()}
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\t%%s\t%%s\n' "$GH_REPO" "$CCX_CALLER" "$*" >> %[1]q
+if [ -f %[2]q ]; then cat %[2]q >&2; exit 1; fi
+exec curl -sS -H 'Authorization: Bearer %[3]s' --data-binary @- %[4]q
+`, f.path("calls"), f.path("refusal"), token, s.srv.URL+"/graphql")
+	if err := os.WriteFile(f.path("ccx"), []byte(script), 0o755); err != nil { //nolint:gosec // G306: test stub must be executable (0o755) so the code under test can exec it as ccx.
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", f.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return f
+}
+
+// Refuse makes every later run print stderr and exit 1 without answering.
+func (f *FakeCCX) Refuse(stderr string) {
+	f.t.Helper()
+	if err := os.WriteFile(f.path("refusal"), []byte(stderr), 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// Calls lists the runs so far, oldest first.
+func (f *FakeCCX) Calls() []CCXCall {
+	f.t.Helper()
+	data, err := os.ReadFile(f.path("calls")) //nolint:gosec // G304: the path is this fixture's own t.TempDir() log, not caller input.
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var calls []CCXCall
+	for line := range strings.Lines(string(data)) {
+		fields := strings.SplitN(strings.TrimSuffix(line, "\n"), "\t", 3)
+		calls = append(calls, CCXCall{Repo: fields[0], Caller: fields[1], Args: fields[2]})
+	}
+	return calls
+}
+
+func (f *FakeCCX) path(name string) string { return filepath.Join(f.dir, name) }
 
 // Login makes token authenticate as login. A login ending in [bot] is served
 // as a Bot actor over GraphQL, the way GitHub serves an app's bot.

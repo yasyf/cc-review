@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-27
+
+### Changed
+
+- A pull-request review reads GitHub once when it opens, then only while a browser has it open, instead of every 5 minutes for as long as it stays open. Opening the page reads at once unless the last read is under a minute old.
+- Reads go through `ccx vcs gh`, which charges them to the machine's shared GitHub quota under the caller `cc-review` and, where a GitHub App is installed on the repository, spends the App's quota instead of yours. Comments, replies, resolves and submits still use your `gh auth token`. PR mode now needs `ccx` on `PATH`.
+- When ccx refuses a read at its rate-limit floor, the poller waits until the reset time the refusal names; any other rate-limit refusal waits 5 minutes.
+
 ## [0.42.1] - 2026-10-27
 
 ### Fixed
