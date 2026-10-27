@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,21 +49,22 @@ const (
 var testRepo = github.Repo{Owner: "octo", Name: "widgets"}
 
 type fixture struct {
-	t          *testing.T
-	gh         *githubtest.Server
-	cc         *ccstore.Store
-	st         *store.Store
-	bus        *ccevent.Bus
-	activity   *ccd.Activity
-	syncer     *Syncer
-	reviewID   string
-	requests   atomic.Int64
-	watched    atomic.Bool
-	afterFetch atomic.Pointer[func()]
-	onCapture  atomic.Pointer[func()]
-	failAppend atomic.Bool
-	client     *github.Client
-	cursor     int64
+	t           *testing.T
+	gh          *githubtest.Server
+	cc          *ccstore.Store
+	st          *store.Store
+	bus         *ccevent.Bus
+	activity    *ccd.Activity
+	syncer      *Syncer
+	reviewID    string
+	requests    atomic.Int64
+	watched     atomic.Bool
+	afterFetch  atomic.Pointer[func()]
+	onCapture   atomic.Pointer[func()]
+	failAppend  atomic.Bool
+	rateLimited atomic.Bool
+	client      *github.Client
+	cursor      int64
 }
 
 type countingToken struct {
@@ -112,9 +114,15 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 		t.Fatal(err)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
-	proxy.ModifyResponse = func(*http.Response) error {
+	proxy.ModifyResponse = func(resp *http.Response) error {
 		if hook := f.afterFetch.Swap(nil); hook != nil {
 			(*hook)()
+		}
+		if f.rateLimited.Load() && resp.Request.URL.Path == "/graphql" {
+			body := `{"errors":[{"type":"RATE_LIMITED","message":"API rate limit already exceeded for user ID 1."}]}`
+			resp.Body = io.NopCloser(strings.NewReader(body))
+			resp.ContentLength = int64(len(body))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		}
 		return nil
 	}
@@ -731,7 +739,7 @@ func (f *fixture) stackVersionID() int64 {
 
 func TestPollerIntervalFollowsWatched(t *testing.T) {
 	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
-	t.Cleanup(func() { watchedInterval, idleInterval = 15*time.Second, 2*time.Minute })
+	t.Cleanup(func() { watchedInterval, idleInterval = 15*time.Second, 5*time.Minute })
 	f := newFixture(t, true)
 
 	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {
@@ -761,6 +769,28 @@ func TestPollerIntervalFollowsWatched(t *testing.T) {
 	f.syncer.Stop(f.reviewID)
 	if f.syncer.running(f.reviewID) {
 		t.Fatal("poller still registered after Stop")
+	}
+}
+
+func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
+	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
+	t.Cleanup(func() { watchedInterval, idleInterval = 15*time.Second, 5*time.Minute })
+	f := newFixture(t, true)
+	if _, err := f.syncer.viewerLogin(t.Context()); err != nil {
+		t.Fatalf("viewer: %v", err)
+	}
+	f.requests.Store(0)
+	f.watched.Store(true)
+	f.rateLimited.Store(true)
+
+	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitFor(t, "rate-limited poll", func() bool { return f.requests.Load() > 0 })
+	limited := f.requests.Load()
+	time.Sleep(60 * time.Millisecond)
+	if n := f.requests.Load(); n != limited {
+		t.Fatalf("watched poller made %d requests after GitHub rate-limited it", n-limited)
 	}
 }
 

@@ -20,7 +20,7 @@ import (
 
 var (
 	watchedInterval = 15 * time.Second
-	idleInterval    = 2 * time.Minute
+	idleInterval    = 5 * time.Minute
 )
 
 // ErrAppMissing refuses a poller before the cc-review GitHub App exists: without
@@ -28,8 +28,8 @@ var (
 var ErrAppMissing = errors.New("the cc-review GitHub App is not set up; run `cc-review github setup`")
 
 // Config wires a Syncer to the daemon. Watched reports whether a review has a
-// live viewer or channel consumer; Recapture mints a new version from the PRs'
-// current heads; Background runs daemon-lifecycle work (ccd.Server.Background).
+// live viewer; Recapture mints a new version from the PRs' current heads;
+// Background runs daemon-lifecycle work (ccd.Server.Background).
 type Config struct {
 	DB         func() *sql.DB
 	Append     ccd.AppendFunc
@@ -174,10 +174,12 @@ func (s *Syncer) run(ctx context.Context, p *poller) {
 	t := time.NewTicker(watchedInterval)
 	defer t.Stop()
 	var last time.Time
+	limited := false
 	for {
-		if last.IsZero() || s.cfg.Watched(p.reviewID) || time.Since(last) >= idleInterval {
+		if last.IsZero() || (s.cfg.Watched(p.reviewID) && !limited) || time.Since(last) >= idleInterval {
 			live, err := s.poll(ctx, p)
 			last = time.Now()
+			limited = errors.Is(err, github.ErrRateLimited)
 			if err != nil && ctx.Err() == nil {
 				s.cfg.Log.Printf("prsync %s: %v", p.reviewID, err)
 			}

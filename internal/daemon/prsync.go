@@ -15,7 +15,7 @@ func (rv *review) newPRSync(s *ccd.Server) *prsync.Syncer {
 		Append: s.Append,
 		Client: rv.gh,
 		Watched: func(reviewID string) bool {
-			return s.ConsumerConnected(reviewID) || s.ViewerConnected(reviewID)
+			return s.ViewerConnected(reviewID)
 		},
 		Recapture:  rv.recapturePR,
 		Background: s.Background,

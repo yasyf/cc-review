@@ -28,6 +28,9 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrUnauthorized reports a 401: the token does not authenticate here.
 	ErrUnauthorized = errors.New("unauthorized")
+	// ErrRateLimited reports a 429, a 403 whose message names a rate limit, or
+	// a GraphQL error typed RATE_LIMITED.
+	ErrRateLimited = errors.New("rate limited")
 )
 
 // TokenSource yields the bearer token a request authenticates with.
@@ -91,7 +94,8 @@ func New(ts TokenSource, opts ...Option) *Client {
 }
 
 // StatusError is a request that reached GitHub and came back non-2xx. It
-// unwraps to ErrNotFound on 404 and ErrUnauthorized on 401.
+// unwraps to ErrNotFound on 404, ErrUnauthorized on 401, and ErrRateLimited on
+// a rate-limit refusal.
 type StatusError struct {
 	Method  string
 	URL     string
@@ -108,13 +112,17 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("github: %s %s: %d %s", e.Method, e.URL, e.Status, message)
 }
 
-// Unwrap maps 404 to ErrNotFound and 401 to ErrUnauthorized.
+// Unwrap maps 404 to ErrNotFound, 401 to ErrUnauthorized, and a 429 or a 403
+// naming a rate limit to ErrRateLimited.
 func (e *StatusError) Unwrap() error {
-	switch e.Status {
-	case http.StatusNotFound:
+	switch {
+	case e.Status == http.StatusNotFound:
 		return ErrNotFound
-	case http.StatusUnauthorized:
+	case e.Status == http.StatusUnauthorized:
 		return ErrUnauthorized
+	case e.Status == http.StatusTooManyRequests,
+		e.Status == http.StatusForbidden && strings.Contains(strings.ToLower(e.Message), "rate limit"):
+		return ErrRateLimited
 	}
 	return nil
 }
@@ -126,7 +134,8 @@ type GraphQLMessage struct {
 }
 
 // GraphQLError is a 200 response whose body carried GraphQL errors. It
-// unwraps to ErrNotFound when any entry is typed NOT_FOUND.
+// unwraps to ErrNotFound when any entry is typed NOT_FOUND and ErrRateLimited
+// when any is typed RATE_LIMITED.
 type GraphQLError struct {
 	Messages []GraphQLMessage
 }
@@ -140,11 +149,15 @@ func (e *GraphQLError) Error() string {
 	return "github: graphql: " + strings.Join(texts, "; ")
 }
 
-// Unwrap maps a NOT_FOUND entry to ErrNotFound.
+// Unwrap maps a NOT_FOUND entry to ErrNotFound and a RATE_LIMITED entry to
+// ErrRateLimited.
 func (e *GraphQLError) Unwrap() error {
 	for _, m := range e.Messages {
-		if m.Type == "NOT_FOUND" {
+		switch m.Type {
+		case "NOT_FOUND":
 			return ErrNotFound
+		case "RATE_LIMITED":
+			return ErrRateLimited
 		}
 	}
 	return nil

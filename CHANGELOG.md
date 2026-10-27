@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A pull-request review polls GitHub every 15 seconds only while it is open in
+  a browser, and every 5 minutes otherwise, where it used to poll every 15
+  seconds whenever a Claude session's channel was attached and every 2 minutes
+  idle. Each poll spends the user's GraphQL points, so a few dozen open reviews
+  used to exhaust the hourly quota every other `gh` tool shares.
+
+### Fixed
+
+- A poller that GitHub answers as rate-limited waits the full 5 minutes before
+  its next query, even with the review open, where it used to retry every 15
+  seconds against the exhausted quota.
+
 ## [0.40.3] - 2026-10-27
 
 ### Fixed
