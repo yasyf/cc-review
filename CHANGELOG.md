@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-27
+
 ### Changed
 
 - A pull-request review polls GitHub every 15 seconds only while it is open in
