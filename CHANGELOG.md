@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.2] - 2026-10-27
+
 ### Fixed
 
 - GitHub's GraphQL rate-limit error, typed `RATE_LIMIT`, now counts as a rate limit. The poller's back-off never engaged before, so a review open in a browser kept querying every 15 seconds through an exhausted quota.
