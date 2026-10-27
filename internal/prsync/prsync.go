@@ -30,6 +30,7 @@ var ErrAppMissing = errors.New("the cc-review GitHub App is not set up; run `cc-
 
 // Config wires a Syncer to the daemon. Watched reports whether a review has a
 // live viewer; Recapture mints a new version from the PRs' current heads;
+// Paused reports whether every poller should skip its queries;
 // Background runs daemon-lifecycle work (ccd.Server.Background).
 type Config struct {
 	DB         func() *sql.DB
@@ -37,6 +38,7 @@ type Config struct {
 	Client     *github.Client
 	Watched    func(reviewID string) bool
 	Recapture  func(ctx context.Context, reviewID string) error
+	Paused     func() bool
 	Background func(fn func(context.Context))
 	Log        *log.Logger
 }
@@ -192,7 +194,7 @@ func (s *Syncer) run(ctx context.Context, p *poller) {
 	limited := false
 	for {
 		watched := s.cfg.Watched(p.reviewID) && !limited
-		if last.IsZero() || watched || time.Since(last) >= idleInterval {
+		if !s.cfg.Paused() && (last.IsZero() || watched || time.Since(last) >= idleInterval) {
 			p.maxAge = idleInterval
 			if watched {
 				p.maxAge = watchedInterval

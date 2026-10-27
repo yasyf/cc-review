@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"os"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
 
+	"github.com/yasyf/cc-review/internal/paths"
 	"github.com/yasyf/cc-review/internal/prsync"
 	"github.com/yasyf/cc-review/internal/store"
 )
@@ -17,7 +19,11 @@ func (rv *review) newPRSync(s *ccd.Server) *prsync.Syncer {
 		Watched: func(reviewID string) bool {
 			return s.ViewerConnected(reviewID)
 		},
-		Recapture:  rv.recapturePR,
+		Recapture: rv.recapturePR,
+		Paused: func() bool {
+			_, err := os.Stat(paths.SyncPaused())
+			return err == nil
+		},
 		Background: s.Background,
 		Log:        rv.log,
 	})
