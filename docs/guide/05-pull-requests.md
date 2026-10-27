@@ -79,7 +79,7 @@ Every comment and reply you write carries a sync state. It reads `posting` while
 
 ### GitHub comments flow back in
 
-A poller reads every PR in the stack with one GraphQL query: review threads, top-level comments, reviews, checks, and the head commit. It runs every 15 seconds while the review is open in a browser, every 5 minutes otherwise, and stops when the review closes. When GitHub answers that the token is rate-limited, it waits the full 5 minutes before the next query, even with the review open. The GraphQL quota is shared with every other GitHub tool you run, so one query per stack per poll is a deliberate ceiling.
+A poller reads every PR in the stack with one GraphQL query: review threads, top-level comments, reviews, checks, and the head commit. It runs every 15 seconds while the review is open in a browser, every 5 minutes otherwise, and stops when the review closes. When GitHub answers that the token is rate-limited, it waits the full 5 minutes before the next query, even with the review open. Several reviews of the same pull requests share one snapshot per interval. The GraphQL quota is shared with every other GitHub tool you run, so one query per stack per poll is a deliberate ceiling.
 
 New GitHub comments land in the review as threads, matched by their GitHub id so nothing duplicates. Who wrote a comment decides how it's labeled and where it goes:
 

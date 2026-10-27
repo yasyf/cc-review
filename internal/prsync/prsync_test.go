@@ -1,6 +1,7 @@
 package prsync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,7 @@ type fixture struct {
 	syncer      *Syncer
 	reviewID    string
 	requests    atomic.Int64
+	snapshots   atomic.Int64
 	watched     atomic.Bool
 	afterFetch  atomic.Pointer[func()]
 	onCapture   atomic.Pointer[func()]
@@ -97,18 +99,6 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 	f.gh.SetMergeBase(testRepo, "main", headA, "base")
 	f.gh.SetMergeBase(testRepo, headA, headB, headA)
 
-	sub, err := ccstore.NewSubjectStore(cc.DB()).Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), "s1", "/repo", 100, statusOpen)
-	if err != nil {
-		t.Fatalf("seed review: %v", err)
-	}
-	f.reviewID = sub.ID
-	if err := f.st.SetReviewMeta(ctx, f.reviewID, "", "feat-b", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.st.SetReviewKind(ctx, f.reviewID, store.ReviewKindPR, testRepo.String(), 2); err != nil {
-		t.Fatal(err)
-	}
-
 	upstream, err := url.Parse(f.gh.URL())
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +116,17 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 		}
 		return nil
 	}
-	front := httptest.NewServer(proxy)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if bytes.Contains(body, []byte("...PRSync")) {
+			f.snapshots.Add(1)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		proxy.ServeHTTP(w, r)
+	}))
 	t.Cleanup(front.Close)
 	f.client = github.New(countingToken{token: viewerToken, n: &f.requests}, github.WithBaseURL(front.URL, front.URL+"/graphql"))
 	f.syncer = New(Config{
@@ -140,14 +140,31 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 		},
 		Log: log.New(io.Discard, "", 0),
 	})
-	if err := f.recapture(ctx, f.reviewID); err != nil {
-		t.Fatalf("capture: %v", err)
-	}
+	f.reviewID = f.addReview("s1")
 	f.requests.Store(0)
 	return f
 }
 
-func (f *fixture) recapture(ctx context.Context, _ string) error {
+func (f *fixture) addReview(window string) string {
+	f.t.Helper()
+	ctx := f.t.Context()
+	sub, err := ccstore.NewSubjectStore(f.cc.DB()).Create(ctx, store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), window, "/repo", 100, statusOpen)
+	if err != nil {
+		f.t.Fatalf("seed review: %v", err)
+	}
+	if err := f.st.SetReviewMeta(ctx, sub.ID, "", "feat-b", true); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.st.SetReviewKind(ctx, sub.ID, store.ReviewKindPR, testRepo.String(), 2); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.recapture(ctx, sub.ID); err != nil {
+		f.t.Fatalf("capture: %v", err)
+	}
+	return sub.ID
+}
+
+func (f *fixture) recapture(ctx context.Context, reviewID string) error {
 	if hook := f.onCapture.Swap(nil); hook != nil {
 		(*hook)()
 	}
@@ -162,7 +179,7 @@ func (f *fixture) recapture(ctx context.Context, _ string) error {
 			FilesJSON: "[]", PRNumber: sec.PR.Number,
 		}
 	}
-	_, _, err = f.st.CreateVersion(ctx, f.reviewID, "feat-b", "", "s1", inputs)
+	_, _, err = f.st.CreateVersion(ctx, reviewID, "feat-b", "", "s1", inputs)
 	return err
 }
 
@@ -180,11 +197,23 @@ func (f *fixture) append(ctx context.Context, e *ccevent.Event) (int64, error) {
 
 func (f *fixture) poller() *poller {
 	f.t.Helper()
+	return f.pollerFor(f.reviewID, 0)
+}
+
+func (f *fixture) pollerFor(reviewID string, maxAge time.Duration) *poller {
+	f.t.Helper()
 	app, ok, err := ghapp.Load()
 	if err != nil || !ok {
 		f.t.Fatalf("load app: ok=%v err=%v", ok, err)
 	}
-	return &poller{reviewID: f.reviewID, app: app, viewer: viewerLogin}
+	return &poller{reviewID: reviewID, maxAge: maxAge, app: app, viewer: viewerLogin}
+}
+
+func (f *fixture) pollWith(p *poller) {
+	f.t.Helper()
+	if _, err := f.syncer.poll(f.t.Context(), p); err != nil {
+		f.t.Fatalf("poll: %v", err)
+	}
 }
 
 func (f *fixture) poll() {
@@ -772,6 +801,24 @@ func TestPollerIntervalFollowsWatched(t *testing.T) {
 	}
 }
 
+func TestReviewsOfTheSamePullRequestsShareOneSnapshot(t *testing.T) {
+	f := newFixture(t, true)
+	other := f.addReview("s2")
+	f.snapshots.Store(0)
+
+	f.pollWith(f.pollerFor(f.reviewID, time.Hour))
+	f.pollWith(f.pollerFor(other, time.Hour))
+	if n := f.snapshots.Load(); n != 1 {
+		t.Fatalf("two reviews of the same pull requests fetched %d snapshots, want 1", n)
+	}
+
+	f.syncer.Exclusive(other)()
+	f.pollWith(f.pollerFor(other, time.Hour))
+	if n := f.snapshots.Load(); n != 2 {
+		t.Fatalf("a poll after a write reused the snapshot from before it: %d snapshots, want 2", n)
+	}
+}
+
 func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
 	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
 	t.Cleanup(func() { watchedInterval, idleInterval = 15*time.Second, 5*time.Minute })
@@ -786,6 +833,7 @@ func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
 	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {
 		t.Fatalf("start: %v", err)
 	}
+	t.Cleanup(func() { f.syncer.Stop(f.reviewID) })
 	waitFor(t, "rate-limited poll", func() bool { return f.requests.Load() > 0 })
 	limited := f.requests.Load()
 	time.Sleep(60 * time.Millisecond)

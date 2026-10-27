@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seconds whenever a Claude session's channel was attached and every 2 minutes
   idle. Each poll spends the user's GraphQL points, so a few dozen open reviews
   used to exhaust the hourly quota every other `gh` tool shares.
+- Reviews of the same pull requests share one GitHub snapshot per poll
+  interval, so a second review of a pull request adds no queries. A comment,
+  reply, or resolve written through any review makes the next poll fetch
+  afresh.
 
 ### Fixed
 

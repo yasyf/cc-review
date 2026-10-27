@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	ccevent "github.com/yasyf/cc-interact/event"
 
@@ -104,7 +105,11 @@ func (s *Syncer) poll(ctx context.Context, p *poller) (bool, error) {
 	recaptured := false
 	for {
 		writes := g.writes.Load()
-		v, sections, snaps, err := s.fetch(ctx, st, p.reviewID, repo)
+		maxAge := p.maxAge
+		if recaptured {
+			maxAge = 0
+		}
+		v, sections, snaps, err := s.fetch(ctx, st, p.reviewID, repo, maxAge)
 		if err != nil {
 			return true, err
 		}
@@ -136,16 +141,42 @@ func (s *Syncer) poll(ctx context.Context, p *poller) (bool, error) {
 	}
 }
 
-func (s *Syncer) fetch(ctx context.Context, st *store.Store, reviewID string, repo github.Repo) (store.Version, []store.Section, map[int]github.PRSnapshot, error) {
+func (s *Syncer) fetch(ctx context.Context, st *store.Store, reviewID string, repo github.Repo, maxAge time.Duration) (store.Version, []store.Section, map[int]github.PRSnapshot, error) {
 	v, sections, err := latestSections(ctx, st, reviewID)
 	if err != nil {
 		return store.Version{}, nil, nil, err
 	}
-	snaps, err := s.cfg.Client.Snapshot(ctx, repo, prNumbers(sections))
+	snaps, err := s.snapshot(ctx, repo, prNumbers(sections), maxAge)
 	if err != nil {
 		return store.Version{}, nil, nil, fmt.Errorf("snapshot %s: %w", repo, err)
 	}
 	return v, sections, snaps, nil
+}
+
+// snapshot reads the pull requests' snapshot, reusing one another review of
+// the same pull requests fetched within maxAge when no write has landed since.
+func (s *Syncer) snapshot(ctx context.Context, repo github.Repo, numbers []int, maxAge time.Duration) (map[int]github.PRSnapshot, error) {
+	key := fmt.Sprint(repo, numbers)
+	writes := s.writes.Load()
+	s.snapMu.Lock()
+	shared, ok := s.snaps[key]
+	s.snapMu.Unlock()
+	if ok && shared.writes == writes && time.Since(shared.at) < maxAge {
+		return shared.snaps, nil
+	}
+	snaps, err := s.cfg.Client.Snapshot(ctx, repo, numbers)
+	if err != nil {
+		return nil, err
+	}
+	s.snapMu.Lock()
+	defer s.snapMu.Unlock()
+	for k, old := range s.snaps {
+		if time.Since(old.at) >= idleInterval {
+			delete(s.snaps, k)
+		}
+	}
+	s.snaps[key] = sharedSnapshot{at: time.Now(), writes: writes, snaps: snaps}
+	return snaps, nil
 }
 
 func (s *Syncer) stackMoved(ctx context.Context, repo github.Repo, target int, sections []store.Section, snaps map[int]github.PRSnapshot) (bool, error) {
