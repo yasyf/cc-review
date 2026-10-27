@@ -42,7 +42,9 @@ interface Layout {
   toggleRail(): void;
   dismissRail(): void;
   filesOpen: boolean;
+  filesOverlay: boolean;
   toggleFiles(): void;
+  dismissFiles(): void;
   filesWidth: number;
   setFilesWidth(width: number): void;
 }
@@ -69,8 +71,9 @@ function usePersistedFlag(key: string): [boolean, () => void] {
 export function LayoutFrame({ hasRail, children }: { hasRail: boolean; children: ReactNode }) {
   const narrow = useSyncExternalStore(subscribeNarrow, isNarrow);
   const [railCollapsed, toggleRailCollapsed] = usePersistedFlag(RAIL_COLLAPSED_KEY);
-  const [filesClosed, toggleFiles] = usePersistedFlag(FILES_CLOSED_KEY);
+  const [filesClosed, toggleFilesClosed] = usePersistedFlag(FILES_CLOSED_KEY);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [filesOverlayOpen, setFilesOverlayOpen] = useState(false);
   const [filesWidth, setFilesWidthState] = useState(readFilesWidth);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -89,17 +92,21 @@ export function LayoutFrame({ hasRail, children }: { hasRail: boolean; children:
   }, [filesWidth]);
 
   useEffect(() => {
-    if (!narrow) setOverlayOpen(false);
+    if (narrow) return;
+    setOverlayOpen(false);
+    setFilesOverlayOpen(false);
   }, [narrow]);
 
   useEffect(() => {
-    if (!overlayOpen) return;
+    if (!overlayOpen && !filesOverlayOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOverlayOpen(false);
+      if (e.key !== 'Escape') return;
+      setOverlayOpen(false);
+      setFilesOverlayOpen(false);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [overlayOpen]);
+  }, [overlayOpen, filesOverlayOpen]);
 
   const setFilesWidth = useCallback((next: number) => {
     const clamped = clampFilesWidth(next);
@@ -115,11 +122,30 @@ export function LayoutFrame({ hasRail, children }: { hasRail: boolean; children:
 
   const dismissRail = useCallback(() => setOverlayOpen(false), []);
 
+  const toggleFiles = useCallback(() => {
+    if (narrow) setFilesOverlayOpen((open) => !open);
+    else toggleFilesClosed();
+  }, [narrow, toggleFilesClosed]);
+
+  const dismissFiles = useCallback(() => setFilesOverlayOpen(false), []);
+
+  const filesMode = narrow ? (filesOverlayOpen ? 'overlay' : 'closed') : filesClosed ? 'closed' : 'open';
+
   return (
     <LayoutContext.Provider
-      value={{ railMode, toggleRail, dismissRail, filesOpen: !filesClosed, toggleFiles, filesWidth, setFilesWidth }}
+      value={{
+        railMode,
+        toggleRail,
+        dismissRail,
+        filesOpen: filesMode !== 'closed',
+        filesOverlay: filesMode === 'overlay',
+        toggleFiles,
+        dismissFiles,
+        filesWidth,
+        setFilesWidth,
+      }}
     >
-      <div ref={ref} className="review-root" data-rail={railMode} data-files={filesClosed ? 'closed' : 'open'}>
+      <div ref={ref} className="review-root" data-rail={railMode} data-files={filesMode}>
         {children}
         {railMode === 'overlay' ? <div className="rail-scrim" onClick={dismissRail} /> : null}
       </div>
