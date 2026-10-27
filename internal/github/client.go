@@ -89,6 +89,9 @@ type Client struct {
 	http     *http.Client
 	tokens   TokenSource
 	ccxReads bool
+
+	viewerMu sync.Mutex
+	viewer   string
 }
 
 // New builds a client against api.github.com authenticating through ts.

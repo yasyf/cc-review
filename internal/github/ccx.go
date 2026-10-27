@@ -40,10 +40,13 @@ func readThroughCCX(ctx context.Context, repo Repo, payload []byte) ([]byte, err
 	if err == nil {
 		return out, nil
 	}
-	refusal, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
-	if strings.Contains(strings.ToLower(refusal), "rate limit") {
-		limit := &RateLimitError{Message: refusal}
-		if reset, perr := time.Parse(time.RFC3339, rfc3339.FindString(refusal)); perr == nil {
+	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+	for _, line := range lines {
+		if !strings.Contains(strings.ToLower(line), "rate limit") {
+			continue
+		}
+		limit := &RateLimitError{Message: line}
+		if reset, perr := time.Parse(time.RFC3339, rfc3339.FindString(line)); perr == nil {
 			limit.Reset = reset
 		}
 		return nil, limit
@@ -54,5 +57,5 @@ func readThroughCCX(ctx context.Context, repo Repo, payload []byte) ([]byte, err
 	if json.Unmarshal(out, &envelope) == nil && len(envelope.Errors) > 0 {
 		return nil, &GraphQLError{Messages: envelope.Errors}
 	}
-	return nil, fmt.Errorf("github: ccx vcs gh graphql on %s: %w: %s", repo, err, refusal)
+	return nil, fmt.Errorf("github: ccx vcs gh graphql on %s: %w: %s", repo, err, lines[0])
 }

@@ -300,7 +300,7 @@ func TestCCXRefusals(t *testing.T) {
 		rateLimited bool
 		reset       time.Time
 	}{
-		{"quota floor", "ccx: GitHub rate limit floor: app graphql pool 412/5000 left, resets 9:14AM (2026-10-27T09:14:00-07:00); top callers: cc-review 300\n", true, floorReset},
+		{"quota floor after a warning", "ccx: warning: quota ledger is 3 minutes old\nccx: GitHub rate limit floor: app graphql pool 412/5000 left, resets 9:14AM (2026-10-27T09:14:00-07:00); top callers: cc-review 300\n", true, floorReset},
 		{"gh rate limit", "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n", true, time.Time{}},
 		{"other failure", "gh: Bad credentials (HTTP 401)\n", false, time.Time{}},
 	}
@@ -318,7 +318,10 @@ func TestCCXRefusals(t *testing.T) {
 				t.Fatalf("errors.Is(%v, ErrRateLimited) = %v, want %v", err, got, tc.rateLimited)
 			}
 			var limit *github.RateLimitError
-			if errors.As(err, &limit) && !limit.Reset.Equal(tc.reset) {
+			if errors.As(err, &limit) != tc.rateLimited {
+				t.Fatalf("errors.As(%v, *RateLimitError) = %v, want %v", err, !tc.rateLimited, tc.rateLimited)
+			}
+			if tc.rateLimited && !limit.Reset.Equal(tc.reset) {
 				t.Fatalf("reset = %v, want %v", limit.Reset, tc.reset)
 			}
 		})

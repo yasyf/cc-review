@@ -141,8 +141,13 @@ func (c *Client) MergeBase(ctx context.Context, repo Repo, base, head string) (s
 	return out.MergeBaseCommit.SHA, nil
 }
 
-// Viewer reads the login the client's token authenticates as.
+// Viewer reads the login the client's token authenticates as, once per client.
 func (c *Client) Viewer(ctx context.Context) (string, error) {
+	c.viewerMu.Lock()
+	defer c.viewerMu.Unlock()
+	if c.viewer != "" {
+		return c.viewer, nil
+	}
 	var out struct {
 		Viewer struct {
 			Login string `json:"login"`
@@ -151,7 +156,8 @@ func (c *Client) Viewer(ctx context.Context) (string, error) {
 	if err := c.GraphQL(ctx, `query Viewer { viewer { login } }`, nil, &out); err != nil {
 		return "", err
 	}
-	return out.Viewer.Login, nil
+	c.viewer = out.Viewer.Login
+	return c.viewer, nil
 }
 
 func escapeRef(ref string) string { return (&url.URL{Path: ref}).EscapedPath() }
