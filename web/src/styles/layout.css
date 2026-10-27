@@ -684,6 +684,24 @@
   border-right: var(--hairline);
   background: var(--bg);
 }
+.review-root[data-files='overlay'] .files-pane {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: var(--z-overlay);
+  width: min(var(--files-w), 85%);
+  box-shadow: var(--shadow-3);
+  animation: slide-in var(--dur-2) var(--ease-out);
+}
+.review-root[data-files='overlay'] .pane-resizer {
+  display: none;
+}
+.files-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: calc(var(--z-overlay) - 1);
+  background: var(--scrim);
+  animation: fade-in var(--dur-2) var(--ease-out);
+}
 .files-pane > .seg {
   margin: 0 var(--space-2);
 }

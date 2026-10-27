@@ -144,17 +144,24 @@ function FilesTab({
   stacked: boolean;
   hidden: boolean;
 }) {
-  const { filesOpen } = useLayout();
+  const { filesOpen, filesOverlay, dismissFiles } = useLayout();
   const [currentSection, setCurrentSection] = useState<string | null>(null);
   return (
     <div className="tab-panel tab-panel-files" inert={hidden} data-hidden={hidden || undefined}>
       {filesOpen ? (
         <FilesPane
           session={session}
-          onSelectFile={(ref) => nav.current?.scrollToFile(ref)}
-          onSelectComment={(comment) => nav.current?.scrollToComment(comment)}
+          onSelectFile={(ref) => {
+            dismissFiles();
+            nav.current?.scrollToFile(ref);
+          }}
+          onSelectComment={(comment) => {
+            dismissFiles();
+            nav.current?.scrollToComment(comment);
+          }}
         />
       ) : null}
+      {filesOverlay ? <div className="files-scrim" onClick={dismissFiles} /> : null}
       <div className="diff-column">
         <DiffToolbar session={session} />
         {stacked ? <StackDivider session={session} sectionKey={currentSection} /> : null}
