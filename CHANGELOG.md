@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.3] - 2026-10-27
+
+### Fixed
+
+- `start --pr` opens a pull request whose base branch no open pull request
+  heads, such as a landed parent's branch or Graphite's `graphite-base/<n>`
+  during a restack. The stack stops at that branch and the bottom section
+  diffs against it, where it used to refuse with "which is the head of 0 open
+  pull requests, not one". A base two open pull requests head is still refused.
+- The build moves to `toolchain go1.26.10`, fixing GO-2026-6809 in
+  `crypto/x509`.
+
 ## [0.40.2] - 2026-10-09
 
 ### Changed
