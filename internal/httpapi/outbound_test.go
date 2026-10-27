@@ -109,7 +109,7 @@ func newPRServer(t *testing.T, viewerIsAuthor bool) *prServer {
 	mux := http.NewServeMux()
 	RESTMount(mux, http.NewServeMux(), Deps{
 		DB: cc.DB, Decisions: ledger, Log: log.New(io.Discard, "", 0),
-		Append: cc.AppendEvent, ConsumerConnected: func(string) bool { return false },
+		Append: cc.AppendEvent, ConsumerConnected: func(string) bool { return false }, Viewed: func(string) {},
 		Outbound: syncer, Dist: web.Dist(),
 	})
 	srv := httptest.NewServer(mux)

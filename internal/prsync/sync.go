@@ -185,7 +185,7 @@ func (s *Syncer) fetchSnapshot(ctx context.Context, key string, repo github.Repo
 	s.snapMu.Lock()
 	defer s.snapMu.Unlock()
 	for k, old := range s.snaps {
-		if time.Since(old.at) >= idleInterval {
+		if time.Since(old.at) >= watchedInterval {
 			delete(s.snaps, k)
 		}
 	}

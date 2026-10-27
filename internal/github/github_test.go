@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/github/githubtest"
@@ -249,6 +250,81 @@ func TestSnapshotFollowsEveryPage(t *testing.T) {
 	}
 	if login := got[1].Threads[1].Comments[1].AuthorLogin; login != botLogin {
 		t.Fatalf("bot comment author = %q, want %q", login, botLogin)
+	}
+}
+
+type unusedToken struct{ t *testing.T }
+
+func (u unusedToken) Token(context.Context) (string, error) {
+	u.t.Error("a ccx read resolved the user's token")
+	return "", errors.New("unused")
+}
+
+func TestCCXReadsLeaveTheUserToken(t *testing.T) {
+	s := newServer(t)
+	s.PageSize = 2
+	s.AddPR(repo, github.PullRequest{Number: 1, HeadRefName: "a", HeadRefOid: "a1", BaseRefName: "main", Checks: []github.Check{
+		{Name: "c1", State: "SUCCESS"}, {Name: "c2", State: "SUCCESS"}, {Name: "c3", State: "SUCCESS"},
+	}})
+	ccx := s.CCX(t, appToken)
+	c := github.New(unusedToken{t}, github.WithCCXReads())
+	ctx := context.Background()
+
+	snaps, err := c.Snapshot(ctx, repo, []int{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(snaps[1].PR.Checks); n != 3 {
+		t.Fatalf("snapshot through ccx read %d checks, want 3 across two pages", n)
+	}
+	if _, err := c.PullRequest(ctx, github.PRRef{Repo: repo, Number: 404}); !errors.Is(err, github.ErrNotFound) {
+		t.Fatalf("missing pull request through ccx = %v, want ErrNotFound", err)
+	}
+	calls := ccx.Calls()
+	if len(calls) != 3 {
+		t.Fatalf("ccx ran %d times, want the snapshot, its checks page, and the pull request", len(calls))
+	}
+	want := githubtest.CCXCall{Repo: repo.String(), Caller: "cc-review", Args: "vcs gh -- api graphql --input -"}
+	for _, call := range calls {
+		if call != want {
+			t.Fatalf("ccx call = %+v, want %+v", call, want)
+		}
+	}
+}
+
+func TestCCXRefusals(t *testing.T) {
+	floorReset := time.Date(2026, 10, 27, 9, 14, 0, 0, time.FixedZone("PDT", -7*60*60))
+	cases := []struct {
+		name        string
+		stderr      string
+		rateLimited bool
+		reset       time.Time
+	}{
+		{"quota floor after a warning", "ccx: warning: quota ledger is 3 minutes old\nccx: GitHub rate limit floor: app graphql pool 412/5000 left, resets 9:14AM (2026-10-27T09:14:00-07:00); top callers: cc-review 300\n", true, floorReset},
+		{"gh rate limit", "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n", true, time.Time{}},
+		{"other failure", "gh: Bad credentials (HTTP 401)\n", false, time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newServer(t)
+			s.AddPR(repo, github.PullRequest{Number: 1, HeadRefName: "a", HeadRefOid: "a1", BaseRefName: "main"})
+			s.CCX(t, appToken).Refuse(tc.stderr)
+
+			_, err := github.New(unusedToken{t}, github.WithCCXReads()).PullRequest(context.Background(), github.PRRef{Repo: repo, Number: 1})
+			if err == nil {
+				t.Fatal("refused read succeeded")
+			}
+			if got := errors.Is(err, github.ErrRateLimited); got != tc.rateLimited {
+				t.Fatalf("errors.Is(%v, ErrRateLimited) = %v, want %v", err, got, tc.rateLimited)
+			}
+			var limit *github.RateLimitError
+			if errors.As(err, &limit) != tc.rateLimited {
+				t.Fatalf("errors.As(%v, *RateLimitError) = %v, want %v", err, !tc.rateLimited, tc.rateLimited)
+			}
+			if tc.rateLimited && !limit.Reset.Equal(tc.reset) {
+				t.Fatalf("reset = %v, want %v", limit.Reset, tc.reset)
+			}
+		})
 	}
 }
 

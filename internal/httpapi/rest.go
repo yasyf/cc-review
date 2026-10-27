@@ -152,6 +152,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		notFoundOr500(w, err)
 		return
 	}
+	s.viewed(review.ID)
 	var version store.Version
 	if v := r.URL.Query().Get("version"); v != "" {
 		n, _ := strconv.Atoi(v)

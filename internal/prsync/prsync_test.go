@@ -772,10 +772,15 @@ func (f *fixture) stackVersionID() int64 {
 	return v.ID
 }
 
-func TestPollerIntervalFollowsWatched(t *testing.T) {
-	savedWatched, savedIdle := watchedInterval, idleInterval
-	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
-	t.Cleanup(func() { watchedInterval, idleInterval = savedWatched, savedIdle })
+func setIntervals(t *testing.T, watched, backoff time.Duration) {
+	t.Helper()
+	savedWatched, savedBackoff := watchedInterval, rateLimitBackoff
+	watchedInterval, rateLimitBackoff = watched, backoff
+	t.Cleanup(func() { watchedInterval, rateLimitBackoff = savedWatched, savedBackoff })
+}
+
+func TestPollerPollsOnlyWhileWatched(t *testing.T) {
+	setIntervals(t, 5*time.Millisecond, time.Hour)
 	f := newFixture(t, true)
 
 	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {
@@ -788,7 +793,7 @@ func TestPollerIntervalFollowsWatched(t *testing.T) {
 	idle := f.requests.Load()
 	time.Sleep(60 * time.Millisecond)
 	if n := f.requests.Load(); n != idle {
-		t.Fatalf("unwatched poller made %d requests inside the idle interval", n-idle)
+		t.Fatalf("unwatched poller made %d requests after its first poll", n-idle)
 	}
 
 	f.watched.Store(true)
@@ -854,10 +859,64 @@ func TestConcurrentPollsOfTheSamePullRequestsJoinOneSnapshot(t *testing.T) {
 	}
 }
 
-func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
-	savedWatched, savedIdle := watchedInterval, idleInterval
-	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
-	t.Cleanup(func() { watchedInterval, idleInterval = savedWatched, savedIdle })
+func (f *fixture) startUnwatched(interval time.Duration) int64 {
+	f.t.Helper()
+	setIntervals(f.t, interval, time.Hour)
+	if err := f.syncer.Start(f.t.Context(), f.reviewID); err != nil {
+		f.t.Fatalf("start: %v", err)
+	}
+	f.t.Cleanup(func() { f.syncer.Stop(f.reviewID) })
+	waitFor(f.t, "first poll", func() bool { return len(f.drain()) > 0 })
+	return f.requests.Load()
+}
+
+func TestWakePollsAnUnwatchedReviewWhoseLastPollIsStale(t *testing.T) {
+	f := newFixture(t, true)
+	before := f.startUnwatched(time.Millisecond)
+
+	waitFor(t, "woken poll", func() bool {
+		f.syncer.Wake(f.reviewID)
+		return f.requests.Load() > before
+	})
+}
+
+func TestWakeSkipsAReviewPolledInsideTheInterval(t *testing.T) {
+	f := newFixture(t, true)
+	before := f.startUnwatched(time.Hour)
+
+	f.syncer.Wake(f.reviewID)
+	time.Sleep(50 * time.Millisecond)
+	if n := f.requests.Load(); n != before {
+		t.Fatalf("wake re-polled a review read inside the interval: %d requests", n-before)
+	}
+}
+
+func TestHeldUntil(t *testing.T) {
+	setIntervals(t, time.Minute, time.Hour)
+	reset := time.Now().Add(10 * time.Minute)
+	backoff := time.Now().Add(time.Hour)
+	cases := []struct {
+		name string
+		err  error
+		want time.Time
+	}{
+		{"no error", nil, time.Time{}},
+		{"not found", github.ErrNotFound, time.Time{}},
+		{"quota floor naming its reset", fmt.Errorf("snapshot: %w", &github.RateLimitError{Reset: reset}), reset},
+		{"refusal naming no reset", &github.RateLimitError{}, backoff},
+		{"graphql rate limit", &github.GraphQLError{Messages: []github.GraphQLMessage{{Type: "RATE_LIMIT"}}}, backoff},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := heldUntil(tc.err); got.Sub(tc.want).Abs() > time.Second {
+				t.Fatalf("heldUntil(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRateLimitedPollerHoldsWhileWatched(t *testing.T) {
+	setIntervals(t, 5*time.Millisecond, time.Hour)
 	f := newFixture(t, true)
 	if _, err := f.syncer.viewerLogin(t.Context()); err != nil {
 		t.Fatalf("viewer: %v", err)
@@ -879,9 +938,7 @@ func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
 }
 
 func TestPausedPollerQueriesNothingUntilResumed(t *testing.T) {
-	savedWatched := watchedInterval
-	watchedInterval = 5 * time.Millisecond
-	t.Cleanup(func() { watchedInterval = savedWatched })
+	setIntervals(t, 5*time.Millisecond, time.Hour)
 	f := newFixture(t, true)
 	if _, err := f.syncer.viewerLogin(t.Context()); err != nil {
 		t.Fatalf("viewer: %v", err)
@@ -902,9 +959,7 @@ func TestPausedPollerQueriesNothingUntilResumed(t *testing.T) {
 }
 
 func TestPollerExitsWhenReviewCloses(t *testing.T) {
-	savedWatched := watchedInterval
-	watchedInterval = 5 * time.Millisecond
-	t.Cleanup(func() { watchedInterval = savedWatched })
+	setIntervals(t, 5*time.Millisecond, time.Hour)
 	f := newFixture(t, true)
 	f.watched.Store(true)
 	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {

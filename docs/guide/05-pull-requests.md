@@ -9,7 +9,7 @@ cc-review reviews pull requests as well as your working tree. Point it at a PR a
 
 ## Set up GitHub once
 
-PR mode talks to GitHub with two identities. Your own reads and writes use the token the GitHub CLI already holds (`gh auth token`), so sign in there first if you haven't:
+PR mode talks to GitHub with two identities. Your own comments, replies and submits use the token the GitHub CLI already holds (`gh auth token`), so sign in there first if you haven't. Reads go through `ccx vcs gh`, which needs `ccx` on `PATH` and draws on the machine's shared GitHub quota:
 
 ```sh
 gh auth login
@@ -79,7 +79,7 @@ Every comment and reply you write carries a sync state. It reads `posting` while
 
 ### GitHub comments flow back in
 
-A poller reads every PR in the stack with one GraphQL query: review threads, top-level comments, reviews, checks, and the head commit. It runs every minute while the review is open in a browser, every 5 minutes otherwise, and stops when the review closes. When GitHub answers that the token is rate-limited, it waits the full 5 minutes before the next query, even with the review open. Several reviews of the same pull requests share one snapshot per interval. The GraphQL quota is shared with every other GitHub tool you run, so one query per stack per poll is a deliberate ceiling. Run `cc-review github sync pause` to stop every poller while other tools need the quota, and `cc-review github sync resume` to start them again; opening a review still reads its pull request once.
+A poller reads every PR in the stack with one GraphQL query: review threads, top-level comments, reviews, checks, and the head commit. It reads once when the review opens, then every minute while the review is open in a browser and never otherwise, and stops when the review closes. Opening the page reads at once unless the last read is under a minute old. When ccx refuses a read at its rate-limit floor, the poller waits until the reset the refusal names; any other rate-limit answer makes it wait 5 minutes, even with the review open. Several reviews of the same pull requests share one snapshot per interval. The GraphQL quota is shared with every other GitHub tool you run, so one query per stack per poll is a deliberate ceiling. Run `cc-review github sync pause` to stop every poller while other tools need the quota, and `cc-review github sync resume` to start them again; opening a review still reads its pull request once.
 
 New GitHub comments land in the review as threads, matched by their GitHub id so nothing duplicates. Who wrote a comment decides how it's labeled and where it goes:
 

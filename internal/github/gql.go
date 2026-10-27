@@ -183,7 +183,7 @@ func remoteComments(nodes []gqlComment) ([]RemoteComment, error) {
 	return out, nil
 }
 
-func followPages[T any](ctx context.Context, c *Client, operation, id, on, field, selection, fragments string, first connection[T]) ([]T, error) {
+func followPages[T any](ctx context.Context, c *Client, repo Repo, operation, id, on, field, selection, fragments string, first connection[T]) ([]T, error) {
 	nodes := first.Nodes
 	query := fmt.Sprintf(`query %s($id: ID!, $after: String!) { node(id: $id) { ... on %s { %s(first: %d, after: $after) { pageInfo { hasNextPage endCursor } nodes { %s } } } } }%s`,
 		operation, on, field, pageSize, selection, fragments)
@@ -191,7 +191,7 @@ func followPages[T any](ctx context.Context, c *Client, operation, id, on, field
 		var out struct {
 			Node map[string]connection[T] `json:"node"`
 		}
-		if err := c.GraphQL(ctx, query, map[string]any{"id": id, "after": page.EndCursor}, &out); err != nil {
+		if err := c.read(ctx, repo, query, map[string]any{"id": id, "after": page.EndCursor}, &out); err != nil {
 			return nil, fmt.Errorf("github: page %s of %s: %w", field, id, err)
 		}
 		next := out.Node[field]
@@ -201,7 +201,7 @@ func followPages[T any](ctx context.Context, c *Client, operation, id, on, field
 	return nodes, nil
 }
 
-func (c *Client) pullRequestOf(ctx context.Context, g gqlPR) (PullRequest, error) {
+func (c *Client) pullRequestOf(ctx context.Context, repo Repo, g gqlPR) (PullRequest, error) {
 	pr := PullRequest{
 		Number:      g.Number,
 		NodeID:      g.ID,
@@ -222,7 +222,7 @@ func (c *Client) pullRequestOf(ctx context.Context, g gqlPR) (PullRequest, error
 	if g.StatusCheckRollup == nil {
 		return pr, nil
 	}
-	contexts, err := followPages(ctx, c, "CheckContextsPage", g.StatusCheckRollup.ID, "StatusCheckRollup", "contexts", "...CheckContext",
+	contexts, err := followPages(ctx, c, repo, "CheckContextsPage", g.StatusCheckRollup.ID, "StatusCheckRollup", "contexts", "...CheckContext",
 		checkContextFragment, g.StatusCheckRollup.Contexts)
 	if err != nil {
 		return PullRequest{}, err

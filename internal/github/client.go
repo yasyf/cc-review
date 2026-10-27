@@ -28,8 +28,8 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrUnauthorized reports a 401: the token does not authenticate here.
 	ErrUnauthorized = errors.New("unauthorized")
-	// ErrRateLimited reports a 429, a 403 whose message names a rate limit, or
-	// a GraphQL error typed RATE_LIMIT or RATE_LIMITED.
+	// ErrRateLimited reports a 429, a 403 whose message names a rate limit, a
+	// GraphQL error typed RATE_LIMIT or RATE_LIMITED, or a *RateLimitError.
 	ErrRateLimited = errors.New("rate limited")
 )
 
@@ -76,12 +76,22 @@ func WithBaseURL(rest, graphql string) Option {
 	}
 }
 
+// WithCCXReads sends the client's repository GraphQL reads through `ccx vcs
+// gh`, which draws on the machine's shared quota ledger instead of the token.
+func WithCCXReads() Option {
+	return func(c *Client) { c.ccxReads = true }
+}
+
 // Client issues authenticated GitHub API requests with one token source.
 type Client struct {
-	rest    string
-	graphql string
-	http    *http.Client
-	tokens  TokenSource
+	rest     string
+	graphql  string
+	http     *http.Client
+	tokens   TokenSource
+	ccxReads bool
+
+	viewerMu sync.Mutex
+	viewer   string
 }
 
 // New builds a client against api.github.com authenticating through ts.
@@ -188,17 +198,44 @@ func (c *Client) REST(ctx context.Context, method, path string, body, out any) e
 // body carrying GraphQL errors returns *GraphQLError even though GitHub
 // answered 200.
 func (c *Client) GraphQL(ctx context.Context, query string, vars map[string]any, out any) error {
-	payload, err := json.Marshal(struct {
-		Query     string         `json:"query"`
-		Variables map[string]any `json:"variables,omitempty"`
-	}{query, vars})
+	payload, err := graphQLPayload(query, vars)
 	if err != nil {
-		return fmt.Errorf("github: encode graphql request: %w", err)
+		return err
 	}
 	resp, err := c.send(ctx, http.MethodPost, c.graphql, payload)
 	if err != nil {
 		return err
 	}
+	return decodeGraphQL(resp, out)
+}
+
+func (c *Client) read(ctx context.Context, repo Repo, query string, vars map[string]any, out any) error {
+	if !c.ccxReads {
+		return c.GraphQL(ctx, query, vars, out)
+	}
+	payload, err := graphQLPayload(query, vars)
+	if err != nil {
+		return err
+	}
+	resp, err := readThroughCCX(ctx, repo, payload)
+	if err != nil {
+		return err
+	}
+	return decodeGraphQL(resp, out)
+}
+
+func graphQLPayload(query string, vars map[string]any) ([]byte, error) {
+	payload, err := json.Marshal(struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables,omitempty"`
+	}{query, vars})
+	if err != nil {
+		return nil, fmt.Errorf("github: encode graphql request: %w", err)
+	}
+	return payload, nil
+}
+
+func decodeGraphQL(resp []byte, out any) error {
 	var envelope struct {
 		Data   json.RawMessage  `json:"data"`
 		Errors []GraphQLMessage `json:"errors"`
