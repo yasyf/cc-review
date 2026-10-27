@@ -65,6 +65,9 @@ func (rv *review) handleStart(hc ccd.HandlerCtx) ccd.Reply {
 		}
 		fromPin = true
 		if capture, err = rv.captureForResume(hc, meta); err != nil {
+			if errors.Is(err, github.ErrRateLimited) {
+				return rv.resumeStale(hc, st, err)
+			}
 			if !errors.Is(err, vcs.ErrNoChanges) {
 				return errReply(err.Error() + " (pass --new to start a fresh review)")
 			}
@@ -388,6 +391,41 @@ type startInfo struct {
 	Stack       *StackInfo
 	PR          *PRInfo
 	GitHubSetup string
+	Stale       string
+}
+
+// resumeStale reopens a pull-request review at its latest version when GitHub
+// refuses the recapture, so a rate limit shows the last copy instead of an
+// error; the reply's stale line says why it may lag the pull request.
+func (rv *review) resumeStale(hc ccd.HandlerCtx, st *store.Store, refusal error) ccd.Reply {
+	sub, resumed, err := hc.Subjects.Start(hc.Ctx, hc.Window, hc.Scope, store.ReviewSlug(store.NewSlugHash()), lifecycle, false)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	if !resumed {
+		if cerr := hc.Subjects.Store.SetStatus(hc.Ctx, sub.ID, "closed"); cerr != nil {
+			return errReply(cerr.Error())
+		}
+		if derr := hc.Subjects.Store.Detach(hc.Ctx, sub.ID); derr != nil {
+			return errReply(derr.Error())
+		}
+		return errReply(refusal.Error())
+	}
+	unlock := rv.lockReview(sub.ID)
+	defer unlock()
+	latest, ok, err := st.LatestVersion(hc.Ctx, sub.ID)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	if !ok {
+		return errReply(refusal.Error())
+	}
+	rv.prReviewOpened(hc.Ctx, sub.ID)
+	sections, err := st.ListSections(hc.Ctx, latest.ID)
+	if err != nil {
+		return errReply(err.Error())
+	}
+	return rv.reuseVersion(hc, st, sub, latest, sections, startInfo{Stale: fmt.Sprintf("showing version %d; GitHub refused the refresh: %v", latest.VersionNumber, refusal)})
 }
 
 // startReply builds the start op's reply: the review id and http port on the
@@ -402,7 +440,7 @@ func (rv *review) startReply(hc ccd.HandlerCtx, sub subject.Subject, version int
 		URL: reviewURL(hc.HTTPPort, sub.Slug), TailnetURLs: rv.tailnet.URLs(hc.Ctx, hc.HTTPPort, "/s/"+sub.Slug),
 		Version: version, Resumed: resumed,
 		ChannelState: channelState, Stack: info.Stack, PR: info.PR, GitHubSetup: info.GitHubSetup,
-		AIRequests: aiRequests,
+		AIRequests: aiRequests, Stale: info.Stale,
 	})
 	return ccd.Reply{OK: true, SubjectID: sub.ID, HTTPPort: hc.HTTPPort, Body: raw}
 }

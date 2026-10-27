@@ -120,6 +120,9 @@ func startExtraLines(started daemon.Started, offer bool, reason string, offerErr
 	if started.PR != nil {
 		lines = append(lines, "pr: "+started.PR.String())
 	}
+	if started.Stale != "" {
+		lines = append(lines, "stale: "+started.Stale)
+	}
 	for _, organize := range started.AIRequests {
 		if len(organize) > 0 {
 			lines = append(lines, "organize: "+string(organize))

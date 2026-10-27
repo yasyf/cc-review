@@ -106,6 +106,7 @@ type Response struct {
 	Paths        []string
 	Closed       []ReviewInfo
 	Reviews      []ReviewInfo
+	Stale        string
 }
 
 // reviewRow merges a subject with its review_meta for assertions that read the
@@ -261,7 +262,7 @@ func toResponse(reply ccd.Reply) Response {
 		HTTPPort: reply.HTTPPort, Allow: reply.Allow, Reason: reply.Reason,
 		URL: res.URL, Version: res.Version, Resumed: res.Resumed, ChannelState: res.ChannelState,
 		Stack: res.Stack, PR: res.PR, GitHubSetup: res.GitHubSetup, AIRequests: res.AIRequests, FeedbackPath: res.FeedbackPath, Feedback: res.Feedback,
-		ReviewFiles: res.ReviewFiles, Paths: res.Paths, Closed: res.Closed, Reviews: res.Reviews,
+		ReviewFiles: res.ReviewFiles, Paths: res.Paths, Closed: res.Closed, Reviews: res.Reviews, Stale: res.Stale,
 	}
 }
 

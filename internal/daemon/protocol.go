@@ -164,6 +164,7 @@ type result struct {
 	PR           *PRInfo           `json:"pr,omitempty"`            // start
 	GitHubSetup  string            `json:"github_setup,omitempty"`  // start
 	AIRequests   []json.RawMessage `json:"ai_requests,omitempty"`   // start
+	Stale        string            `json:"stale,omitempty"`         // start
 	FeedbackPath string            `json:"feedback_path,omitempty"` // feedback
 	Feedback     json.RawMessage   `json:"feedback,omitempty"`      // feedback
 	ReviewFiles  json.RawMessage   `json:"review_files,omitempty"`  // review-files

@@ -110,7 +110,7 @@ func newFixture(t *testing.T, installApp bool) *fixture {
 			(*hook)()
 		}
 		if f.rateLimited.Load() && resp.Request.URL.Path == "/graphql" {
-			body := `{"errors":[{"type":"RATE_LIMITED","message":"API rate limit already exceeded for user ID 1."}]}`
+			body := `{"errors":[{"type":"RATE_LIMIT","code":"graphql_rate_limit","message":"API rate limit already exceeded for user ID 1."}]}`
 			resp.Body = io.NopCloser(strings.NewReader(body))
 			resp.ContentLength = int64(len(body))
 			resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
@@ -771,8 +771,9 @@ func (f *fixture) stackVersionID() int64 {
 }
 
 func TestPollerIntervalFollowsWatched(t *testing.T) {
+	savedWatched, savedIdle := watchedInterval, idleInterval
 	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
-	t.Cleanup(func() { watchedInterval, idleInterval = 15*time.Second, 5*time.Minute })
+	t.Cleanup(func() { watchedInterval, idleInterval = savedWatched, savedIdle })
 	f := newFixture(t, true)
 
 	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {
@@ -852,8 +853,9 @@ func TestConcurrentPollsOfTheSamePullRequestsJoinOneSnapshot(t *testing.T) {
 }
 
 func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
+	savedWatched, savedIdle := watchedInterval, idleInterval
 	watchedInterval, idleInterval = 5*time.Millisecond, time.Hour
-	t.Cleanup(func() { watchedInterval, idleInterval = 15*time.Second, 5*time.Minute })
+	t.Cleanup(func() { watchedInterval, idleInterval = savedWatched, savedIdle })
 	f := newFixture(t, true)
 	if _, err := f.syncer.viewerLogin(t.Context()); err != nil {
 		t.Fatalf("viewer: %v", err)
@@ -875,8 +877,9 @@ func TestRateLimitedPollerWaitsTheIdleIntervalWhileWatched(t *testing.T) {
 }
 
 func TestPollerExitsWhenReviewCloses(t *testing.T) {
+	savedWatched := watchedInterval
 	watchedInterval = 5 * time.Millisecond
-	t.Cleanup(func() { watchedInterval = 15 * time.Second })
+	t.Cleanup(func() { watchedInterval = savedWatched })
 	f := newFixture(t, true)
 	f.watched.Store(true)
 	if err := f.syncer.Start(t.Context(), f.reviewID); err != nil {

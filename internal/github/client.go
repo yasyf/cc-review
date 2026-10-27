@@ -29,7 +29,7 @@ var (
 	// ErrUnauthorized reports a 401: the token does not authenticate here.
 	ErrUnauthorized = errors.New("unauthorized")
 	// ErrRateLimited reports a 429, a 403 whose message names a rate limit, or
-	// a GraphQL error typed RATE_LIMITED.
+	// a GraphQL error typed RATE_LIMIT or RATE_LIMITED.
 	ErrRateLimited = errors.New("rate limited")
 )
 
@@ -135,7 +135,7 @@ type GraphQLMessage struct {
 
 // GraphQLError is a 200 response whose body carried GraphQL errors. It
 // unwraps to ErrNotFound when any entry is typed NOT_FOUND and ErrRateLimited
-// when any is typed RATE_LIMITED.
+// when any is typed RATE_LIMIT or RATE_LIMITED.
 type GraphQLError struct {
 	Messages []GraphQLMessage
 }
@@ -149,14 +149,14 @@ func (e *GraphQLError) Error() string {
 	return "github: graphql: " + strings.Join(texts, "; ")
 }
 
-// Unwrap maps a NOT_FOUND entry to ErrNotFound and a RATE_LIMITED entry to
-// ErrRateLimited.
+// Unwrap maps a NOT_FOUND entry to ErrNotFound and a RATE_LIMIT or
+// RATE_LIMITED entry to ErrRateLimited.
 func (e *GraphQLError) Unwrap() error {
 	for _, m := range e.Messages {
 		switch m.Type {
 		case "NOT_FOUND":
 			return ErrNotFound
-		case "RATE_LIMITED":
+		case "RATE_LIMIT", "RATE_LIMITED":
 			return ErrRateLimited
 		}
 	}

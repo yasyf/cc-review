@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -218,6 +219,31 @@ func TestStartPRResumeAfterAPushCreatesANewVersion(t *testing.T) {
 	}
 	if n := len(s.openedPRReviews()); n != 3 {
 		t.Fatalf("opened PR reviews = %d, want one per start", n)
+	}
+}
+
+func TestStartPRResumesTheLastVersionWhenGitHubIsRateLimited(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	remote := newPRRemote(t)
+	gh := prStack(t, s, remote)
+	first := prStart(ctx, t, s, repo, 2)
+
+	gh.FailNext("graphql:PullRequest", http.StatusForbidden, "API rate limit already exceeded for user ID 1.")
+	second := prStart(ctx, t, s, repo, 2)
+	if second.ReviewID != first.ReviewID || second.Version != first.Version || !second.Resumed {
+		t.Fatalf("rate-limited start = review %s v%d resumed=%v, want %s v%d resumed", second.ReviewID, second.Version, second.Resumed, first.ReviewID, first.Version)
+	}
+	if !strings.Contains(second.Stale, "rate limit") || second.URL == "" {
+		t.Fatalf("rate-limited start stale=%q url=%q, want the refusal and the review URL", second.Stale, second.URL)
+	}
+	if n := countVersions(ctx, t, s, first.ReviewID); n != 1 {
+		t.Fatalf("versions = %d, want 1", n)
+	}
+
+	gh.FailNext("graphql:PullRequest", http.StatusBadGateway, "bad gateway")
+	if resp := s.handleStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, PR: &github.PRRef{Repo: prRepo, Number: 2}}); resp.OK {
+		t.Fatalf("a non-rate-limit GitHub failure resumed the review: %+v", resp)
 	}
 }
 

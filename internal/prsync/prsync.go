@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	watchedInterval = 15 * time.Second
+	watchedInterval = time.Minute
 	idleInterval    = 5 * time.Minute
 )
 
