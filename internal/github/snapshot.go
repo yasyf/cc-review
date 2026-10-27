@@ -48,12 +48,12 @@ type PRSnapshot struct {
 const prSyncFragment = `
 fragment PRSync on PullRequest {
   ...PRMeta
-  reviewThreads(first: 100) { pageInfo { hasNextPage endCursor } nodes { ...ThreadFields } }
+  reviewThreads(first: 30) { pageInfo { hasNextPage endCursor } nodes { ...ThreadFields } }
   comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { ...IssueCommentFields } }
 }` + prMetaFragment + threadFragment + issueCommentFragment
 
 // Snapshot reads every numbered pull request of repo in one query, following
-// pages of threads and comments past the first hundred.
+// pages of threads past the first thirty and comments past the first hundred.
 func (c *Client) Snapshot(ctx context.Context, repo Repo, numbers []int) (map[int]PRSnapshot, error) {
 	var query strings.Builder
 	query.WriteString("query Snapshot($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n")

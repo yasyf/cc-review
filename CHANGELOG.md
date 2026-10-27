@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.2] - 2026-10-27
+
+### Fixed
+
+- GitHub's GraphQL rate-limit error, typed `RATE_LIMIT`, now counts as a rate limit. The poller's back-off never engaged before, so a review open in a browser kept querying every 15 seconds through an exhausted quota.
+- Resuming a pull-request review while GitHub is rate-limiting reopens its latest version with a `stale:` line saying why, instead of failing.
+
+### Changed
+
+- A pull-request review open in a browser polls GitHub every minute instead of every 15 seconds, and the snapshot pages review threads 30 at a time, which cuts a 15-PR stack's query from 16 points to 5.
+
 ## [0.41.1] - 2026-10-27
 
 ### Fixed

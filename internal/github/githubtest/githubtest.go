@@ -551,6 +551,9 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.HasPrefix(strings.TrimSpace(req.Query), "query") && s.scriptedFailure(w, "graphql:"+match[1]) {
+		return
+	}
 	data, err := s.operation(w, r, match[1], req)
 	var missing notFound
 	var denied forbidden
@@ -583,9 +586,6 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request, name string, 
 	case "Snapshot":
 		return s.snapshot(repo, req.Query)
 	case "ThreadOfComment":
-		if s.scriptedFailure(w, "graphql:ThreadOfComment") {
-			return nil, nil
-		}
 		pr, ok := s.prs[repo][intField(vars, "number")]
 		if !ok {
 			return nil, notFound(fmt.Sprintf("Could not resolve to a PullRequest with the number of %d.", intField(vars, "number")))

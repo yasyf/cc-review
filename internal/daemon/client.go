@@ -72,6 +72,7 @@ type Started struct {
 	GitHubSetup  string
 	AIRequests   []json.RawMessage
 	HTTPPort     int
+	Stale        string
 }
 
 // Start snapshots the working tree, or the stack of a non-nil pr, and
@@ -84,7 +85,7 @@ func (rc *ReviewClient) Start(ctx context.Context, session, cwd string, fresh bo
 	return Started{
 		URL: res.URL, TailnetURLs: res.TailnetURLs, ReviewID: reply.SubjectID, Version: res.Version, Resumed: res.Resumed,
 		ChannelState: res.ChannelState, Stack: res.Stack, PR: res.PR, GitHubSetup: res.GitHubSetup,
-		AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort,
+		AIRequests: res.AIRequests, HTTPPort: reply.HTTPPort, Stale: res.Stale,
 	}, nil
 }
 
