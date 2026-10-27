@@ -27,8 +27,10 @@ type Stack struct {
 	Forks    []int
 }
 
-// Resolve walks down from ref to the repository's default branch and up while
-// exactly one open pull request is stacked on the current head.
+// Resolve walks down from ref to the repository's default branch, or to a base
+// branch no open pull request heads (a landed parent's branch, or Graphite's
+// graphite-base/<n> during a restack), and up while exactly one open pull
+// request is stacked on the current head.
 func Resolve(ctx context.Context, c *github.Client, ref github.PRRef) (Stack, error) {
 	target, err := c.PullRequest(ctx, ref)
 	if err != nil {
@@ -40,12 +42,17 @@ func Resolve(ctx context.Context, c *github.Client, ref github.PRRef) (Stack, er
 	}
 	prs := []github.PullRequest{target}
 	seen := map[int]bool{target.Number: true}
+	floor := trunk
 	for bottom := target; bottom.BaseRefName != trunk; {
 		parents, err := c.OpenPRsWithHead(ctx, ref.Repo, bottom.BaseRefName)
 		if err != nil {
 			return Stack{}, fmt.Errorf("resolve the stack of %s: %w", ref, err)
 		}
-		if len(parents) != 1 {
+		if len(parents) == 0 {
+			floor = bottom.BaseRefName
+			break
+		}
+		if len(parents) > 1 {
 			return Stack{}, fmt.Errorf("resolve the stack of %s: #%d is based on %s, which is the head of %d open pull requests, not one", ref, bottom.Number, bottom.BaseRefName, len(parents))
 		}
 		bottom = parents[0]
@@ -75,7 +82,7 @@ func Resolve(ctx context.Context, c *github.Client, ref github.PRRef) (Stack, er
 		seen[top.Number] = true
 		prs = append(prs, top)
 	}
-	parentTip := trunk
+	parentTip := floor
 	for _, pr := range prs {
 		mergeBase, err := c.MergeBase(ctx, ref.Repo, parentTip, pr.HeadRefOid)
 		if err != nil {

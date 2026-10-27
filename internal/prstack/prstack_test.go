@@ -79,11 +79,34 @@ func TestResolveStopsAtAFork(t *testing.T) {
 	}
 }
 
-func TestResolveRefusesABaseNoOpenPRHeads(t *testing.T) {
+func TestResolveFloorsAtABaseNoOpenPRHeads(t *testing.T) {
 	s, c := newServer(t)
-	addPR(s, 2, "b", "landed")
+	addPR(s, 2, "b", "graphite-base/1")
+	addPR(s, 3, "c", "b")
+	s.SetMergeBase(repo, "graphite-base/1", "b-sha", "m1")
+	s.SetMergeBase(repo, "b-sha", "c-sha", "m2")
+
+	for _, target := range []int{2, 3} {
+		stack, err := Resolve(context.Background(), c, github.PRRef{Repo: repo, Number: target})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"b<graphite-base/1@m1", "c<b@m2"}; !reflect.DeepEqual(sections(stack), want) {
+			t.Fatalf("sections from #%d = %v, want %v", target, sections(stack), want)
+		}
+		if stack.Trunk != "main" {
+			t.Fatalf("Trunk from #%d = %q, want main", target, stack.Trunk)
+		}
+	}
+}
+
+func TestResolveRefusesABaseTwoOpenPRsHead(t *testing.T) {
+	s, c := newServer(t)
+	addPR(s, 1, "a", "main")
+	s.AddPR(repo, github.PullRequest{Number: 4, HeadRefName: "a", HeadRefOid: "a-sha", BaseRefName: "main"})
+	addPR(s, 2, "b", "a")
 	_, err := Resolve(context.Background(), c, github.PRRef{Repo: repo, Number: 2})
-	if err == nil || !strings.Contains(err.Error(), "head of 0 open pull requests") {
-		t.Fatalf("Resolve = %v, want a missing-parent error", err)
+	if err == nil || !strings.Contains(err.Error(), "head of 2 open pull requests") {
+		t.Fatalf("Resolve = %v, want an ambiguous-parent error", err)
 	}
 }
