@@ -20,6 +20,7 @@ require (
 	github.com/yasyf/daemonkit v0.32.0
 	github.com/yasyf/synckit v0.39.2
 	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/sync v0.20.0
 )
 
 require (
@@ -46,7 +47,6 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

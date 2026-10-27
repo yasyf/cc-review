@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ccd "github.com/yasyf/cc-interact/daemon"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/yasyf/cc-review/internal/ghapp"
 	"github.com/yasyf/cc-review/internal/github"
@@ -20,7 +21,7 @@ import (
 
 var (
 	watchedInterval = 15 * time.Second
-	idleInterval    = 2 * time.Minute
+	idleInterval    = 5 * time.Minute
 )
 
 // ErrAppMissing refuses a poller before the cc-review GitHub App exists: without
@@ -28,8 +29,8 @@ var (
 var ErrAppMissing = errors.New("the cc-review GitHub App is not set up; run `cc-review github setup`")
 
 // Config wires a Syncer to the daemon. Watched reports whether a review has a
-// live viewer or channel consumer; Recapture mints a new version from the PRs'
-// current heads; Background runs daemon-lifecycle work (ccd.Server.Background).
+// live viewer; Recapture mints a new version from the PRs' current heads;
+// Background runs daemon-lifecycle work (ccd.Server.Background).
 type Config struct {
 	DB         func() *sql.DB
 	Append     ccd.AppendFunc
@@ -40,7 +41,8 @@ type Config struct {
 	Log        *log.Logger
 }
 
-// Syncer owns the per-review pollers.
+// Syncer owns the per-review pollers. Reviews of the same pull requests share
+// one GitHub snapshot per poll interval, so a second review adds no queries.
 type Syncer struct {
 	cfg Config
 
@@ -48,6 +50,17 @@ type Syncer struct {
 	viewer  string
 	pollers map[string]*poller
 	applies map[string]*applyGate
+
+	snapMu   sync.Mutex
+	snaps    map[string]sharedSnapshot
+	writes   atomic.Uint64
+	fetching singleflight.Group
+}
+
+type sharedSnapshot struct {
+	at     time.Time
+	writes uint64
+	snaps  map[int]github.PRSnapshot
 }
 
 type applyGate struct {
@@ -57,6 +70,7 @@ type applyGate struct {
 
 type poller struct {
 	reviewID string
+	maxAge   time.Duration
 	app      ghapp.App
 	viewer   string
 	cancel   context.CancelFunc
@@ -65,7 +79,7 @@ type poller struct {
 
 // New builds a Syncer over cfg; no poller runs until Start.
 func New(cfg Config) *Syncer {
-	return &Syncer{cfg: cfg, pollers: make(map[string]*poller), applies: make(map[string]*applyGate)}
+	return &Syncer{cfg: cfg, pollers: make(map[string]*poller), applies: make(map[string]*applyGate), snaps: make(map[string]sharedSnapshot)}
 }
 
 // Exclusive holds off the review's poller from applying a snapshot until
@@ -76,6 +90,7 @@ func (s *Syncer) Exclusive(reviewID string) (release func()) {
 	g := s.gate(reviewID)
 	g.mu.Lock()
 	return func() {
+		s.writes.Add(1)
 		g.writes.Add(1)
 		g.mu.Unlock()
 	}
@@ -174,10 +189,17 @@ func (s *Syncer) run(ctx context.Context, p *poller) {
 	t := time.NewTicker(watchedInterval)
 	defer t.Stop()
 	var last time.Time
+	limited := false
 	for {
-		if last.IsZero() || s.cfg.Watched(p.reviewID) || time.Since(last) >= idleInterval {
+		watched := s.cfg.Watched(p.reviewID) && !limited
+		if last.IsZero() || watched || time.Since(last) >= idleInterval {
+			p.maxAge = idleInterval
+			if watched {
+				p.maxAge = watchedInterval
+			}
 			live, err := s.poll(ctx, p)
 			last = time.Now()
+			limited = errors.Is(err, github.ErrRateLimited)
 			if err != nil && ctx.Err() == nil {
 				s.cfg.Log.Printf("prsync %s: %v", p.reviewID, err)
 			}
