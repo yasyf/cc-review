@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/paths"
@@ -25,6 +27,8 @@ const (
 	prRefPrefix  = "refs/cc-review/pr/"
 	deepenStart  = 256
 	deepenMaxCap = 4096
+	staleLockAge = 10 * time.Minute
+	gitStopGrace = 10 * time.Second
 )
 
 var (
@@ -176,9 +180,29 @@ func (s *Store) deepenTo(ctx context.Context, sha string) error {
 }
 
 func (s *Store) fetch(ctx context.Context, depth string, refspecs ...string) error {
+	if err := clearStaleLock(filepath.Join(s.Dir, "shallow.lock")); err != nil {
+		return err
+	}
 	argv := append([]string{"fetch", "--no-tags", "--no-write-fetch-head", "--filter=blob:none", depth, "origin"}, refspecs...)
 	_, err := git(ctx, s.Dir, argv...)
 	return err
+}
+
+// clearStaleLock removes a shallow.lock a killed fetch left behind. The caller
+// holds the store's lock, so no fetch of this daemon is running; one older than
+// any fetch can take belongs to nobody.
+func clearStaleLock(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) || err == nil && time.Since(info.ModTime()) < staleLockAge {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("thinstore: %w", err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("thinstore: remove stale %s: %w", path, err)
+	}
+	return nil
 }
 
 func (s *Store) has(ctx context.Context, sha string) (bool, error) {
@@ -199,6 +223,8 @@ func prRefspec(number int) string {
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: fixed git binary; args are this package's own argv.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = gitStopGrace
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

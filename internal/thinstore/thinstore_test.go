@@ -2,10 +2,12 @@ package thinstore
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yasyf/cc-review/internal/github"
 	"github.com/yasyf/cc-review/internal/testhome"
@@ -140,5 +142,26 @@ func TestFetchCommitDeepensWhenTheServerRefusesShas(t *testing.T) {
 	err = s.FetchCommit(ctx, r.orphan)
 	if err == nil || !strings.Contains(err.Error(), "not within 4096 commits") {
 		t.Fatalf("FetchCommit(orphan) = %v, want the deepen cap", err)
+	}
+}
+
+func TestFetchPRClearsAShallowLockAKilledFetchLeft(t *testing.T) {
+	testhome.Temp(t)
+	r := newRemote(t, true)
+	ctx := context.Background()
+	s, err := Open(ctx, repo, r.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(s.Dir, "shallow.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-staleLockAge - time.Minute)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if head, err := s.FetchPR(ctx, 7); err != nil || head != r.head {
+		t.Fatalf("FetchPR with a stale shallow.lock = %s, %v; want %s", head, err, r.head)
 	}
 }

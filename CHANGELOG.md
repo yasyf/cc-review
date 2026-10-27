@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-10-27
+
+### Fixed
+
+- A cancelled fetch into the pull-request store stops git with SIGTERM, so git removes its lock files instead of leaving `shallow.lock` behind. A `shallow.lock` older than ten minutes is cleared before the next fetch. A killed fetch used to block every later pull-request review with "Unable to create shallow.lock" until someone deleted the file by hand.
+
 ## [0.42.0] - 2026-10-27
 
 ### Added
