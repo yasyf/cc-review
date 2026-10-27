@@ -873,10 +873,11 @@ func (f *fixture) startUnwatched(interval time.Duration) int64 {
 func TestWakePollsAnUnwatchedReviewWhoseLastPollIsStale(t *testing.T) {
 	f := newFixture(t, true)
 	before := f.startUnwatched(time.Millisecond)
-	time.Sleep(5 * time.Millisecond)
 
-	f.syncer.Wake(f.reviewID)
-	waitFor(t, "woken poll", func() bool { return f.requests.Load() > before })
+	waitFor(t, "woken poll", func() bool {
+		f.syncer.Wake(f.reviewID)
+		return f.requests.Load() > before
+	})
 }
 
 func TestWakeSkipsAReviewPolledInsideTheInterval(t *testing.T) {
