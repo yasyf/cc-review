@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-10-27
+
+### Fixed
+
+- On screens under 900 px the file tree opens as a drawer over the diff and closes on a pick, a scrim tap or Escape, instead of a docked column that left a sliver for the code.
+
 ## [0.41.0] - 2026-10-27
 
 ### Changed
