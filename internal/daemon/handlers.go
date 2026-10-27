@@ -420,12 +420,15 @@ func (rv *review) resumeStale(hc ccd.HandlerCtx, st *store.Store, refusal error)
 	if !ok {
 		return errReply(refusal.Error())
 	}
-	rv.prReviewOpened(hc.Ctx, sub.ID)
 	sections, err := st.ListSections(hc.Ctx, latest.ID)
 	if err != nil {
 		return errReply(err.Error())
 	}
-	return rv.reuseVersion(hc, st, sub, latest, sections, startInfo{Stale: fmt.Sprintf("showing version %d; GitHub refused the refresh: %v", latest.VersionNumber, refusal)})
+	reply := rv.reuseVersion(hc, st, sub, latest, sections, startInfo{Stale: fmt.Sprintf("showing version %d; GitHub refused the refresh: %v", latest.VersionNumber, refusal)})
+	if reply.OK {
+		rv.prReviewOpened(hc.Ctx, sub.ID)
+	}
+	return reply
 }
 
 // startReply builds the start op's reply: the review id and http port on the
