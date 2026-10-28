@@ -96,12 +96,12 @@ func TestFetchPRAndCommitDiffLazily(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	head, err := s.FetchPR(ctx, 7)
-	if err != nil {
+	if err := s.FetchPRs(ctx, github.PullRequest{Number: 7, HeadRefOid: r.head}); err != nil {
 		t.Fatal(err)
 	}
+	head := run(t, s.Dir, "rev-parse", prRefPrefix+"7")
 	if head != r.head {
-		t.Fatalf("FetchPR = %s, want %s", head, r.head)
+		t.Fatalf("refs/cc-review/pr/7 = %s, want %s", head, r.head)
 	}
 	if err := s.FetchCommit(ctx, r.mergeBase); err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestFetchCommitDeepensWhenTheServerRefusesShas(t *testing.T) {
 		t.Fatal(err)
 	}
 	run(t, s.Dir, "config", "protocol.version", "0")
-	if _, err := s.FetchPR(ctx, 7); err != nil {
+	if err := s.FetchPRs(ctx, github.PullRequest{Number: 7, HeadRefOid: r.head}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,6 +142,28 @@ func TestFetchCommitDeepensWhenTheServerRefusesShas(t *testing.T) {
 	err = s.FetchCommit(ctx, r.orphan)
 	if err == nil || !strings.Contains(err.Error(), "not within 4096 commits") {
 		t.Fatalf("FetchCommit(orphan) = %v, want the deepen cap", err)
+	}
+}
+
+func TestFetchPRsPointsAPresentHeadWithoutFetching(t *testing.T) {
+	testhome.Temp(t)
+	r := newRemote(t, true)
+	ctx := context.Background()
+	s, err := Open(ctx, repo, r.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FetchPRs(ctx, github.PullRequest{Number: 7, HeadRefOid: r.head}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(r.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FetchPRs(ctx, github.PullRequest{Number: 8, HeadRefOid: r.head}); err != nil {
+		t.Fatalf("FetchPRs of a head the store holds, with the remote gone = %v", err)
+	}
+	if head := run(t, s.Dir, "rev-parse", prRefPrefix+"8"); head != r.head {
+		t.Fatalf("refs/cc-review/pr/8 = %s, want %s", head, r.head)
 	}
 }
 
@@ -161,7 +183,10 @@ func TestFetchPRClearsAShallowLockAKilledFetchLeft(t *testing.T) {
 	if err := os.Chtimes(lock, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if head, err := s.FetchPR(ctx, 7); err != nil || head != r.head {
-		t.Fatalf("FetchPR with a stale shallow.lock = %s, %v; want %s", head, err, r.head)
+	if err := s.FetchPRs(ctx, github.PullRequest{Number: 7, HeadRefOid: r.head}); err != nil {
+		t.Fatalf("FetchPRs with a stale shallow.lock = %v", err)
+	}
+	if head := run(t, s.Dir, "rev-parse", prRefPrefix+"7"); head != r.head {
+		t.Fatalf("refs/cc-review/pr/7 = %s, want %s", head, r.head)
 	}
 }

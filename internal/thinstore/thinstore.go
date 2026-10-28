@@ -116,18 +116,31 @@ func verify(ctx context.Context, dir, cloneURL string) error {
 	return nil
 }
 
-// FetchPR fetches pull request number's head into refs/cc-review/pr/<number>
-// and returns its sha.
-func (s *Store) FetchPR(ctx context.Context, number int) (string, error) {
+// FetchPRs points refs/cc-review/pr/<number> at each pull request's head,
+// fetching every head the store lacks in one round trip.
+func (s *Store) FetchPRs(ctx context.Context, prs ...github.PullRequest) error {
 	defer s.lock()()
-	if err := s.fetch(ctx, "--depth=1", prRefspec(number)); err != nil {
-		return "", fmt.Errorf("thinstore: fetch #%d into %s: %w", number, s.Dir, err)
+	var refspecs []string
+	for _, pr := range prs {
+		present, err := s.has(ctx, pr.HeadRefOid)
+		if err != nil {
+			return err
+		}
+		if !present {
+			refspecs = append(refspecs, prRefspec(pr.Number))
+			continue
+		}
+		if _, err := git(ctx, s.Dir, "update-ref", prRefPrefix+strconv.Itoa(pr.Number), pr.HeadRefOid); err != nil {
+			return fmt.Errorf("thinstore: point #%d at %s in %s: %w", pr.Number, pr.HeadRefOid, s.Dir, err)
+		}
 	}
-	out, err := git(ctx, s.Dir, "rev-parse", "--verify", prRefPrefix+strconv.Itoa(number))
-	if err != nil {
-		return "", fmt.Errorf("thinstore: resolve #%d in %s: %w", number, s.Dir, err)
+	if len(refspecs) == 0 {
+		return nil
 	}
-	return strings.TrimSpace(out), nil
+	if err := s.fetch(ctx, "--depth=1", refspecs...); err != nil {
+		return fmt.Errorf("thinstore: fetch %v into %s: %w", refspecs, s.Dir, err)
+	}
+	return nil
 }
 
 // FetchCommit makes sha present in the store. When the server refuses a want

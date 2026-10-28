@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-27
+
+### Changed
+
+- `start --pr` reads a pull request's stack from GitHub in parallel: the pull request with the default branch, then the walks down and up the stack, then every section's merge base. A 4-PR stack used to make ten reads one after another.
+- The pull-request store fetches every head it lacks in one `git fetch` instead of one per pull request, and points a head it already holds without fetching at all, so resuming an unchanged review makes no fetch.
+- The review page's content-hashed assets are served gzipped with a one-year immutable cache, and `/api/session` is gzipped. Every open used to download the 1.4 MB bundle again, uncompressed, which cost over a second across the tailnet.
+
 ## [0.43.0] - 2026-10-27
 
 ### Changed
