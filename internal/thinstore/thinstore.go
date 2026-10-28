@@ -3,6 +3,7 @@
 package thinstore
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -243,10 +244,12 @@ func (s *Store) missing(ctx context.Context, shas ...string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("thinstore: check %d commits in %s: %w", len(shas), s.Dir, err)
 	}
+	lines := bufio.NewScanner(bytes.NewReader(out))
 	var absent []string
-	for i, line := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
-		if strings.HasSuffix(line, " missing") {
-			absent = append(absent, shas[i])
+	for _, sha := range shas {
+		lines.Scan()
+		if strings.HasSuffix(lines.Text(), " missing") {
+			absent = append(absent, sha)
 		}
 	}
 	return absent, nil
