@@ -549,11 +549,15 @@ func (rv *review) capturePR(ctx context.Context, ref github.PRRef) (captured, er
 	if err != nil {
 		return captured{}, err
 	}
+	prs := make([]github.PullRequest, len(stack.Sections))
+	for i, sec := range stack.Sections {
+		prs[i] = sec.PR
+	}
+	if err := ts.FetchPRs(ctx, prs...); err != nil {
+		return captured{}, err
+	}
 	capture := captured{RepoRoot: ts.Dir, Trunk: stack.Trunk, Stack: true, PR: &ref}
 	for _, sec := range stack.Sections {
-		if _, err := ts.FetchPR(ctx, sec.PR.Number); err != nil {
-			return captured{}, err
-		}
 		if err := ts.FetchCommit(ctx, sec.MergeBase); err != nil {
 			return captured{}, err
 		}

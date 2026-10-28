@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	ccevent "github.com/yasyf/cc-interact/event"
@@ -79,8 +80,8 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 		provWarned: make(map[string]bool),
 	}
 	mux.HandleFunc("GET /api/reviews", s.handleListReviews)
-	mux.HandleFunc("GET /api/session/{reviewId}", s.handleGetSession)
-	mux.HandleFunc("GET /api/session/{reviewId}/versions", s.handleGetVersions)
+	mux.Handle("GET /api/session/{reviewId}", gzipped(http.HandlerFunc(s.handleGetSession)))
+	mux.Handle("GET /api/session/{reviewId}/versions", gzipped(http.HandlerFunc(s.handleGetVersions)))
 	mux.HandleFunc("POST /api/comments", s.handleCreateComment)
 	mux.HandleFunc("PUT /api/comments/{id}", s.handleUpdateComment)
 	mux.HandleFunc("POST /api/comments/{id}/retry", s.handleRetryComment)
@@ -100,5 +101,13 @@ func RESTMount(mux, public *http.ServeMux, d Deps) {
 	public.Handle("GET /github/setup/logo.png", ghapp.LogoHandler())
 	// The "s" prefix keeps /s/<slug> deep links on the SPA even when a legacy
 	// slug contains a dot.
-	public.Handle("/", sse.StaticHandler(d.Dist, "s"))
+	static := sse.StaticHandler(d.Dist, "s")
+	public.Handle("/", gzipped(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := fs.Stat(d.Dist, strings.TrimPrefix(r.URL.Path, "/")); err == nil && strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		static.ServeHTTP(w, r)
+	})))
 }
