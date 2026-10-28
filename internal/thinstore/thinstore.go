@@ -154,22 +154,36 @@ func (s *Store) FetchPRs(ctx context.Context, prs ...github.PullRequest) error {
 }
 
 // FetchCommits makes every sha present in the store, fetching the absent ones
-// in one round trip. When the server refuses a want by sha, it deepens every
-// fetched pull request head until each arrives, at most 4096 commits.
+// in one round trip. When the server refuses that batch, it fetches each one
+// alone, deepening every fetched pull request head until a refused sha
+// arrives, at most 4096 commits.
 func (s *Store) FetchCommits(ctx context.Context, shas ...string) error {
 	defer s.lock()()
 	absent, err := s.missing(ctx, shas...)
 	if err != nil || len(absent) == 0 {
 		return err
 	}
-	fetchErr := s.fetch(ctx, "--depth=1", absent...)
-	if fetchErr == nil {
+	if s.fetch(ctx, "--depth=1", absent...) == nil {
 		return nil
 	}
 	for _, sha := range absent {
-		if err := s.deepenTo(ctx, sha); err != nil {
-			return fmt.Errorf("thinstore: fetch %s into %s: %w", sha, s.Dir, errors.Join(fetchErr, err))
+		if err := s.fetchCommit(ctx, sha); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func (s *Store) fetchCommit(ctx context.Context, sha string) error {
+	if absent, err := s.missing(ctx, sha); err != nil || len(absent) == 0 {
+		return err
+	}
+	fetchErr := s.fetch(ctx, "--depth=1", sha)
+	if fetchErr == nil {
+		return nil
+	}
+	if err := s.deepenTo(ctx, sha); err != nil {
+		return fmt.Errorf("thinstore: fetch %s into %s: %w", sha, s.Dir, errors.Join(fetchErr, err))
 	}
 	return nil
 }
