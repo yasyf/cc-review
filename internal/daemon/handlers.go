@@ -17,6 +17,7 @@ import (
 	ccstore "github.com/yasyf/cc-interact/store"
 	"github.com/yasyf/cc-interact/subject"
 	"github.com/yasyf/cc-interact/vcs"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/yasyf/cc-review/internal/feedback"
 	"github.com/yasyf/cc-review/internal/generated"
@@ -550,27 +551,35 @@ func (rv *review) capturePR(ctx context.Context, ref github.PRRef) (captured, er
 		return captured{}, err
 	}
 	prs := make([]github.PullRequest, len(stack.Sections))
+	mergeBases := make([]string, len(stack.Sections))
 	for i, sec := range stack.Sections {
-		prs[i] = sec.PR
+		prs[i], mergeBases[i] = sec.PR, sec.MergeBase
 	}
 	if err := ts.FetchPRs(ctx, prs...); err != nil {
 		return captured{}, err
 	}
-	capture := captured{RepoRoot: ts.Dir, Trunk: stack.Trunk, Stack: true, PR: &ref}
-	for _, sec := range stack.Sections {
-		if err := ts.FetchCommit(ctx, sec.MergeBase); err != nil {
-			return captured{}, err
-		}
-		diff, err := vcs.DiffRange(ctx, ts.Dir, sec.MergeBase, sec.PR.HeadRefOid)
-		if err != nil {
-			return captured{}, fmt.Errorf("diff #%d: %w", sec.PR.Number, err)
-		}
-		diff.Branch, diff.ParentBranch = sec.PR.HeadRefName, sec.ParentBranch
-		capture.Sections = append(capture.Sections, diff)
-		capture.PRs = append(capture.PRs, sec.PR)
+	if err := ts.FetchCommits(ctx, mergeBases...); err != nil {
+		return captured{}, err
+	}
+	capture := captured{RepoRoot: ts.Dir, Trunk: stack.Trunk, Stack: true, PR: &ref, Sections: make([]vcs.StackSection, len(prs)), PRs: prs}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(4)
+	for i, sec := range stack.Sections {
 		if sec.PR.Number == ref.Number {
 			capture.Branch = sec.PR.HeadRefName
 		}
+		g.Go(func() error {
+			diff, err := vcs.DiffRange(gctx, ts.Dir, sec.MergeBase, sec.PR.HeadRefOid)
+			if err != nil {
+				return fmt.Errorf("diff #%d: %w", sec.PR.Number, err)
+			}
+			diff.Branch, diff.ParentBranch = sec.PR.HeadRefName, sec.ParentBranch
+			capture.Sections[i] = diff
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return captured{}, err
 	}
 	return capture, nil
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -82,7 +83,7 @@ func clone(ctx context.Context, dir, cloneURL string) error {
 	for _, kv := range cloneConfig {
 		argv = append(argv, "-c", kv)
 	}
-	if _, err := git(ctx, stage, append(argv, cloneURL, staged)...); err != nil {
+	if _, err := git(ctx, stage, nil, append(argv, cloneURL, staged)...); err != nil {
 		return fmt.Errorf("thinstore: clone %s: %w", cloneURL, err)
 	}
 	if err := os.Rename(staged, dir); err != nil {
@@ -92,7 +93,7 @@ func clone(ctx context.Context, dir, cloneURL string) error {
 }
 
 func verify(ctx context.Context, dir, cloneURL string) error {
-	out, err := git(ctx, dir, "config", "--get-regexp", `^remote\.origin\.`)
+	out, err := git(ctx, dir, nil, "config", "--get-regexp", `^remote\.origin\.`)
 	if err != nil {
 		return fmt.Errorf("thinstore: read %s's origin: %w", dir, err)
 	}
@@ -120,18 +121,26 @@ func verify(ctx context.Context, dir, cloneURL string) error {
 // fetching every head the store lacks in one round trip.
 func (s *Store) FetchPRs(ctx context.Context, prs ...github.PullRequest) error {
 	defer s.lock()()
+	heads := make([]string, len(prs))
+	for i, pr := range prs {
+		heads[i] = pr.HeadRefOid
+	}
+	absent, err := s.missing(ctx, heads...)
+	if err != nil {
+		return err
+	}
 	var refspecs []string
+	var updates strings.Builder
 	for _, pr := range prs {
-		present, err := s.has(ctx, pr.HeadRefOid)
-		if err != nil {
-			return err
-		}
-		if !present {
+		if slices.Contains(absent, pr.HeadRefOid) {
 			refspecs = append(refspecs, prRefspec(pr.Number))
 			continue
 		}
-		if _, err := git(ctx, s.Dir, "update-ref", prRefPrefix+strconv.Itoa(pr.Number), pr.HeadRefOid); err != nil {
-			return fmt.Errorf("thinstore: point #%d at %s in %s: %w", pr.Number, pr.HeadRefOid, s.Dir, err)
+		fmt.Fprintf(&updates, "update %s%d %s\n", prRefPrefix, pr.Number, pr.HeadRefOid)
+	}
+	if updates.Len() > 0 {
+		if _, err := git(ctx, s.Dir, strings.NewReader(updates.String()), "update-ref", "--stdin"); err != nil {
+			return fmt.Errorf("thinstore: point pull request refs in %s: %w", s.Dir, err)
 		}
 	}
 	if len(refspecs) == 0 {
@@ -143,27 +152,29 @@ func (s *Store) FetchPRs(ctx context.Context, prs ...github.PullRequest) error {
 	return nil
 }
 
-// FetchCommit makes sha present in the store. When the server refuses a want
-// by sha, it deepens every fetched pull request head until sha arrives, at
-// most 4096 commits.
-func (s *Store) FetchCommit(ctx context.Context, sha string) error {
+// FetchCommits makes every sha present in the store, fetching the absent ones
+// in one round trip. When the server refuses a want by sha, it deepens every
+// fetched pull request head until each arrives, at most 4096 commits.
+func (s *Store) FetchCommits(ctx context.Context, shas ...string) error {
 	defer s.lock()()
-	present, err := s.has(ctx, sha)
-	if err != nil || present {
+	absent, err := s.missing(ctx, shas...)
+	if err != nil || len(absent) == 0 {
 		return err
 	}
-	fetchErr := s.fetch(ctx, "--depth=1", sha)
+	fetchErr := s.fetch(ctx, "--depth=1", absent...)
 	if fetchErr == nil {
 		return nil
 	}
-	if err := s.deepenTo(ctx, sha); err != nil {
-		return fmt.Errorf("thinstore: fetch %s into %s: %w", sha, s.Dir, errors.Join(fetchErr, err))
+	for _, sha := range absent {
+		if err := s.deepenTo(ctx, sha); err != nil {
+			return fmt.Errorf("thinstore: fetch %s into %s: %w", sha, s.Dir, errors.Join(fetchErr, err))
+		}
 	}
 	return nil
 }
 
 func (s *Store) deepenTo(ctx context.Context, sha string) error {
-	out, err := git(ctx, s.Dir, "for-each-ref", "--format=%(refname)", prRefPrefix)
+	out, err := git(ctx, s.Dir, nil, "for-each-ref", "--format=%(refname)", prRefPrefix)
 	if err != nil {
 		return err
 	}
@@ -184,8 +195,8 @@ func (s *Store) deepenTo(ctx context.Context, sha string) error {
 			return err
 		}
 		total += step
-		present, err := s.has(ctx, sha)
-		if err != nil || present {
+		absent, err := s.missing(ctx, sha)
+		if err != nil || len(absent) == 0 {
 			return err
 		}
 	}
@@ -197,7 +208,7 @@ func (s *Store) fetch(ctx context.Context, depth string, refspecs ...string) err
 		return err
 	}
 	argv := append([]string{"fetch", "--no-tags", "--no-write-fetch-head", "--filter=blob:none", depth, "origin"}, refspecs...)
-	_, err := git(ctx, s.Dir, argv...)
+	_, err := git(ctx, s.Dir, nil, argv...)
 	return err
 }
 
@@ -218,15 +229,27 @@ func clearStaleLock(path string) error {
 	return nil
 }
 
-func (s *Store) has(ctx context.Context, sha string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", s.Dir, "cat-file", "-e", sha+"^{commit}") //nolint:gosec // G204: fixed git subcommand against the store; sha comes from GitHub.
-	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
-	err := cmd.Run()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		return false, nil
+// missing returns the shas whose commits the store lacks, in one cat-file run
+// that never fetches.
+func (s *Store) missing(ctx context.Context, shas ...string) ([]string, error) {
+	var query strings.Builder
+	for _, sha := range shas {
+		query.WriteString(sha + "^{commit}\n")
 	}
-	return err == nil, err
+	cmd := exec.CommandContext(ctx, "git", "-C", s.Dir, "cat-file", "--batch-check=%(objectname)") //nolint:gosec // G204: fixed git subcommand against the store.
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	cmd.Stdin = strings.NewReader(query.String())
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("thinstore: check %d commits in %s: %w", len(shas), s.Dir, err)
+	}
+	var absent []string
+	for i, line := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+		if strings.HasSuffix(line, " missing") {
+			absent = append(absent, shas[i])
+		}
+	}
+	return absent, nil
 }
 
 func prRefspec(number int) string {
@@ -234,8 +257,9 @@ func prRefspec(number int) string {
 	return "+refs/pull/" + n + "/head:" + prRefPrefix + n
 }
 
-func git(ctx context.Context, dir string, args ...string) (string, error) {
+func git(ctx context.Context, dir string, stdin io.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: fixed git binary; args are this package's own argv.
+	cmd.Stdin = stdin
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = gitStopGrace
 	var stdout, stderr bytes.Buffer

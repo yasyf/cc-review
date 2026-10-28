@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-27
+
+### Changed
+
+- Opening a pull-request review checks which heads and merge bases the store already holds in one `git cat-file` run, points the pull-request refs in one `git update-ref --stdin`, fetches every absent merge base in one `git fetch`, and diffs the stack's sections in parallel. Each git process costs about 0.3 s on a Mac with endpoint-security agents, so a 4-PR stack used to spend seconds on per-section checks and diffs alone.
+
 ## [0.44.0] - 2026-10-27
 
 ### Changed

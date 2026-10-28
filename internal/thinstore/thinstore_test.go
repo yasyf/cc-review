@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestOpenRefusesAStoreThatLostItsFilter(t *testing.T) {
 	}
 }
 
-func TestFetchPRAndCommitDiffLazily(t *testing.T) {
+func TestFetchPRsAndCommitsDiffLazily(t *testing.T) {
 	testhome.Temp(t)
 	r := newRemote(t, true)
 	ctx := context.Background()
@@ -103,12 +104,11 @@ func TestFetchPRAndCommitDiffLazily(t *testing.T) {
 	if head != r.head {
 		t.Fatalf("refs/cc-review/pr/7 = %s, want %s", head, r.head)
 	}
-	if err := s.FetchCommit(ctx, r.mergeBase); err != nil {
+	if err := s.FetchCommits(ctx, r.mergeBase); err != nil {
 		t.Fatal(err)
 	}
-	present, err := s.has(ctx, r.mergeBase)
-	if err != nil || !present {
-		t.Fatalf("has(mergeBase) = %v, %v; want present", present, err)
+	if absent, err := s.missing(ctx, r.mergeBase, r.head); err != nil || len(absent) != 0 {
+		t.Fatalf("missing(mergeBase, head) = %v, %v; want none", absent, err)
 	}
 	if got := run(t, s.Dir, "diff", "--name-status", r.mergeBase, head); got != "M\ta.txt\nA\td.txt" {
 		t.Fatalf("diff = %q", got)
@@ -118,7 +118,7 @@ func TestFetchPRAndCommitDiffLazily(t *testing.T) {
 	}
 }
 
-func TestFetchCommitDeepensWhenTheServerRefusesShas(t *testing.T) {
+func TestFetchCommitsDeepensWhenTheServerRefusesShas(t *testing.T) {
 	testhome.Temp(t)
 	r := newRemote(t, false)
 	ctx := context.Background()
@@ -131,17 +131,16 @@ func TestFetchCommitDeepensWhenTheServerRefusesShas(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.FetchCommit(ctx, r.mergeBase); err != nil {
+	if err := s.FetchCommits(ctx, r.mergeBase); err != nil {
 		t.Fatal(err)
 	}
-	present, err := s.has(ctx, r.mergeBase)
-	if err != nil || !present {
-		t.Fatalf("has(mergeBase) = %v, %v; want present", present, err)
+	if absent, err := s.missing(ctx, r.mergeBase, r.head); err != nil || len(absent) != 0 {
+		t.Fatalf("missing(mergeBase, head) = %v, %v; want none", absent, err)
 	}
 
-	err = s.FetchCommit(ctx, r.orphan)
+	err = s.FetchCommits(ctx, r.orphan)
 	if err == nil || !strings.Contains(err.Error(), "not within 4096 commits") {
-		t.Fatalf("FetchCommit(orphan) = %v, want the deepen cap", err)
+		t.Fatalf("FetchCommits(orphan) = %v, want the deepen cap", err)
 	}
 }
 
@@ -188,5 +187,25 @@ func TestFetchPRClearsAShallowLockAKilledFetchLeft(t *testing.T) {
 	}
 	if head := run(t, s.Dir, "rev-parse", prRefPrefix+"7"); head != r.head {
 		t.Fatalf("refs/cc-review/pr/7 = %s, want %s", head, r.head)
+	}
+}
+
+func TestMissingNamesOnlyAbsentCommits(t *testing.T) {
+	testhome.Temp(t)
+	r := newRemote(t, true)
+	ctx := context.Background()
+	s, err := Open(ctx, repo, r.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FetchPRs(ctx, github.PullRequest{Number: 7, HeadRefOid: r.head}); err != nil {
+		t.Fatal(err)
+	}
+	absent, err := s.missing(ctx, r.orphan, r.head, r.mergeBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{r.orphan, r.mergeBase}; !slices.Equal(absent, want) {
+		t.Fatalf("missing = %v, want %v", absent, want)
 	}
 }
