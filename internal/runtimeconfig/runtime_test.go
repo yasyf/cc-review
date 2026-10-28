@@ -24,7 +24,6 @@ func TestSpecIsExact(t *testing.T) {
 	if len(spec.Schemas) != 1 || spec.Schemas[0] != ccd.WireBuild {
 		t.Errorf("Schemas = %v, want exactly [%q]", spec.Schemas, ccd.WireBuild)
 	}
-	// Open runs ValidateForClient, and an unstated Trust.Serving is what it refuses.
 	if err := spec.ValidateForClient(); err != nil {
 		t.Errorf("ValidateForClient: %v", err)
 	}

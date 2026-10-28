@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Any process running as your user can now connect to the cc-review daemon's socket. The daemon no longer checks a caller's code signature or team ID, and drain runs on the ordinary connection instead of a separate signed one. Each command that talks to the daemon starts sooner. It names its build by the version string instead of SHA-256-hashing the executable and the placed copy. It skips `launchctl print` when the daemon already serves this build, and it opens one connection instead of two. The first command after upgrading stops the old daemon with SIGTERM, because the old daemon speaks an older wire protocol.
+
 ## [0.45.0] - 2026-10-27
 
 ### Changed
