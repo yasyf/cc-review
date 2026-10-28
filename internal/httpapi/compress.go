@@ -3,6 +3,7 @@ package httpapi
 import (
 	"compress/gzip"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -12,7 +13,7 @@ import (
 func gzipped(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Accept-Encoding")
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -37,10 +38,12 @@ func (g *gzipWriter) WriteHeader(status int) {
 		return
 	}
 	g.wrote = true
-	if !g.head && status >= http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified {
+	if status >= http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified {
 		g.Header().Del("Content-Length")
 		g.Header().Set("Content-Encoding", "gzip")
-		g.gz = gzip.NewWriter(g.ResponseWriter)
+		if !g.head {
+			g.gz = gzip.NewWriter(g.ResponseWriter)
+		}
 	}
 	g.ResponseWriter.WriteHeader(status)
 }
@@ -56,4 +59,20 @@ func (g *gzipWriter) Write(b []byte) (int, error) {
 		return g.ResponseWriter.Write(b)
 	}
 	return g.gz.Write(b)
+}
+
+func acceptsGzip(header string) bool {
+	for coding := range strings.SplitSeq(header, ",") {
+		name, params, _ := strings.Cut(coding, ";")
+		if strings.TrimSpace(name) != "gzip" {
+			continue
+		}
+		q, weighted := strings.CutPrefix(strings.TrimSpace(params), "q=")
+		if !weighted {
+			return true
+		}
+		weight, err := strconv.ParseFloat(q, 64)
+		return err == nil && weight > 0
+	}
+	return false
 }

@@ -77,3 +77,19 @@ func TestSessionIsGzippedWhenAccepted(t *testing.T) {
 		t.Fatalf("gunzipped session = %s, %v; want JSON with latestEventSeq 0", body, err)
 	}
 }
+
+func TestAcceptsGzip(t *testing.T) {
+	for header, want := range map[string]bool{
+		"gzip, deflate, br":      true,
+		"br;q=1.0, gzip;q=0.8":   true,
+		"gzip;q=0, identity;q=1": false,
+		"gzip; q=0.000":          false,
+		"identity":               false,
+		"":                       false,
+		"x-gzip":                 false,
+	} {
+		if got := acceptsGzip(header); got != want {
+			t.Errorf("acceptsGzip(%q) = %v, want %v", header, got, want)
+		}
+	}
+}
