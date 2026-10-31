@@ -29,7 +29,7 @@ func mustTurnOK(t *testing.T, resp Response, op string) {
 
 func TestTurnLifecycle(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "add a feature"}), "turn-start")
@@ -68,12 +68,10 @@ func TestTurnOpsOutsideRepoAreNoops(t *testing.T) {
 	s, _ := testServer(t)
 	outside := t.TempDir()
 
-	// Outside a repo the scope falls back to the cwd as given: turn-start fails
-	// where its precondition lives (the tree snapshot), turn-end finds no open
-	// turn and no-ops. Either way the hook stays silent.
-	resp := s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside, Prompt: "p"})
-	if resp.OK || !strings.Contains(resp.Error, "not inside a git or jj repository") {
-		t.Fatalf("turn-start outside a repo: ok=%v err=%q, want the snapshot error", resp.OK, resp.Error)
+	// Outside a repo the scope falls back to the cwd as given, which no review
+	// was opened on, so both hooks are silent no-ops.
+	if resp := s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside, Prompt: "p"}); !resp.OK {
+		t.Fatalf("turn-start outside a repo = %+v, want a silent ok no-op", resp)
 	}
 	if resp := s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: outside}); !resp.OK {
 		t.Fatalf("turn-end outside a repo = %+v, want a silent ok no-op", resp)
@@ -86,7 +84,7 @@ func TestTurnOpsOutsideRepoAreNoops(t *testing.T) {
 
 func TestTurnStartInterruptsDanglingTurn(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "first turn-start")
@@ -107,7 +105,7 @@ func TestTurnStartInterruptsDanglingTurn(t *testing.T) {
 
 func TestTurnStartSweepsStaleScratch(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	stale, err := s.turns.CreateTurn(ctx, vcs.Turn{RepoRoot: root, Backend: "git", ClaudePID: 50, TreeStart: "deadbeef"})
@@ -212,7 +210,7 @@ func bypassRow(t *testing.T, s *Server, session string) *decisions.Decision {
 
 func TestTurnEndFlagsUnattributedChanges(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 	stubSliceBinary(t, `echo '{"schema":"cc-transcript.slice/1","event_uuid":"u1","tool_use_id":"toolu_1","ts_ms":1,"tool_name":"Bash","tool_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","file_path":null,"summary":"$ go test ./..."}'`)
 	if _, err := s.createReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
@@ -257,7 +255,7 @@ func TestTurnEndFlagsUnattributedChanges(t *testing.T) {
 
 func TestTurnEndFullyAttributedWritesNoBypassRow(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 	stubSliceBinary(t, `echo '{"schema":"cc-transcript.slice/1","event_uuid":"u1","tool_use_id":"toolu_1","ts_ms":1,"tool_name":"Bash","tool_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","file_path":null,"summary":"$ sed -i s/a/b/ sneaky.go"}'`)
 	if _, err := s.createReview(ctx, "s1", 100, root, "main", "base0"); err != nil {
@@ -275,7 +273,7 @@ func TestTurnEndFullyAttributedWritesNoBypassRow(t *testing.T) {
 
 func TestHandleStartAttributesInterTurnEditsToTheNextTurn(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "turn one"}), "turn-start 1")
@@ -315,7 +313,7 @@ func TestHandleStartAttributesInterTurnEditsToTheNextTurn(t *testing.T) {
 
 func TestTurnStartWithoutOpenReviewChainsPreviousEndTree(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start 1")
@@ -345,7 +343,7 @@ func TestTurnStartWithoutOpenReviewChainsPreviousEndTree(t *testing.T) {
 
 func TestTurnStartWithOpenReviewSnapshots(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start 1")
@@ -378,7 +376,7 @@ func TestTurnStartWithOpenReviewSnapshots(t *testing.T) {
 
 func TestIdleTurnsStillAttributeAfterStart(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "one"}), "turn-start 1")
@@ -414,7 +412,7 @@ func TestIdleTurnsStillAttributeAfterStart(t *testing.T) {
 
 func TestTurnStartAfterAnInterruptedTurnSnapshots(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	prev := closedTurn(ctx, t, s, repo, root, "one")
@@ -440,7 +438,7 @@ func TestTurnStartAfterAnInterruptedTurnSnapshots(t *testing.T) {
 
 func TestTurnStartWithAnotherWindowMidTurnSnapshots(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	prev := closedTurn(ctx, t, s, repo, root, "one")
@@ -470,7 +468,7 @@ func TestTurnStartWithAnotherWindowMidTurnSnapshots(t *testing.T) {
 
 func TestTurnStartWithAMismatchedBackendTipSnapshots(t *testing.T) {
 	ctx := context.Background()
-	s, repo := testServer(t)
+	s, repo := turnServer(t)
 	root := repoRoot(t, repo)
 
 	// A tip left by the other backend addresses trees this repo cannot read.
@@ -510,4 +508,25 @@ func closedTurn(ctx context.Context, t *testing.T, s *Server, repo, root, prompt
 		t.Fatalf("turns = %d (err %v), want at least 1", len(turns), err)
 	}
 	return turns[len(turns)-1]
+}
+
+// TestTurnHooksInACheckoutNoReviewWasOpenedOnSnapshotNothing: a turn hook in a
+// checkout cc-review was never opened on records no turn and stages nothing, so
+// the many sessions sharing a large checkout pay no git add -A per turn.
+func TestTurnHooksInACheckoutNoReviewWasOpenedOnSnapshotNothing(t *testing.T) {
+	ctx := context.Background()
+	s, repo := testServer(t)
+	root := repoRoot(t, repo)
+
+	mustTurnOK(t, s.handleTurnStart(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo, Prompt: "add a feature"}), "turn-start")
+	writeFile(t, repo, "feat.go", "package p\nvar Feat int\n")
+	mustTurnOK(t, s.handleTurnEnd(ctx, Request{Session: "s1", ClaudePID: 100, Cwd: repo}), "turn-end")
+
+	turns, err := s.turns.ListAttributableTurns(ctx, root, 0)
+	if err != nil || len(turns) != 0 {
+		t.Fatalf("turns = %d (err %v), want none in an unreviewed checkout", len(turns), err)
+	}
+	if _, err := os.Stat(filepath.Join(paths.App().RepoTurnsDir(root), "index")); !os.IsNotExist(err) {
+		t.Fatalf("scratch index stat err = %v, want none written", err)
+	}
 }

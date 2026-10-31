@@ -378,6 +378,17 @@ func (s *Server) handleList(ctx context.Context, req Request) Response {
 	return s.run(ctx, req, (*review).handleList)
 }
 
+// turnServer is testServer on a checkout another window once opened a review on
+// and let expire, so turn hooks there record turns without an open review.
+func turnServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	s, repo := testServer(t)
+	if _, err := s.resolver.Store.Create(t.Context(), store.NewSlugHash(), store.ReviewSlug(store.NewSlugHash()), "earlier", repoRoot(t, repo), 999, statusExpired); err != nil {
+		t.Fatalf("seed an earlier review: %v", err)
+	}
+	return s, repo
+}
+
 // createReview seeds a review (a cc-interact subject + its review_meta) the way
 // handleStart would, for tests that need an existing review without a snapshot.
 func (s *Server) createReview(ctx context.Context, session string, pid int, repo, branch, base string) (subject.Subject, error) {
