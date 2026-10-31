@@ -43,6 +43,9 @@ func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
 		return errReply(err.Error())
 	}
 	repoRoot := hc.Scope
+	if reviewed, err := store.New(hc.DB).ReviewedScope(hc.Ctx, repoRoot); err != nil || !reviewed {
+		return turnSkipped(err)
+	}
 	hc.RepoLock.Lock()
 	defer hc.RepoLock.Unlock()
 	// A still-open turn here means the prior Stop hook never fired (crash, kill):
@@ -90,6 +93,9 @@ func (rv *review) handleTurnStart(hc ccd.HandlerCtx) ccd.Reply {
 func (rv *review) handleTurnEnd(hc ccd.HandlerCtx) ccd.Reply {
 	ts := vcs.NewTurnStore(hc.DB)
 	repoRoot := hc.Scope
+	if reviewed, err := store.New(hc.DB).ReviewedScope(hc.Ctx, repoRoot); err != nil || !reviewed {
+		return turnSkipped(err)
+	}
 	hc.RepoLock.Lock()
 	defer hc.RepoLock.Unlock()
 	turn, ok, err := ts.LatestOpenTurn(hc.Ctx, repoRoot, hc.Window.ClaudePID)
@@ -112,6 +118,15 @@ func (rv *review) handleTurnEnd(hc ccd.HandlerCtx) ccd.Reply {
 	}
 	if rv.takeSnapshotted(turn.ID) {
 		rv.detectBypass(hc, repoRoot, scratchDir, turn, tree)
+	}
+	return ccd.Reply{OK: true}
+}
+
+// turnSkipped answers a turn hook in a checkout no review was ever opened on,
+// which records no turn and snapshots nothing.
+func turnSkipped(err error) ccd.Reply {
+	if err != nil {
+		return errReply(err.Error())
 	}
 	return ccd.Reply{OK: true}
 }

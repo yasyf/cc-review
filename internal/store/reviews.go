@@ -50,6 +50,14 @@ func (s *Store) GetReviewByRef(ctx context.Context, ref string) (Review, error) 
 		`SELECT id, status, scope, created_at FROM subjects WHERE slug=? OR id=?`, ref, ref))
 }
 
+// ReviewedScope reports whether any review, in any window or status, was ever
+// opened on scope, the checkout a turn hook fires in.
+func (s *Store) ReviewedScope(ctx context.Context, scope string) (bool, error) {
+	var reviewed bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM subjects WHERE scope=?)`, scope).Scan(&reviewed)
+	return reviewed, err
+}
+
 // GetReview returns the review by subject id, or ErrNotFound.
 func (s *Store) GetReview(ctx context.Context, id string) (Review, error) {
 	return s.scanReview(s.db.QueryRowContext(ctx,
