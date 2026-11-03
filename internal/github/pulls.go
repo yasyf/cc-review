@@ -6,8 +6,11 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 )
+
+var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // PullRequest is one pull request's metadata, checks, and reviewers.
 type PullRequest struct {
@@ -44,8 +47,13 @@ type Reviewer struct {
 	State     string
 }
 
-const pullRequestQuery = `query PullRequest($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $number) { ...PRMeta } }
+const stackedPullRequestQuery = `query StackedPullRequest($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      ...PRMeta
+      stack { entries(first: 100) { nodes { pullRequest { ...PRMeta } } } }
+    }
+  }
 }` + prMetaFragment
 
 const openPRsQuery = `query OpenPRs($owner: String!, $name: String!, $head: String, $base: String, $after: String) {
@@ -57,18 +65,48 @@ const openPRsQuery = `query OpenPRs($owner: String!, $name: String!, $head: Stri
   }
 }` + prMetaFragment
 
-// PullRequest reads one pull request.
-func (c *Client) PullRequest(ctx context.Context, ref PRRef) (PullRequest, error) {
+// StackedPullRequest reads one pull request and, in the same read, the open
+// pull requests of its native GitHub stack, trunk-most first. A pull request
+// outside a native stack has none.
+func (c *Client) StackedPullRequest(ctx context.Context, ref PRRef) (PullRequest, []PullRequest, error) {
 	var out struct {
 		Repository struct {
-			PullRequest gqlPR `json:"pullRequest"`
+			PullRequest struct {
+				gqlPR
+				Stack *struct {
+					Entries struct {
+						Nodes []struct {
+							PullRequest gqlPR `json:"pullRequest"`
+						} `json:"nodes"`
+					} `json:"entries"`
+				} `json:"stack"`
+			} `json:"pullRequest"`
 		} `json:"repository"`
 	}
 	vars := map[string]any{"owner": ref.Repo.Owner, "name": ref.Repo.Name, "number": ref.Number}
-	if err := c.read(ctx, ref.Repo, pullRequestQuery, vars, &out); err != nil {
-		return PullRequest{}, fmt.Errorf("read %s: %w", ref, err)
+	if err := c.read(ctx, ref.Repo, stackedPullRequestQuery, vars, &out); err != nil {
+		return PullRequest{}, nil, fmt.Errorf("read %s: %w", ref, err)
 	}
-	return c.pullRequestOf(ctx, ref.Repo, out.Repository.PullRequest)
+	read := out.Repository.PullRequest
+	target, err := c.pullRequestOf(ctx, ref.Repo, read.gqlPR)
+	if err != nil {
+		return PullRequest{}, nil, err
+	}
+	if read.Stack == nil {
+		return target, nil, nil
+	}
+	var open []PullRequest
+	for _, entry := range read.Stack.Entries.Nodes {
+		if entry.PullRequest.State != "OPEN" || entry.PullRequest.IsCrossRepository {
+			continue
+		}
+		pr, err := c.pullRequestOf(ctx, ref.Repo, entry.PullRequest)
+		if err != nil {
+			return PullRequest{}, nil, err
+		}
+		open = append(open, pr)
+	}
+	return target, open, nil
 }
 
 // OpenPRsWithHead lists the open pull requests from repo's own branch.
@@ -124,8 +162,13 @@ func (c *Client) DefaultBranch(ctx context.Context, repo Repo) (string, error) {
 	return out.DefaultBranch, nil
 }
 
-// MergeBase reads the merge base of base and head, each a sha or branch.
+// MergeBase reads the merge base of base and head, each a sha or branch. The
+// merge base of two shas never changes, so it is read once per client.
 func (c *Client) MergeBase(ctx context.Context, repo Repo, base, head string) (string, error) {
+	key := repo.String() + "/" + base + "..." + head
+	if known, ok := c.mergeBases.Load(key); ok {
+		return known.(string), nil
+	}
 	var out struct {
 		MergeBaseCommit struct {
 			SHA string `json:"sha"`
@@ -137,6 +180,9 @@ func (c *Client) MergeBase(ctx context.Context, repo Repo, base, head string) (s
 	}
 	if out.MergeBaseCommit.SHA == "" {
 		return "", fmt.Errorf("github: compare %s...%s in %s named no merge base", base, head, repo)
+	}
+	if fullSHA.MatchString(base) && fullSHA.MatchString(head) {
+		c.mergeBases.Store(key, out.MergeBaseCommit.SHA)
 	}
 	return out.MergeBaseCommit.SHA, nil
 }

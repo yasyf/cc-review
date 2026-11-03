@@ -29,19 +29,22 @@ type Stack struct {
 	Forks    []int
 }
 
-const mergeBaseReads = 4
+const mergeBaseReads = 16
 
-// Resolve walks down from ref to the repository's default branch, or to a base
-// branch no open pull request heads (a landed parent's branch, or Graphite's
-// graphite-base/<n> during a restack), and up while exactly one open pull
-// request is stacked on the current head. The two walks, and every section's
-// merge base, are read concurrently.
+// Resolve reads ref with its native GitHub stack in one query, then walks down
+// from the bottom to the repository's default branch, or to a base branch no
+// open pull request heads (a landed parent's branch, or Graphite's
+// graphite-base/<n> during a restack), and up from the top while exactly one
+// open pull request is stacked on the current head. A pull request outside a
+// native stack walks one read per hop. The two walks, and every section's merge
+// base, are read concurrently.
 func Resolve(ctx context.Context, c *github.Client, ref github.PRRef) (Stack, error) {
 	var target github.PullRequest
+	var native []github.PullRequest
 	var trunk string
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
-		target, err = c.PullRequest(gctx, ref)
+		target, native, err = c.StackedPullRequest(gctx, ref)
 		return err
 	})
 	g.Go(func() (err error) {
@@ -56,9 +59,10 @@ func Resolve(ctx context.Context, c *github.Client, ref github.PRRef) (Stack, er
 	stack := Stack{Repo: ref.Repo, Trunk: trunk, Target: ref.Number}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	chain := linkedAround(target, native)
 	up := make(chan upWalk, 1)
-	go func() { up <- walkUp(ctx, c, ref, target) }()
-	prs, floor, err := walkDown(ctx, c, ref, target, trunk)
+	go func() { up <- walkUp(ctx, c, ref, chain) }()
+	prs, floor, err := walkDown(ctx, c, ref, chain, trunk)
 	if err != nil {
 		return Stack{}, err
 	}
@@ -97,12 +101,37 @@ func Resolve(ctx context.Context, c *github.Client, ref github.PRRef) (Stack, er
 	return stack, nil
 }
 
-// walkDown returns target and the pull requests below it, trunk-most first,
-// and the branch the bottom one is based on.
-func walkDown(ctx context.Context, c *github.Client, ref github.PRRef, target github.PullRequest, trunk string) ([]github.PullRequest, string, error) {
-	prs := []github.PullRequest{target}
-	seen := map[int]bool{target.Number: true}
-	for bottom := target; bottom.BaseRefName != trunk; {
+// linkedAround returns the native stack entries linked head to base around
+// target, trunk-most first, or target alone when it is not among them.
+func linkedAround(target github.PullRequest, native []github.PullRequest) []github.PullRequest {
+	at := slices.IndexFunc(native, func(p github.PullRequest) bool { return p.Number == target.Number })
+	if at < 0 {
+		return []github.PullRequest{target}
+	}
+	low, high := at, at
+	for low > 0 && native[low-1].HeadRefName == native[low].BaseRefName {
+		low--
+	}
+	for high < len(native)-1 && native[high+1].BaseRefName == native[high].HeadRefName {
+		high++
+	}
+	return native[low : high+1]
+}
+
+func numbersOf(prs []github.PullRequest) map[int]bool {
+	seen := make(map[int]bool, len(prs))
+	for _, pr := range prs {
+		seen[pr.Number] = true
+	}
+	return seen
+}
+
+// walkDown returns chain and the pull requests below it, trunk-most first, and
+// the branch the bottom one is based on.
+func walkDown(ctx context.Context, c *github.Client, ref github.PRRef, chain []github.PullRequest, trunk string) ([]github.PullRequest, string, error) {
+	prs := slices.Clone(chain)
+	seen := numbersOf(chain)
+	for bottom := chain[0]; bottom.BaseRefName != trunk; {
 		parents, err := c.OpenPRsWithHead(ctx, ref.Repo, bottom.BaseRefName)
 		if err != nil {
 			return nil, "", fmt.Errorf("resolve the stack of %s: %w", ref, err)
@@ -129,14 +158,14 @@ type upWalk struct {
 	err   error
 }
 
-// walkUp returns the pull requests stacked above target, bottom-most first,
-// and the open pull requests on the top one when more than one is. On error it
+// walkUp returns the pull requests stacked above chain, bottom-most first, and
+// the open pull requests on the top one when more than one is. On error it
 // keeps the pull requests read so far, so the caller can tell whether the
 // error lies past where the walk would have stopped.
-func walkUp(ctx context.Context, c *github.Client, ref github.PRRef, target github.PullRequest) upWalk {
+func walkUp(ctx context.Context, c *github.Client, ref github.PRRef, chain []github.PullRequest) upWalk {
 	var w upWalk
-	seen := map[int]bool{target.Number: true}
-	for top := target; ; {
+	seen := numbersOf(chain)
+	for top := chain[len(chain)-1]; ; {
 		children, err := c.OpenPRsWithBase(ctx, ref.Repo, top.HeadRefName)
 		if err != nil {
 			w.err = fmt.Errorf("resolve the stack of %s: %w", ref, err)
