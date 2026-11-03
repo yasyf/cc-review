@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The review API's writes require `Content-Type: application/json`. A web page can send any other body type without a preflight, so a script on another port of the same host could otherwise have posted a comment or an AI request with its own text.
+- A DNS-rebinding page can no longer read reviews through a trusted browser, from cc-interact 0.40.1's `Host` check.
+
 ## [0.46.0] - 2026-10-28
 
 ### Changed

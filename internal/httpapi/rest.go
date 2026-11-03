@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"slices"
@@ -1083,6 +1084,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		return false
+	}
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return false
