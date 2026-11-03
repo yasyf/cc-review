@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.1] - 2026-11-03
+
 ### Security
 
 - The review API's writes require `Content-Type: application/json`. A web page can send any other body type without a preflight, so a script on another port of the same host could otherwise have posted a comment or an AI request with its own text.
