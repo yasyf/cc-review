@@ -69,6 +69,8 @@ type Server struct {
 	defaults    map[github.Repo]string
 	prs         map[github.Repo]map[int]*pullRequest
 	mergeBases  map[string]string
+	stacks      map[github.Repo][][]int
+	reads       int
 	writes      []Write
 	nextID      int64
 	failStatus  int
@@ -86,6 +88,7 @@ func New(t testing.TB) *Server {
 		defaults:   map[github.Repo]string{},
 		prs:        map[github.Repo]map[int]*pullRequest{},
 		mergeBases: map[string]string{},
+		stacks:     map[github.Repo][][]int{},
 		nextID:     1000,
 		failNext:   map[string][]failure{},
 		loseNext:   map[string]int{},
@@ -190,6 +193,20 @@ func (s *Server) SetMergeBase(repo github.Repo, base, head, sha string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mergeBases[repo.String()+" "+base+"..."+head] = sha
+}
+
+// SetNativeStack makes numbers one native GitHub stack, trunk-most first.
+func (s *Server) SetNativeStack(repo github.Repo, numbers ...int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stacks[repo] = append(s.stacks[repo], numbers)
+}
+
+// Reads returns how many GraphQL queries and compare reads the server answered.
+func (s *Server) Reads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
 }
 
 // AddPR seeds a pull request, filling NodeID, URL, State, and UpdatedAt when
@@ -463,6 +480,7 @@ func (s *Server) repo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	sha, ok := s.mergeBases[repoOf(r).String()+" "+r.PathValue("spec")]
 	if !ok {
 		writeError(w, http.StatusNotFound, "Not Found")
@@ -612,6 +630,7 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	if strings.HasPrefix(strings.TrimSpace(req.Query), "query") && s.scriptedFailure(w, "graphql:"+match[1]) {
 		return
 	}
@@ -636,12 +655,14 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request, name string, 
 	switch name {
 	case "Viewer":
 		return map[string]any{"viewer": map[string]string{"login": loginOf(r)}}, nil
-	case "PullRequest":
+	case "StackedPullRequest":
 		pr, ok := s.prs[repo][intField(vars, "number")]
 		if !ok {
 			return nil, notFound(fmt.Sprintf("Could not resolve to a PullRequest with the number of %d.", intField(vars, "number")))
 		}
-		return repository(map[string]any{"pullRequest": s.prJSON(pr, false)}), nil
+		read := s.prJSON(pr, false)
+		read["stack"] = s.stackJSON(repo, pr.Number)
+		return repository(map[string]any{"pullRequest": read}), nil
 	case "OpenPRs":
 		return repository(map[string]any{"pullRequests": s.openPRs(repo, vars)}), nil
 	case "Snapshot":
@@ -671,6 +692,20 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request, name string, 
 }
 
 func repository(fields map[string]any) map[string]any { return map[string]any{"repository": fields} }
+
+func (s *Server) stackJSON(repo github.Repo, number int) any {
+	for _, stack := range s.stacks[repo] {
+		if !slices.Contains(stack, number) {
+			continue
+		}
+		nodes := make([]any, len(stack))
+		for i, member := range stack {
+			nodes[i] = map[string]any{"pullRequest": s.prJSON(s.prs[repo][member], false)}
+		}
+		return map[string]any{"entries": map[string]any{"nodes": nodes}}
+	}
+	return nil
+}
 
 func (s *Server) snapshot(repo github.Repo, query string) (map[string]any, error) {
 	fields := map[string]any{}

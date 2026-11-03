@@ -126,7 +126,7 @@ func TestPullRequestReadsMetadata(t *testing.T) {
 			{Login: "dave", AvatarURL: "https://avatars/dave", State: "PENDING"},
 		},
 	})
-	got, err := s.Client(userToken).PullRequest(context.Background(), github.PRRef{Repo: repo, Number: 12})
+	got, _, err := s.Client(userToken).StackedPullRequest(context.Background(), github.PRRef{Repo: repo, Number: 12})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestPullRequestReadsMetadata(t *testing.T) {
 func TestPullRequestErrors(t *testing.T) {
 	s := newServer(t)
 	ctx := context.Background()
-	if _, err := s.Client(userToken).PullRequest(ctx, github.PRRef{Repo: repo, Number: 404}); !errors.Is(err, github.ErrNotFound) {
+	if _, _, err := s.Client(userToken).StackedPullRequest(ctx, github.PRRef{Repo: repo, Number: 404}); !errors.Is(err, github.ErrNotFound) {
 		t.Fatalf("missing PR error = %v, want ErrNotFound", err)
 	}
 	if _, err := s.Client("stranger").Viewer(ctx); !errors.Is(err, github.ErrUnauthorized) {
@@ -277,7 +277,7 @@ func TestCCXReadsLeaveTheUserToken(t *testing.T) {
 	if n := len(snaps[1].PR.Checks); n != 3 {
 		t.Fatalf("snapshot through ccx read %d checks, want 3 across two pages", n)
 	}
-	if _, err := c.PullRequest(ctx, github.PRRef{Repo: repo, Number: 404}); !errors.Is(err, github.ErrNotFound) {
+	if _, _, err := c.StackedPullRequest(ctx, github.PRRef{Repo: repo, Number: 404}); !errors.Is(err, github.ErrNotFound) {
 		t.Fatalf("missing pull request through ccx = %v, want ErrNotFound", err)
 	}
 	calls := ccx.Calls()
@@ -310,7 +310,7 @@ func TestCCXRefusals(t *testing.T) {
 			s.AddPR(repo, github.PullRequest{Number: 1, HeadRefName: "a", HeadRefOid: "a1", BaseRefName: "main"})
 			s.CCX(t, appToken).Refuse(tc.stderr)
 
-			_, err := github.New(unusedToken{t}, github.WithCCXReads()).PullRequest(context.Background(), github.PRRef{Repo: repo, Number: 1})
+			_, _, err := github.New(unusedToken{t}, github.WithCCXReads()).StackedPullRequest(context.Background(), github.PRRef{Repo: repo, Number: 1})
 			if err == nil {
 				t.Fatal("refused read succeeded")
 			}

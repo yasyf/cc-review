@@ -92,6 +92,8 @@ type Client struct {
 
 	viewerMu sync.Mutex
 	viewer   string
+
+	mergeBases sync.Map
 }
 
 // New builds a client against api.github.com authenticating through ts.
