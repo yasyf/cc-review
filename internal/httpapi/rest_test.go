@@ -205,6 +205,39 @@ func TestSetFileStatesAppliesAndEmits(t *testing.T) {
 	}
 }
 
+func TestWriteRefusesABodyAPageCanSendWithoutAPreflight(t *testing.T) {
+	st, _, srv := newTestServer(t)
+	review, _, _ := createReviewVersion(t, st, `[]`)
+	for _, contentType := range []string{"text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", ""} {
+		t.Run(contentType, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"reviewId": review.ID, "prompt": "organize"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/api/ai-requests", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", contentType)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusUnsupportedMediaType {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnsupportedMediaType)
+			}
+		})
+	}
+	if requests, _ := st.ListAIRequests(context.Background(), review.ID); len(requests) != 0 {
+		t.Fatalf("got %d persisted requests, want 0", len(requests))
+	}
+	resp := postJSON(t, srv.URL+"/api/ai-requests", map[string]any{"reviewId": review.ID, "prompt": "   "})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a JSON body reached the handler with status %d, want its empty-prompt 400", resp.StatusCode)
+	}
+}
+
 func TestCreateAIRequestEmptyPromptIs400(t *testing.T) {
 	st, cc, srv := newTestServer(t)
 	review, _, _ := createReviewVersion(t, st, `[]`)
