@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.2] - 2026-11-03
+
 ### Changed
 
 - A pull-request review of a native GitHub stack opens in about half the time: one read returns the whole stack instead of one read per pull request, merge bases of two commits are read once, and they are read together.
