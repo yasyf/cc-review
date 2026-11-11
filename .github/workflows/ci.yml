@@ -15,7 +15,7 @@ on:
 # PRs only: cancel-in-progress on main leaves pushed commits with no CI verdict
 # when a later push kills a slow macOS run mid-flight.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ inputs.commit || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
