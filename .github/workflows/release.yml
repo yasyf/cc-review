@@ -16,10 +16,15 @@ permissions:
 
 jobs:
   release:
-    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@28367ec611b0463b43b3c0fc8e984efddfe7379c
+    uses: yasyf/homebrew-tap/.github/workflows/release-go.yml@48bd52dbd3669f32199fd54ec0fc7e519da67154
     secrets: inherit
     with:
       setup-bun: true
+
+  notarize:
+    needs: release
+    uses: yasyf/homebrew-tap/.github/workflows/notarize-release.yml@48bd52dbd3669f32199fd54ec0fc7e519da67154
+    secrets: inherit
 
   # Refresh the committed binrun descriptor (plugin/bin/cc-review.binrun) to pin
   # the just-released version, and move the plugin manifest to the same version
