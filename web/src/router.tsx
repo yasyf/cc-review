@@ -16,6 +16,7 @@ export interface ReviewSearch {
   version?: number;
   tab?: MainTab;
   section?: string;
+  embed?: boolean;
 }
 
 const reviewRoute = createRoute({
@@ -30,6 +31,7 @@ const reviewRoute = createRoute({
       ...(version === undefined || Number.isNaN(version) ? {} : { version }),
       ...(tab ? { tab } : {}),
       ...(typeof search.section === 'string' ? { section: search.section } : {}),
+      ...(search.embed === true || search.embed === 1 ? { embed: true } : {}),
     };
   },
   component: ReviewView,

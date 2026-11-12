@@ -76,7 +76,7 @@ function ViewMenu({ hasOrganization }: { hasOrganization: boolean }) {
   );
 }
 
-export function DiffToolbar({ session }: { session: SessionResponse }) {
+export function DiffToolbar({ session, tree }: { session: SessionResponse; tree: boolean }) {
   const { hideReviewed, setHideReviewed, diffStyle, setDiffStyle } = useViewPrefs();
   const { filesOpen, toggleFiles } = useLayout();
   const files = session.sections.reduce((n, s) => n + s.files.length, 0);
@@ -95,13 +95,15 @@ export function DiffToolbar({ session }: { session: SessionResponse }) {
 
   return (
     <div className="diff-toolbar">
-      <IconButton
-        icon="sidebar"
-        label={filesOpen ? 'Hide file tree' : 'Show file tree'}
-        shortcut="]"
-        aria-pressed={filesOpen}
-        onClick={toggleFiles}
-      />
+      {tree ? (
+        <IconButton
+          icon="sidebar"
+          label={filesOpen ? 'Hide file tree' : 'Show file tree'}
+          shortcut="]"
+          aria-pressed={filesOpen}
+          onClick={toggleFiles}
+        />
+      ) : null}
       <span className="diff-toolbar-stats">
         {files} file{files === 1 ? '' : 's'}
         <span className="stat-add">+{stats.additions}</span>
