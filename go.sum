@@ -78,8 +78,8 @@ github.com/vishvananda/netlink v1.2.1-beta.2 h1:Llsql0lnQEbHj0I1OuKyp8otXp0r3q0m
 github.com/vishvananda/netlink v1.2.1-beta.2/go.mod h1:twkDnbuQxJYemMlGd4JFIcuhgX83tXhKS2B/PRMpOho=
 github.com/vishvananda/netns v0.0.0-20200728191858-db3c7e526aae h1:4hwBBUfQCFe3Cym0ZtKyq7L16eZUtYKs+BaHDN6mAns=
 github.com/vishvananda/netns v0.0.0-20200728191858-db3c7e526aae/go.mod h1:DD4vA1DwXk04H54A1oHXtwZmA0grkVMdPxx/VGLCah0=
-github.com/yasyf/cc-interact v0.40.2 h1:+K/OTPlhrb8TN2pyPV+9gGCmtpu2HGk5k3OjT5rRFqc=
-github.com/yasyf/cc-interact v0.40.2/go.mod h1:+zkZi12pmVPfpTnLTzLanAfaj6Ox2QbGIMKS5+/SjAM=
+github.com/yasyf/cc-interact v0.42.1 h1:jA9AxNXGwWStyLnIPqRDW5mSUArUXWpKH5Q/GBAuJKM=
+github.com/yasyf/cc-interact v0.42.1/go.mod h1:+QWMFx4uclOPfllCg2pZjmzZZ8TmmrzdNxECQ1xylw8=
 github.com/yasyf/daemonkit v0.35.1 h1:M1UKUOKEEGw4mrhXqah+6f06PLmOFWBVsxL370XZBTk=
 github.com/yasyf/daemonkit v0.35.1/go.mod h1:hEUZvGh+jCBOJmltSQa3QZR0kqV6G/ApJoViU1aAMps=
 github.com/yasyf/synckit v0.47.0 h1:jRhXGlnHy45HHUIyI8Lcxb3OMNxkzzWrGsXzTDQSekw=

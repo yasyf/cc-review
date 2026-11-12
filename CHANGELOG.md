@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A `claude --bg` session is its own window: cc-interact 0.42.1 matches a process titled `claude bg-spare`, so a review started in one `--bg` session no longer resolves to the `claude daemon run` process every `--bg` session shares. The same bump makes a later-started channel server replace an earlier one of its window (cc-interact 0.42.0), which before this fix would have replaced the channel of every other `--bg` session under the daemon.
+
 ## [0.46.3] - 2026-11-04
 
 ### Fixed

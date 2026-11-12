@@ -523,8 +523,8 @@ func (b sseBackend) Subscribe(subjectID string) (<-chan struct{}, func()) {
 	return b.f.bus.Subscribe(subjectID)
 }
 
-func (b sseBackend) Attach(subjectID, consumer string, pid int) func() {
-	return b.f.activity.Attach(subjectID, consumer, pid)
+func (b sseBackend) Attach(subjectID, consumer string, pid int, cursor, started int64) (func(int64), <-chan struct{}, func()) {
+	return b.f.activity.Attach(subjectID, consumer, pid, cursor, started)
 }
 
 func (b sseBackend) ConsumerConnected(subjectID string) bool {
