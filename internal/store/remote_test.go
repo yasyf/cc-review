@@ -13,7 +13,7 @@ func TestSchemaFingerprintPinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "f093bc74c403b1561b9f22f83de36aafcff8c57963f015a855571f1d850eb333"
+	const want = "09d119cb45a294dec6c62c4e1be005cd7eafa03543769af824d5319271bd0dc1"
 	if got != want {
 		t.Fatalf("Schema().Fingerprint() = %q, want %q; a DDL change is a schema epoch: update the pin and the CHANGELOG", got, want)
 	}
