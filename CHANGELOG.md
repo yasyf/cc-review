@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A review framed in another page opens with `?embed=1` as the diff alone: no top bar, stack rail, header, tabs or file tree, scoped to the reviewed PR's section. The framing page drives it with `postMessage`: `cc-review:show` scrolls to a file, and `cc-review:say` adds a question for the review session or a comment on a file or a changed line, answered with `cc-review:said`. The review posts `cc-review:ready` with its files once it loads. The drive dashboard's PR card uses it.
+
 ### Fixed
 
 - A `claude --bg` session is its own window: cc-interact 0.42.1 matches a process titled `claude bg-spare`, so a review started in one `--bg` session no longer resolves to the `claude daemon run` process every `--bg` session shares. The same bump makes a later-started channel server replace an earlier one of its window (cc-interact 0.42.0), which before this fix would have replaced the channel of every other `--bg` session under the daemon.

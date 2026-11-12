@@ -4,6 +4,7 @@ import { getRouteApi } from '@tanstack/react-router';
 import { AppShell, ToastStack } from '@cc-interact/react';
 import { useSession } from '../lib/api';
 import type { DiffViewHandle } from '../lib/diff/useDiffHandle';
+import { EmbedChannel } from '../lib/embed';
 import { EventStreamProvider, useEventStream } from '../lib/events';
 import { LayoutFrame, useLayout } from '../lib/layout';
 import type { MainTab } from '../lib/layout';
@@ -137,18 +138,20 @@ function FilesTab({
   nav,
   stacked,
   hidden,
+  tree,
 }: {
   session: SessionResponse;
   diffRef: RefObject<DiffViewHandle | null>;
   nav: RefObject<DiffViewHandle | null>;
   stacked: boolean;
   hidden: boolean;
+  tree: boolean;
 }) {
   const { filesOpen, filesOverlay, dismissFiles } = useLayout();
   const [currentSection, setCurrentSection] = useState<string | null>(null);
   return (
     <div className="tab-panel tab-panel-files" inert={hidden} data-hidden={hidden || undefined}>
-      {filesOpen ? (
+      {tree && filesOpen ? (
         <FilesPane
           session={session}
           onSelectFile={(ref) => {
@@ -161,9 +164,9 @@ function FilesTab({
           }}
         />
       ) : null}
-      {filesOverlay ? <div className="files-scrim" onClick={dismissFiles} /> : null}
+      {tree && filesOverlay ? <div className="files-scrim" onClick={dismissFiles} /> : null}
       <div className="diff-column">
-        <DiffToolbar session={session} />
+        <DiffToolbar session={session} tree={tree} />
         {stacked ? <StackDivider session={session} sectionKey={currentSection} /> : null}
         <DiffView
           key={session.versionId}
@@ -184,13 +187,18 @@ function ReviewBody({ data, section: sectionParam }: { data: SessionResponse; se
   const diffRef = useRef<DiffViewHandle>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  const hasRail = data.sections.length > 1 || data.review.kind === 'pr';
-  const scope = data.sections.some((s) => s.sectionKey === sectionParam) ? sectionParam : undefined;
+  const embedded = search.embed === true;
+  const hasRail = !embedded && (data.sections.length > 1 || data.review.kind === 'pr');
+  const scope = embedded
+    ? data.sections.find((s) => s.prNumber === data.review.prNumber)?.sectionKey
+    : data.sections.some((s) => s.sectionKey === sectionParam)
+      ? sectionParam
+      : undefined;
   const section = scope !== undefined ? data.sections.find((s) => s.sectionKey === scope) : data.sections.length === 1 ? data.sections[0] : undefined;
   const pr = section ? sectionPullRequest(section, data.pullRequests) : null;
   const scoped = useMemo(() => scopeSession(data, section?.sectionKey), [data, section?.sectionKey]);
   const tabs = tabsFor(data, scoped, section, pr);
-  const tab: MainTab = tabs.some((t) => t.id === search.tab) && search.tab ? search.tab : 'files';
+  const tab: MainTab = !embedded && tabs.some((t) => t.id === search.tab) && search.tab ? search.tab : 'files';
 
   const setTab = useCallback(
     (next: MainTab) => {
@@ -223,15 +231,18 @@ function ReviewBody({ data, section: sectionParam }: { data: SessionResponse; se
         <LocalRequestsProvider versionId={data.versionId}>
           <LayoutFrame hasRail={hasRail}>
             <ShortcutLayer diffRef={nav} helpOpen={helpOpen} setHelpOpen={setHelpOpen} />
+            {embedded ? <EmbedChannel session={scoped} nav={nav} /> : null}
             <AppShell
-              header={<TopBar session={data} hasRail={hasRail} />}
+              {...(embedded ? {} : { header: <TopBar session={data} hasRail={hasRail} /> })}
               {...(hasRail ? { sidebar: <StackRail session={data} scope={scope} onScope={setScope} /> } : {})}
               main={
                 <>
-                  <div className="review-head">
-                    <ReviewHeader session={data} section={section} pr={pr} />
-                    <ReviewTabs tabs={tabs} active={tab} onSelect={setTab} />
-                  </div>
+                  {embedded ? null : (
+                    <div className="review-head">
+                      <ReviewHeader session={data} section={section} pr={pr} />
+                      <ReviewTabs tabs={tabs} active={tab} onSelect={setTab} />
+                    </div>
+                  )}
                   <div className="tab-stage">
                     <FilesTab
                       session={scoped}
@@ -239,6 +250,7 @@ function ReviewBody({ data, section: sectionParam }: { data: SessionResponse; se
                       nav={nav}
                       stacked={section === undefined && data.sections.length > 1}
                       hidden={tab !== 'files'}
+                      tree={!embedded}
                     />
                     {tab === 'overview' ? (
                       <div className="tab-panel tab-panel-scroll">
