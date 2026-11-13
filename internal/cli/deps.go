@@ -48,6 +48,7 @@ func deps() cmd.Deps {
 	return cmd.Deps{
 		Paths:                  paths.App(),
 		Version:                version.Build(),
+		Plugin:                 reviewPlugin,
 		NewClient:              newControlClient,
 		EnsureCurrent:          ensureCurrent,
 		EnsureCurrentIfRunning: ensureCurrentIfRunning,

@@ -9,13 +9,23 @@
   "homepage": "https://github.com/yasyf/cc-review",
   "license": "PolyForm-Noncommercial-1.0.0",
   "mcpServers": {
+    "channel": {
+      "command": "cc-review",
+      "args": [
+        "mcp-channel",
+        "--no-tools"
+      ],
+      "env": {
+        "CLAUDE_PLUGIN_ROOT": ""
+      }
+    },
     "cc-review": {
       "command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-channel.sh"
     }
   },
   "channels": [
     {
-      "server": "cc-review",
+      "server": "channel",
       "displayName": "cc-review"
     }
   ]

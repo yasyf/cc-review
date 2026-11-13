@@ -16,7 +16,7 @@ require (
 require (
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/yasyf/cc-interact v0.42.1
+	github.com/yasyf/cc-interact v0.42.3-0.20261113055244-bbaf30762e84
 	github.com/yasyf/daemonkit v0.35.1
 	github.com/yasyf/synckit v0.47.0
 	github.com/zalando/go-keyring v0.2.8

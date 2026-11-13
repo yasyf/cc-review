@@ -24,7 +24,7 @@ A relayed line whose `type` is `submit` ends it: the streamer teammate stops its
 
 ## Channel upgrade
 
-If a `<channel source="cc-review">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, shut the streamer teammate down, and switch to `route-channel`.
+If a `<channel source="plugin:cc-review:channel">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, shut the streamer teammate down, and switch to `route-channel`.
 
 ## Edges
 

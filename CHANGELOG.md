@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- cc-review's channel runs on its own toolless server, `channel`, which Claude Code starts as `cc-review mcp-channel --no-tools` from `PATH` with `CLAUDE_PLUGIN_ROOT` emptied, so its config is the same in every version and `/reload-plugins` leaves it running. The tools stay on the `cc-review` server under their old names, now `cc-review tools`. The channel server moves itself onto the newest installed cc-review once that one reports a newer release. A second `Stop` hook, `cc-review channel-check`, notices a channel that stopped in a session inside Orca and types `/mcp reconnect plugin:cc-review:channel` at its next idle prompt with an empty draft, at most once every 5 minutes. Review events now arrive as `<channel source="plugin:cc-review:channel">` tags. The `cc-review` binary must be on `PATH`, which the Homebrew cask puts there.
 - A review framed in another page opens with `?embed=1` as the diff alone: no top bar, stack rail, header, tabs or file tree, scoped to the reviewed PR's section. The framing page drives it with `postMessage`: `cc-review:show` scrolls to a file, and `cc-review:say` adds a question for the review session or a comment on a file or a changed line, answered with `cc-review:said`. The review posts `cc-review:ready` with its files once it loads. The drive dashboard's PR card uses it.
 
 ### Fixed

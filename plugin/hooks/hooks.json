@@ -25,7 +25,8 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" turn-end" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" turn-end" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-review\" channel-check", "timeout": 15 }
         ]
       }
     ]
