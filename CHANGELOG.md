@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `channel` MCP server starts the plugin's own `cc-review`. It ran `cc-review mcp-channel --no-tools` from `PATH`, which resolves to a copy outside the plugin, such as the Homebrew cask, so a plugin update that reached a session before that copy did could name a flag the copy rejected, and the server never started, as the codex plugin's channel did in nine sessions at its 1.16.0 update. The entry now runs `python3` with a launcher that reads Claude Code's `installed_plugins.json` and execs the newest `cc-review@cc-review` install's own `bin/cc-review`, so the binary always ships with the manifest that names its flags, and the entry still names no plugin version, so `/reload-plugins` keeps the server. The channel no longer needs `cc-review` on `PATH`.
 - A `claude --bg` session is its own window: cc-interact 0.42.1 matches a process titled `claude bg-spare`, so a review started in one `--bg` session no longer resolves to the `claude daemon run` process every `--bg` session shares. The same bump makes a later-started channel server replace an earlier one of its window (cc-interact 0.42.0), which before this fix would have replaced the channel of every other `--bg` session under the daemon.
 - The store's schema fingerprint moves to cc-interact 0.42.1's core schema, which adds `directives.event_seq` and its index. cc-interact migrates a store recorded at the previous core schema in place, so reviews survive the upgrade.
 
