@@ -32,7 +32,7 @@ func NewRootCmd() *cobra.Command {
 	root.SetVersionTemplate("{{.Version}}\n")
 	d := deps()
 	applyHint := fmt.Sprintf("cc-review is now an approved channel.\nLaunch with `--channels %s` (replacing `--dangerously-load-development-channels %s` if you used it) — same channel, no warning.", reviewPlugin.ChannelID(), reviewPlugin.ChannelID())
-	// The plugin's scripts/mcp-channel.sh invokes the historical `mcp-channel`
+	// The plugin's channel server invokes the historical `mcp-channel`
 	// name; cc-interact's ChannelCmd defaults to `channel`. Preserve the plugin
 	// contract and keep `channel` as an alias.
 	channelCmd := cmd.ChannelCmd(d)
@@ -47,6 +47,8 @@ func NewRootCmd() *cobra.Command {
 		cmd.GuardEditCmd(d),
 		cmd.ChannelAckCmd(d),
 		channelCmd,
+		cmd.ToolsCmd(d),
+		cmd.ChannelCheckCmd(d),
 		// cc-review domain commands.
 		newDaemonCmd(),
 		newStartCmd(),

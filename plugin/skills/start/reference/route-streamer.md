@@ -20,7 +20,7 @@ The streamer's completion result is one event line — read it from the result, 
 
 ## Channel upgrade
 
-If a `<channel source="cc-review">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop re-spawning the streamer, and switch to `route-channel`.
+If a `<channel source="plugin:cc-review:channel">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop re-spawning the streamer, and switch to `route-channel`.
 
 ## Edges
 

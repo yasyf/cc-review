@@ -18,4 +18,4 @@ With no Agent tool you cannot dispatch a `cc-review:organize` subagent; tell the
 
 ## Channel upgrade
 
-If a `<channel source="cc-review">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop relaunching, and switch to `route-channel`.
+If a `<channel source="plugin:cc-review:channel">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, stop relaunching, and switch to `route-channel`.

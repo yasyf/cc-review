@@ -1,6 +1,6 @@
 # Route: channel tags
 
-`channel: active` (step 1) — this window's channel is proven and pushes each review event straight into your context as a `<channel source="cc-review" …>` tag carrying the same JSON payload the other routes stream. You arm **nothing**: no Monitor, no streamer, no `watch`. Arming one would double every event.
+`channel: active` (step 1) — this window's channel is proven and pushes each review event straight into your context as a `<channel source="plugin:cc-review:channel" …>` tag carrying the same JSON payload the other routes stream. You arm **nothing**: no Monitor, no streamer, no `watch`. Arming one would double every event.
 
 ## Receive
 

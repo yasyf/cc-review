@@ -18,7 +18,7 @@ Per skill step 4. You are **not** in a team on this route, so dispatch organize 
 
 ## Channel upgrade
 
-If a `<channel source="cc-review">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, **TaskStop** the Monitor, and switch to `route-channel`. Dedupe the overlap by event id.
+If a `<channel source="plugin:cc-review:channel">` tag arrives, channels went live: run `"${CLAUDE_PLUGIN_ROOT}/bin/cc-review" channel-ack --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD"`, **TaskStop** the Monitor, and switch to `route-channel`. Dedupe the overlap by event id.
 
 ## Edges
 
