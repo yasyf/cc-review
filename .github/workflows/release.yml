@@ -74,7 +74,7 @@ jobs:
             echo "descriptor and manifest already current for ${GITHUB_REF_NAME}"
           else
             git add plugin/bin/cc-review.binrun plugin/.claude-plugin/plugin.json
-            git commit -m "chore: sync cc-review.binrun + manifest to ${GITHUB_REF_NAME}"
+            git commit -m "chore(release): sync cc-review.binrun + manifest to ${GITHUB_REF_NAME}"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
